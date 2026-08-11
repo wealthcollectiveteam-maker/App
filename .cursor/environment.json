@@ -1,0 +1,14 @@
+{
+  "name": "App (Task Board)",
+  "install": "npm install",
+  "terminals": [
+    {
+      "name": "api",
+      "command": "npm run dev:server"
+    },
+    {
+      "name": "client",
+      "command": "npm run dev:client"
+    }
+  ]
+}
