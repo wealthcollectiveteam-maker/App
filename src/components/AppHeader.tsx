@@ -1,5 +1,5 @@
 import { FireIcon as Fire } from 'phosphor-react-native';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -27,12 +27,25 @@ export function AppHeader() {
   const scenario = useAppStore((s) => s.scenario);
   const loadScenario = useAppStore((s) => s.loadScenario);
   const [devOpen, setDevOpen] = useState(false);
+  // Manual 600ms long-press timer: react-native-web does not fire
+  // onLongPress for mouse pointers, so onPressIn/onPressOut works everywhere.
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const startHold = () => {
+    holdTimer.current = setTimeout(() => setDevOpen(true), 600);
+  };
+  const cancelHold = () => {
+    if (holdTimer.current) {
+      clearTimeout(holdTimer.current);
+      holdTimer.current = null;
+    }
+  };
 
   return (
     <View style={[styles.bar, { paddingTop: insets.top + 10 }]}>
       <Pressable
-        delayLongPress={600}
-        onLongPress={() => setDevOpen(true)}
+        onPressIn={startHold}
+        onPressOut={cancelHold}
         hitSlop={8}
       >
         <Text style={styles.wordmark}>
