@@ -109,6 +109,10 @@ function TopCard({
           onStartShouldSetPanResponder: () => !busy,
           onMoveShouldSetPanResponder: (_e, g) =>
             !busy && Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy),
+          // Steal clearly-horizontal drags that started on child elements
+          // (e.g. the proof square) so the whole card is swipeable.
+          onMoveShouldSetPanResponderCapture: (_e, g) =>
+            !busy && Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy),
           onPanResponderMove: (_e, g) => panValue.setValue({ x: g.dx, y: 0 }),
           onPanResponderRelease: (_e, g) => {
             if (g.dx > FLY_THRESHOLD) {
