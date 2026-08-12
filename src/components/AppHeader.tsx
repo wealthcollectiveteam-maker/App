@@ -1,6 +1,6 @@
 import { FireIcon as Fire } from 'phosphor-react-native';
 import React, { useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BottomSheet } from '@/components/BottomSheet';
@@ -27,9 +27,9 @@ export function AppHeader() {
   const scenario = useAppStore((s) => s.scenario);
   const loadScenario = useAppStore((s) => s.loadScenario);
   const [devOpen, setDevOpen] = useState(false);
-  // Manual 600ms long-press timer: react-native-web does not fire
-  // onLongPress for mouse pointers. On web we use raw DOM mouse handlers
-  // (which survive small pointer movement); native keeps press events.
+  // Manual 600ms long-press timer via the responder system: works for both
+  // touch and mouse pointers (react-native-web does not fire onLongPress for
+  // mice), and is not cancelled by small pointer movement mid-hold.
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const startHold = () => {
@@ -42,24 +42,18 @@ export function AppHeader() {
     }
   };
 
-  const holdProps =
-    Platform.OS === 'web'
-      ? ({
-          onMouseDown: startHold,
-          onMouseUp: cancelHold,
-          onMouseLeave: cancelHold,
-          onTouchStart: startHold,
-          onTouchEnd: cancelHold,
-        } as any)
-      : { onPressIn: startHold, onPressOut: cancelHold };
-
   return (
     <View style={[styles.bar, { paddingTop: insets.top + 10 }]}>
-      <Pressable {...holdProps} hitSlop={8}>
-        <Text style={styles.wordmark}>
+      <View
+        onStartShouldSetResponder={() => true}
+        onResponderGrant={startHold}
+        onResponderRelease={cancelHold}
+        onResponderTerminate={cancelHold}
+      >
+        <Text style={styles.wordmark} selectable={false}>
           <Text style={{ color: colors.accent400 }}>R</Text>ANKED
         </Text>
-      </Pressable>
+      </View>
 
       <View style={styles.right}>
         <View style={styles.tierTag}>
