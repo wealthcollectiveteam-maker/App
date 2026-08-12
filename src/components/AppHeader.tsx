@@ -1,6 +1,6 @@
 import { FireIcon as Fire } from 'phosphor-react-native';
 import React, { useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BottomSheet } from '@/components/BottomSheet';
@@ -28,7 +28,8 @@ export function AppHeader() {
   const loadScenario = useAppStore((s) => s.loadScenario);
   const [devOpen, setDevOpen] = useState(false);
   // Manual 600ms long-press timer: react-native-web does not fire
-  // onLongPress for mouse pointers, so onPressIn/onPressOut works everywhere.
+  // onLongPress for mouse pointers. On web we use raw DOM mouse handlers
+  // (which survive small pointer movement); native keeps press events.
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const startHold = () => {
@@ -41,13 +42,20 @@ export function AppHeader() {
     }
   };
 
+  const holdProps =
+    Platform.OS === 'web'
+      ? ({
+          onMouseDown: startHold,
+          onMouseUp: cancelHold,
+          onMouseLeave: cancelHold,
+          onTouchStart: startHold,
+          onTouchEnd: cancelHold,
+        } as any)
+      : { onPressIn: startHold, onPressOut: cancelHold };
+
   return (
     <View style={[styles.bar, { paddingTop: insets.top + 10 }]}>
-      <Pressable
-        onPressIn={startHold}
-        onPressOut={cancelHold}
-        hitSlop={8}
-      >
+      <Pressable {...holdProps} hitSlop={8}>
         <Text style={styles.wordmark}>
           <Text style={{ color: colors.accent400 }}>R</Text>ANKED
         </Text>
