@@ -8,6 +8,7 @@ import React, { useState } from 'react';
 import {
   Animated,
   PanResponder,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -103,6 +104,9 @@ function TopCard({
       return {
         pan: panValue,
         responder: PanResponder.create({
+          // Claim on start (not just move) so fast mouse drags on web are
+          // tracked from the first event; child Pressables still win taps.
+          onStartShouldSetPanResponder: () => !busy,
           onMoveShouldSetPanResponder: (_e, g) =>
             !busy && Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy),
           onPanResponderMove: (_e, g) => panValue.setValue({ x: g.dx, y: 0 }),
@@ -118,6 +122,13 @@ function TopCard({
                 friction: 6,
               }).start();
             }
+          },
+          onPanResponderTerminate: () => {
+            Animated.spring(panValue, {
+              toValue: { x: 0, y: 0 },
+              useNativeDriver: true,
+              friction: 6,
+            }).start();
           },
         }),
         rotate: panValue.x.interpolate({
@@ -306,6 +317,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     padding: 18,
     ...shadows.md,
+    ...(Platform.OS === 'web'
+      ? ({ touchAction: 'none', userSelect: 'none' } as any)
+      : null),
   },
   underCard: {
     position: 'absolute',
