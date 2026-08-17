@@ -336,15 +336,17 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     zIndex: 2,
   },
+  // Stamps sit opposite the exit direction (Tinder-style) so they stay on
+  // screen while the card is dragged toward the edge.
   stampDone: {
-    right: 18,
+    left: 18,
     borderColor: colors.accent500,
-    transform: [{ rotate: '8deg' }],
+    transform: [{ rotate: '-8deg' }],
   },
   stampLater: {
-    left: 18,
+    right: 18,
     borderColor: colors.neutral600,
-    transform: [{ rotate: '-8deg' }],
+    transform: [{ rotate: '8deg' }],
   },
   stampText: {
     fontFamily: font.semibold,
