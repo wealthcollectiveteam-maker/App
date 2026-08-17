@@ -1,14 +1,19 @@
 import { create } from 'zustand';
 
-import { TASKS, XP } from '@/data/mock';
+import { PINGS, XP } from '@/constants/challenge';
+import { TIER_TASKS, TIERS } from '@/constants/tiers';
 import type {
   FeedItem,
   JournalEntry,
   Meal,
   Milestone,
+  NotificationPrefs,
+  ReportReason,
   Scenario,
   ScenarioState,
+  TaskDef,
   TaskKey,
+  Tier,
 } from '@/data/types';
 import { DataService } from '@/services/DataService';
 
@@ -32,15 +37,34 @@ export function relativeTime(ts: number): string {
   return `${days}d ago`;
 }
 
+/** Local calendar date (YYYY-MM-DD) — ping allowance is keyed to this. */
+export function localDateKey(ts: number = Date.now()): string {
+  const d = new Date(ts);
+  const m = (d.getMonth() + 1).toString().padStart(2, '0');
+  const day = d.getDate().toString().padStart(2, '0');
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
 let feedId = 0;
+
+export type ScreenStateKind = 'ready' | 'loading' | 'error';
 
 interface AppState extends ScenarioState {
   scenario: Scenario;
   deferred: TaskKey[];
   finishFeeling: string | null;
   finishFeelingText: string;
+  profileName: string;
+  notificationPrefs: NotificationPrefs;
+  blockedUsers: string[];
+  /** Pings spent on `date` (local calendar day). Restores at local midnight. */
+  pingsUsed: { date: string; count: number };
+  /** Dev-forced screen state for QA of loading/error UI. */
+  screenState: ScreenStateKind;
 
   loadScenario: (scenario: Scenario) => void;
+  setTier: (tier: Tier) => void;
+  applyMissedDay: () => void;
   completeTask: (key: TaskKey) => void;
   uncompleteTask: (key: TaskKey) => void;
   deferTask: (key: TaskKey) => void;
@@ -50,7 +74,18 @@ interface AppState extends ScenarioState {
   logMeal: (text: string) => Meal;
   addMilestone: (title: string) => Milestone;
   toggleMilestone: (id: string) => void;
-  sendPing: (toName: string, text: string) => void;
+  /** Returns false when the daily ping allowance is spent. */
+  sendPing: (toName: string, text: string) => boolean;
+  createSquad: (name: string) => void;
+  joinSquad: (code: string) => void;
+  leaveSquad: () => void;
+  reportFeedItem: (id: string, reason: ReportReason) => void;
+  blockUser: (name: string) => void;
+  unblockUser: (name: string) => void;
+  updateProfile: (name: string, why: string) => void;
+  setNotificationPref: (key: keyof NotificationPrefs, value: boolean) => void;
+  deleteAccount: () => void;
+  setScreenState: (state: ScreenStateKind) => void;
   setFinishFeeling: (feeling: string | null) => void;
   setFinishFeelingText: (text: string) => void;
   saveCompletionFeeling: () => void;
@@ -60,11 +95,22 @@ function fromScenario(scenario: Scenario): ScenarioState {
   return DataService.loadScenario(scenario);
 }
 
+const DEFAULT_PREFS: NotificationPrefs = {
+  pings: true,
+  squadActivity: true,
+  dailyReminder: false,
+};
+
 export const useAppStore = create<AppState>((set, get) => ({
   scenario: 'day1',
   deferred: [],
   finishFeeling: null,
   finishFeelingText: '',
+  profileName: 'You',
+  notificationPrefs: DEFAULT_PREFS,
+  blockedUsers: [],
+  pingsUsed: { date: localDateKey(), count: 0 },
+  screenState: 'ready',
   ...fromScenario('day1'),
 
   loadScenario: (scenario) =>
@@ -73,13 +119,55 @@ export const useAppStore = create<AppState>((set, get) => ({
       deferred: [],
       finishFeeling: null,
       finishFeelingText: '',
+      blockedUsers: [],
+      pingsUsed: { date: localDateKey(), count: 0 },
+      screenState: 'ready',
       ...fromScenario(scenario),
     }),
 
+  setTier: (tier) => {
+    const s = get();
+    const allowed = new Set(TIERS[tier].taskKeys);
+    const tasksDone: Partial<Record<TaskKey, string>> = {};
+    for (const [k, v] of Object.entries(s.tasksDone)) {
+      if (allowed.has(k as TaskKey)) tasksDone[k as TaskKey] = v;
+    }
+    const count = TIERS[tier].taskKeys.length;
+    set({
+      tier,
+      tasksDone,
+      deferred: s.deferred.filter((k) => allowed.has(k)),
+      squad: s.squad
+        ? {
+            ...s.squad,
+            members: s.squad.members.map((m) => ({
+              ...m,
+              doneToday: Math.min(m.doneToday, count),
+            })),
+          }
+        : null,
+    });
+  },
+
+  /** Apply the active tier's missed-day penalty. */
+  applyMissedDay: () => {
+    const s = get();
+    const penalty = TIERS[s.tier].missedDay;
+    set({
+      missedDay: true,
+      dayComplete: false,
+      tasksDone: {},
+      deferred: [],
+      flame: penalty.resetsStreak ? 0 : s.flame,
+      day: penalty.restartsChallenge ? 1 : s.day,
+    });
+  },
+
   completeTask: (key) => {
-    const { tasksDone, feed } = get();
+    const { tasksDone, feed, tier } = get();
     if (tasksDone[key]) return;
-    const label = TASKS.find((t) => t.key === key)?.label ?? key;
+    const label =
+      TIER_TASKS[tier].find((t) => t.key === key)?.label ?? key;
     const item: FeedItem = {
       id: `f-local-${++feedId}`,
       kind: 'complete',
@@ -111,8 +199,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
 
   attachProof: (key) => {
-    const { feed } = get();
-    const label = TASKS.find((t) => t.key === key)?.label ?? key;
+    const { feed, tier } = get();
+    const label =
+      TIER_TASKS[tier].find((t) => t.key === key)?.label ?? key;
     const item: FeedItem = {
       id: `f-local-${++feedId}`,
       kind: 'proof',
@@ -129,11 +218,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   sealDay: () => {
     const s = get();
     if (s.dayComplete) return;
+    const count = TIER_TASKS[s.tier].length;
     const item: FeedItem = {
       id: `f-local-${++feedId}`,
       kind: 'complete',
       who: 'You',
-      text: `locked in Day ${s.day} — 6 of 6.`,
+      text: `locked in Day ${s.day} — ${count} of ${count}.`,
       timestamp: Date.now(),
     };
     set({
@@ -179,6 +269,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   sendPing: (toName, text) => {
+    const s = get();
+    const today = localDateKey();
+    const used = s.pingsUsed.date === today ? s.pingsUsed.count : 0;
+    if (used >= PINGS.maxPerDay) return false;
     const item: FeedItem = {
       id: `f-local-${++feedId}`,
       kind: 'ping-out',
@@ -186,9 +280,52 @@ export const useAppStore = create<AppState>((set, get) => ({
       text: `pinged ${toName} — \u201C${text}\u201D`,
       timestamp: Date.now(),
     };
-    set((s) => ({ feed: [item, ...s.feed] }));
+    set({
+      feed: [item, ...s.feed],
+      pingsUsed: { date: today, count: used + 1 },
+    });
+    return true;
   },
 
+  createSquad: (name) => set({ squad: DataService.createSquad(name) }),
+  joinSquad: (code) => set({ squad: DataService.joinSquad(code) }),
+  leaveSquad: () => {
+    DataService.leaveSquad();
+    set({ squad: null });
+  },
+
+  reportFeedItem: (id, reason) => {
+    DataService.reportContent(id, reason);
+  },
+
+  blockUser: (name) => set({ blockedUsers: DataService.blockUser(name) }),
+  unblockUser: (name) => set({ blockedUsers: DataService.unblockUser(name) }),
+
+  updateProfile: (name, why) =>
+    set({ profileName: name.trim() || 'You', why: why.trim() || get().why }),
+
+  setNotificationPref: (key, value) =>
+    set((s) => ({
+      notificationPrefs: { ...s.notificationPrefs, [key]: value },
+    })),
+
+  deleteAccount: () => {
+    DataService.deleteAccount();
+    set({
+      scenario: 'day1',
+      deferred: [],
+      finishFeeling: null,
+      finishFeelingText: '',
+      profileName: 'You',
+      notificationPrefs: DEFAULT_PREFS,
+      blockedUsers: [],
+      pingsUsed: { date: localDateKey(), count: 0 },
+      screenState: 'ready',
+      ...fromScenario('day1'),
+    });
+  },
+
+  setScreenState: (screenState) => set({ screenState }),
   setFinishFeeling: (feeling) => set({ finishFeeling: feeling }),
   setFinishFeelingText: (text) => set({ finishFeelingText: text }),
   saveCompletionFeeling: () => {
@@ -199,22 +336,41 @@ export const useAppStore = create<AppState>((set, get) => ({
 
 // ---- Derived selectors ----
 
+/** Active tier's task list (stable array reference per tier). */
+export const selectTasks = (s: { tier: Tier }): TaskDef[] =>
+  TIER_TASKS[s.tier];
+
+export const selectTaskCount = (s: { tier: Tier }) =>
+  TIER_TASKS[s.tier].length;
+
 export const selectLevel = (xp: number) => Math.floor(xp / XP.perLevel) + 1;
 export const selectXpIntoLevel = (xp: number) => xp % XP.perLevel;
 export const selectXpToNext = (xp: number) => XP.perLevel - (xp % XP.perLevel);
 
-export const selectDoneCount = (s: Pick<ScenarioState, 'tasksDone'>) =>
-  TASKS.filter((t) => s.tasksDone[t.key]).length;
+export const selectDoneCount = (
+  s: Pick<ScenarioState, 'tasksDone' | 'tier'>,
+) => TIER_TASKS[s.tier].filter((t) => s.tasksDone[t.key]).length;
 
 /** Pending tasks in deck order: undeferred first, deferred at the back. */
 export const selectQueue = (s: {
+  tier: Tier;
   tasksDone: Partial<Record<TaskKey, string>>;
   deferred: TaskKey[];
 }): TaskKey[] => {
-  const pending = TASKS.map((t) => t.key).filter((k) => !s.tasksDone[k]);
+  const pending = TIER_TASKS[s.tier]
+    .map((t) => t.key)
+    .filter((k) => !s.tasksDone[k]);
   const fresh = pending.filter((k) => !s.deferred.includes(k));
   const deferred = s.deferred.filter((k) => pending.includes(k));
   return [...fresh, ...deferred];
+};
+
+/** Pings remaining today, respecting the local-midnight reset. */
+export const selectPingsLeft = (s: {
+  pingsUsed: { date: string; count: number };
+}) => {
+  const used = s.pingsUsed.date === localDateKey() ? s.pingsUsed.count : 0;
+  return Math.max(0, PINGS.maxPerDay - used);
 };
 
 export const selectRecentMeals = (meals: Meal[]): string[] => {

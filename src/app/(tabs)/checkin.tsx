@@ -4,10 +4,8 @@ import {
   CheckCircleIcon as CheckCircle,
   CheckIcon as Check,
 } from 'phosphor-react-native';
-import React, { useState } from 'react';
+import React from 'react';
 import {
-  Animated,
-  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -15,13 +13,23 @@ import {
   Text,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  interpolate,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 
+import { ScreenState } from '@/components/ScreenState';
 import { Card, Kicker, OutlineButton } from '@/components/ui';
-import { TASKS } from '@/data/mock';
-import type { TaskKey } from '@/data/types';
+import type { TaskDef, TaskKey } from '@/data/types';
 import {
   selectDoneCount,
   selectQueue,
+  selectTasks,
   useAppStore,
 } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
@@ -66,131 +74,96 @@ function ProofRow({ taskKey }: { taskKey: TaskKey }) {
   );
 }
 
+/**
+ * Top card of the swipe deck. Gesture runs through
+ * react-native-gesture-handler with the animation driven by Reanimated on
+ * the UI thread. The component is keyed by task, so a fresh card (and fresh
+ * shared values) mounts for each task.
+ */
 function TopCard({
-  taskKey,
+  task,
   index,
   total,
   onDone,
   onLater,
 }: {
-  taskKey: TaskKey;
+  task: TaskDef;
   index: number;
   total: number;
   onDone: () => void;
   onLater: () => void;
 }) {
-  const task = TASKS.find((t) => t.key === taskKey)!;
+  const tx = useSharedValue(0);
+  const busy = useSharedValue(false);
 
-  // The whole gesture rig is created once per card. TopCard is keyed by task,
-  // so onDone/onLater captured at mount stay valid for the card's lifetime.
-  const [{ pan, responder, rotate, doneOpacity, laterOpacity }] = useState(
-    () => {
-      const panValue = new Animated.ValueXY();
-      let busy = false;
-
-      const flyOff = (dir: 1 | -1, cb: () => void) => {
-        busy = true;
-        Animated.timing(panValue, {
-          toValue: { x: dir * 480, y: 0 },
-          duration: 240,
-          useNativeDriver: true,
-        }).start(() => {
-          panValue.setValue({ x: 0, y: 0 });
-          busy = false;
-          cb();
+  const pan = Gesture.Pan()
+    .activeOffsetX([-10, 10])
+    .failOffsetY([-14, 14])
+    .onUpdate((e) => {
+      'worklet';
+      if (!busy.value) tx.value = e.translationX;
+    })
+    .onEnd(() => {
+      'worklet';
+      if (busy.value) return;
+      if (tx.value > FLY_THRESHOLD) {
+        busy.value = true;
+        tx.value = withTiming(520, { duration: 240 }, (finished) => {
+          if (finished) runOnJS(onDone)();
         });
-      };
+      } else if (tx.value < -FLY_THRESHOLD) {
+        busy.value = true;
+        tx.value = withTiming(-520, { duration: 240 }, (finished) => {
+          if (finished) runOnJS(onLater)();
+        });
+      } else {
+        tx.value = withSpring(0, { damping: 16, stiffness: 160 });
+      }
+    });
 
-      return {
-        pan: panValue,
-        responder: PanResponder.create({
-          // Claim on start (not just move) so fast mouse drags on web are
-          // tracked from the first event; child Pressables still win taps.
-          onStartShouldSetPanResponder: () => !busy,
-          onMoveShouldSetPanResponder: (_e, g) =>
-            !busy && Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy),
-          // Steal clearly-horizontal drags that started on child elements
-          // (e.g. the proof square) so the whole card is swipeable.
-          onMoveShouldSetPanResponderCapture: (_e, g) =>
-            !busy && Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy),
-          onPanResponderMove: (_e, g) => panValue.setValue({ x: g.dx, y: 0 }),
-          onPanResponderRelease: (_e, g) => {
-            if (g.dx > FLY_THRESHOLD) {
-              flyOff(1, onDone);
-            } else if (g.dx < -FLY_THRESHOLD) {
-              flyOff(-1, onLater);
-            } else {
-              Animated.spring(panValue, {
-                toValue: { x: 0, y: 0 },
-                useNativeDriver: true,
-                friction: 6,
-              }).start();
-            }
-          },
-          onPanResponderTerminate: () => {
-            Animated.spring(panValue, {
-              toValue: { x: 0, y: 0 },
-              useNativeDriver: true,
-              friction: 6,
-            }).start();
-          },
-        }),
-        rotate: panValue.x.interpolate({
-          inputRange: [-300, 0, 300],
-          outputRange: ['-16.7deg', '0deg', '16.7deg'], // x/18 deg
-        }),
-        doneOpacity: panValue.x.interpolate({
-          inputRange: [0, FLY_THRESHOLD],
-          outputRange: [0, 1],
-          extrapolate: 'clamp',
-        }),
-        laterOpacity: panValue.x.interpolate({
-          inputRange: [-FLY_THRESHOLD, 0],
-          outputRange: [1, 0],
-          extrapolate: 'clamp',
-        }),
-      };
-    },
-  );
+  const cardStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: tx.value },
+      { rotate: `${tx.value / 18}deg` },
+    ],
+  }));
+  const doneStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(tx.value, [0, FLY_THRESHOLD], [0, 1], 'clamp'),
+  }));
+  const laterStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(tx.value, [-FLY_THRESHOLD, 0], [1, 0], 'clamp'),
+  }));
 
   return (
-    <Animated.View
-      {...responder.panHandlers}
-      style={[
-        styles.topCard,
-        { transform: [{ translateX: pan.x }, { rotate }] },
-      ]}
-    >
-      <Animated.View
-        style={[styles.stamp, styles.stampDone, { opacity: doneOpacity }]}
-      >
-        <Text style={[styles.stampText, { color: colors.accent300 }]}>
-          DONE
-        </Text>
-      </Animated.View>
-      <Animated.View
-        style={[styles.stamp, styles.stampLater, { opacity: laterOpacity }]}
-      >
-        <Text style={[styles.stampText, { color: colors.neutral400 }]}>
-          LATER
-        </Text>
-      </Animated.View>
+    <GestureDetector gesture={pan}>
+      <Animated.View style={[styles.topCard, cardStyle]}>
+        <Animated.View style={[styles.stamp, styles.stampDone, doneStyle]}>
+          <Text style={[styles.stampText, { color: colors.accent300 }]}>
+            DONE
+          </Text>
+        </Animated.View>
+        <Animated.View style={[styles.stamp, styles.stampLater, laterStyle]}>
+          <Text style={[styles.stampText, { color: colors.neutral400 }]}>
+            LATER
+          </Text>
+        </Animated.View>
 
-      <Kicker>
-        Task {index} of {total}
-      </Kicker>
-      <Text style={styles.cardTitle}>{task.label}</Text>
-      <Text style={styles.cardSub}>{task.sub}</Text>
-      {task.proof && <ProofRow taskKey={taskKey} />}
-      <View style={{ flex: 1 }} />
-      <Text style={styles.cardFooter}>
-        {'\u2190'} later&nbsp;&nbsp;|&nbsp;&nbsp;swipe to complete {'\u2192'}
-      </Text>
-    </Animated.View>
+        <Kicker>
+          Task {index} of {total}
+        </Kicker>
+        <Text style={styles.cardTitle}>{task.label}</Text>
+        <Text style={styles.cardSub}>{task.sub}</Text>
+        {task.proof && <ProofRow taskKey={task.key} />}
+        <View style={{ flex: 1 }} />
+        <Text style={styles.cardFooter}>
+          {'\u2190'} later&nbsp;&nbsp;|&nbsp;&nbsp;swipe to complete {'\u2192'}
+        </Text>
+      </Animated.View>
+    </GestureDetector>
   );
 }
 
-function AllDone() {
+function AllDone({ total }: { total: number }) {
   const dayComplete = useAppStore((s) => s.dayComplete);
   const day = useAppStore((s) => s.day);
   const router = useRouter();
@@ -199,7 +172,7 @@ function AllDone() {
     <Card style={styles.allDone}>
       <CheckCircle size={54} weight="fill" color={colors.accent500} />
       <Text style={styles.allDoneTitle}>
-        {dayComplete ? `Day ${day} locked in.` : 'All 6 done.'}
+        {dayComplete ? `Day ${day} locked in.` : `All ${total} done.`}
       </Text>
       <Text style={styles.allDoneSub}>
         {dayComplete
@@ -218,69 +191,80 @@ function AllDone() {
 }
 
 export default function CheckinScreen() {
+  const tasks = useAppStore(selectTasks);
   const doneCount = useAppStore(selectDoneCount);
+  const tier = useAppStore((s) => s.tier);
   const tasksDone = useAppStore((s) => s.tasksDone);
   const deferred = useAppStore((s) => s.deferred);
   const completeTask = useAppStore((s) => s.completeTask);
   const deferTask = useAppStore((s) => s.deferTask);
 
-  const queue = selectQueue({ tasksDone, deferred });
-  const top = queue[0];
+  const total = tasks.length;
+  const queue = selectQueue({ tier, tasksDone, deferred });
+  const topKey = queue[0];
+  const topTask = tasks.find((t) => t.key === topKey);
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.bg }}
-      contentContainerStyle={styles.content}
-    >
-      <View style={styles.header}>
-        <Text style={styles.title}>Check-in</Text>
-        <Text style={styles.counter}>{doneCount} OF 6</Text>
-      </View>
+    <ScreenState>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.bg }}
+        contentContainerStyle={styles.content}
+      >
+        <View style={styles.header}>
+          <Text style={styles.title}>Check-in</Text>
+          <Text style={styles.counter}>
+            {doneCount} OF {total}
+          </Text>
+        </View>
 
-      <View style={styles.deck}>
-        {top ? (
-          <>
-            {queue[2] && <View style={[styles.underCard, styles.under2]} />}
-            {queue[1] && <View style={[styles.underCard, styles.under1]} />}
-            <TopCard
-              key={top}
-              taskKey={top}
-              index={doneCount + 1}
-              total={6}
-              onDone={() => {
-                completeTask(top);
-                toast('+20 XP');
-              }}
-              onLater={() => deferTask(top)}
-            />
-          </>
-        ) : (
-          <AllDone />
-        )}
-      </View>
+        <View style={styles.deck}>
+          {topTask ? (
+            <>
+              {queue[2] && <View style={[styles.underCard, styles.under2]} />}
+              {queue[1] && <View style={[styles.underCard, styles.under1]} />}
+              <TopCard
+                key={topTask.key}
+                task={topTask}
+                index={doneCount + 1}
+                total={total}
+                onDone={() => {
+                  completeTask(topTask.key);
+                  toast('+20 XP');
+                }}
+                onLater={() => deferTask(topTask.key)}
+              />
+            </>
+          ) : (
+            <AllDone total={total} />
+          )}
+        </View>
 
-      <View style={styles.chips}>
-        {TASKS.map((t) => {
-          const done = !!tasksDone[t.key];
-          return (
-            <View
-              key={t.key}
-              style={[styles.chip, done ? styles.chipDone : styles.chipPending]}
-            >
-              <Text
+        <View style={styles.chips}>
+          {tasks.map((t) => {
+            const done = !!tasksDone[t.key];
+            return (
+              <View
+                key={t.key}
                 style={[
-                  styles.chipText,
-                  { color: done ? colors.accent300 : colors.neutral500 },
+                  styles.chip,
+                  done ? styles.chipDone : styles.chipPending,
                 ]}
               >
-                {done ? '\u2713 ' : ''}
-                {t.label.split(' — ')[0]}
-              </Text>
-            </View>
-          );
-        })}
-      </View>
-    </ScrollView>
+                <Text
+                  style={[
+                    styles.chipText,
+                    { color: done ? colors.accent300 : colors.neutral500 },
+                  ]}
+                >
+                  {done ? '\u2713 ' : ''}
+                  {t.label.split(' — ')[0]}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      </ScrollView>
+    </ScreenState>
   );
 }
 

@@ -1,59 +1,63 @@
 import { FireIcon as Fire } from 'phosphor-react-native';
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BottomSheet } from '@/components/BottomSheet';
-import { Kicker } from '@/components/ui';
-import type { Scenario } from '@/data/types';
-import { useAppStore } from '@/store/useAppStore';
+import { Kicker, SegmentedControl } from '@/components/ui';
+import type { Scenario, Tier } from '@/data/types';
+import { useAppStore, type ScreenStateKind } from '@/store/useAppStore';
 import { colors, font, radius } from '@/theme/tokens';
 
 const SCENARIOS: { key: Scenario; label: string; sub: string }[] = [
   { key: 'day1', label: 'Day 1', sub: 'Fresh start. Nothing done yet.' },
-  { key: 'day12', label: 'Day 12', sub: 'Mid-run. 4 of 6 today.' },
+  { key: 'day12', label: 'Day 12', sub: 'Mid-run. Partial progress today.' },
   { key: 'missed', label: 'Missed day', sub: 'Streak broken banner.' },
   { key: 'day75', label: 'Day 75', sub: 'Challenge complete.' },
 ];
 
+const TIER_SEGMENTS = ['HARD', 'MEDIUM', 'SOFT'];
+const STATE_SEGMENTS = ['READY', 'LOADING', 'ERROR'];
+
 /**
  * Persistent header: RANKED wordmark (long-press 600ms opens the hidden dev
- * scenario sheet), tier tag, flame chip.
+ * scenario sheet), tier tag, flame chip. The long-press runs through
+ * react-native-gesture-handler so it works with touch and mouse alike.
  */
 export function AppHeader() {
   const insets = useSafeAreaInsets();
   const tier = useAppStore((s) => s.tier);
   const flame = useAppStore((s) => s.flame);
   const scenario = useAppStore((s) => s.scenario);
+  const squad = useAppStore((s) => s.squad);
+  const screenState = useAppStore((s) => s.screenState);
   const loadScenario = useAppStore((s) => s.loadScenario);
+  const setTier = useAppStore((s) => s.setTier);
+  const setScreenState = useAppStore((s) => s.setScreenState);
+  const leaveSquad = useAppStore((s) => s.leaveSquad);
+  const joinSquad = useAppStore((s) => s.joinSquad);
   const [devOpen, setDevOpen] = useState(false);
-  // Manual 600ms long-press timer via the responder system: works for both
-  // touch and mouse pointers (react-native-web does not fire onLongPress for
-  // mice), and is not cancelled by small pointer movement mid-hold.
-  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const startHold = () => {
-    holdTimer.current = setTimeout(() => setDevOpen(true), 600);
-  };
-  const cancelHold = () => {
-    if (holdTimer.current) {
-      clearTimeout(holdTimer.current);
-      holdTimer.current = null;
-    }
-  };
+  const openDev = () => setDevOpen(true);
+
+  const longPress = Gesture.LongPress()
+    .minDuration(600)
+    .onStart(() => {
+      'worklet';
+      runOnJS(openDev)();
+    });
 
   return (
     <View style={[styles.bar, { paddingTop: insets.top + 10 }]}>
-      <View
-        onStartShouldSetResponder={() => true}
-        onResponderGrant={startHold}
-        onResponderRelease={cancelHold}
-        onResponderTerminate={cancelHold}
-      >
-        <Text style={styles.wordmark} selectable={false}>
-          <Text style={{ color: colors.accent400 }}>R</Text>ANKED
-        </Text>
-      </View>
+      <GestureDetector gesture={longPress}>
+        <View>
+          <Text style={styles.wordmark} selectable={false}>
+            <Text style={{ color: colors.accent400 }}>R</Text>ANKED
+          </Text>
+        </View>
+      </GestureDetector>
 
       <View style={styles.right}>
         <View style={styles.tierTag}>
@@ -77,7 +81,7 @@ export function AppHeader() {
       </View>
 
       <BottomSheet visible={devOpen} onClose={() => setDevOpen(false)}>
-        <Kicker style={{ marginBottom: 12 }}>Dev — mock scenario</Kicker>
+        <Kicker style={{ marginBottom: 10 }}>Dev — mock scenario</Kicker>
         {SCENARIOS.map((s) => {
           const active = s.key === scenario;
           return (
@@ -94,6 +98,43 @@ export function AppHeader() {
             </Pressable>
           );
         })}
+
+        <Kicker style={{ marginTop: 14, marginBottom: 8 }}>Tier</Kicker>
+        <SegmentedControl
+          segments={TIER_SEGMENTS}
+          value={tier.toUpperCase()}
+          onChange={(v) => setTier(v.toLowerCase() as Tier)}
+        />
+
+        <Kicker style={{ marginTop: 14, marginBottom: 8 }}>
+          Screen state
+        </Kicker>
+        <SegmentedControl
+          segments={STATE_SEGMENTS}
+          value={screenState.toUpperCase()}
+          onChange={(v) => setScreenState(v.toLowerCase() as ScreenStateKind)}
+        />
+
+        <Pressable
+          onPress={() => {
+            if (squad) {
+              leaveSquad();
+            } else {
+              joinSquad('K7X2FD');
+            }
+            setDevOpen(false);
+          }}
+          style={[styles.scenarioRow, { marginTop: 14 }]}
+        >
+          <Text style={styles.scenarioLabel}>
+            {squad ? 'Switch to solo mode' : 'Rejoin squad'}
+          </Text>
+          <Text style={styles.scenarioSub}>
+            {squad
+              ? 'Drop the squad to QA solo states.'
+              : 'Restore the mock squad.'}
+          </Text>
+        </Pressable>
       </BottomSheet>
     </View>
   );
@@ -147,7 +188,7 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
   },
   scenarioRow: {
-    paddingVertical: 11,
+    paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: radius.sm,
     marginBottom: 4,

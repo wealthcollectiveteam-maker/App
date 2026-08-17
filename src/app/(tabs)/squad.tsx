@@ -4,6 +4,7 @@ import {
   CameraIcon as Camera,
   CheckCircleIcon as CheckCircle,
   PaperPlaneRightIcon as PaperPlaneRight,
+  UsersThreeIcon as UsersThree,
 } from 'phosphor-react-native';
 import React, { useState } from 'react';
 import {
@@ -17,17 +18,31 @@ import {
 
 import { BottomSheet } from '@/components/BottomSheet';
 import { FlairAvatar } from '@/components/FlairAvatar';
+import { ScreenState } from '@/components/ScreenState';
 import {
   Card,
   Kicker,
   OutlineButton,
   SegmentedControl,
 } from '@/components/ui';
+import { PINGS } from '@/constants/challenge';
 import { PING_QUIPS } from '@/data/mock';
-import type { FeedItem, SquadMember } from '@/data/types';
-import { relativeTime, useAppStore } from '@/store/useAppStore';
+import type { FeedItem, ReportReason, SquadMember } from '@/data/types';
+import {
+  relativeTime,
+  selectPingsLeft,
+  selectTaskCount,
+  useAppStore,
+} from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
 import { colors, font, radius, space } from '@/theme/tokens';
+
+const REPORT_REASONS: ReportReason[] = [
+  'Spam',
+  'Harassment',
+  'Inappropriate content',
+  'Other',
+];
 
 function PingSheet({
   member,
@@ -43,8 +58,8 @@ function PingSheet({
   const send = () => {
     const message = text.trim() || selected;
     if (!message || !member) return;
-    sendPing(member.name, message);
-    toast(`Ping sent to ${member.name}`);
+    const sent = sendPing(member.name, message);
+    toast(sent ? `Ping sent to ${member.name}` : 'Out of pings — resets at midnight');
     setText('');
     setSelected(null);
     onClose();
@@ -97,7 +112,77 @@ function PingSheet({
   );
 }
 
-function FeedRow({ item }: { item: FeedItem }) {
+/** Long-press a feed row for UGC moderation: report content or block user. */
+function ModerationSheet({
+  item,
+  onClose,
+}: {
+  item: FeedItem | null;
+  onClose: () => void;
+}) {
+  const reportFeedItem = useAppStore((s) => s.reportFeedItem);
+  const blockUser = useAppStore((s) => s.blockUser);
+  const [reporting, setReporting] = useState(false);
+
+  const close = () => {
+    setReporting(false);
+    onClose();
+  };
+
+  return (
+    <BottomSheet visible={!!item} onClose={close}>
+      {!reporting ? (
+        <>
+          <Kicker style={{ marginBottom: 12 }}>
+            {item?.who} — {item?.text}
+          </Kicker>
+          <OutlineButton
+            label="Report content"
+            tone="neutral"
+            onPress={() => setReporting(true)}
+            style={{ marginBottom: 8 }}
+          />
+          {item && item.who !== 'You' && (
+            <OutlineButton
+              label={`Block ${item.who}`}
+              tone="neutral"
+              onPress={() => {
+                blockUser(item.who);
+                toast(`${item.who} blocked`);
+                close();
+              }}
+            />
+          )}
+        </>
+      ) : (
+        <>
+          <Kicker style={{ marginBottom: 12 }}>Report — why?</Kicker>
+          {REPORT_REASONS.map((r) => (
+            <Pressable
+              key={r}
+              onPress={() => {
+                if (item) reportFeedItem(item.id, r);
+                toast('Report submitted');
+                close();
+              }}
+              style={styles.reasonRow}
+            >
+              <Text style={styles.reasonText}>{r}</Text>
+            </Pressable>
+          ))}
+        </>
+      )}
+    </BottomSheet>
+  );
+}
+
+function FeedRow({
+  item,
+  onLongPress,
+}: {
+  item: FeedItem;
+  onLongPress: (item: FeedItem) => void;
+}) {
   const inbound = item.kind === 'ping-in';
   const Icon =
     item.kind === 'proof'
@@ -109,7 +194,11 @@ function FeedRow({ item }: { item: FeedItem }) {
           : PaperPlaneRight;
 
   return (
-    <View style={[styles.feedRow, inbound && styles.feedRowInbound]}>
+    <Pressable
+      onLongPress={() => onLongPress(item)}
+      delayLongPress={450}
+      style={[styles.feedRow, inbound && styles.feedRowInbound]}
+    >
       <Icon
         size={16}
         weight={inbound ? 'fill' : 'regular'}
@@ -122,6 +211,61 @@ function FeedRow({ item }: { item: FeedItem }) {
         {inbound ? `pinged you — ${item.text}` : item.text}
       </Text>
       <Text style={styles.timeMeta}>{relativeTime(item.timestamp)}</Text>
+    </Pressable>
+  );
+}
+
+/** Solo mode: the Squad tab's invite-code empty state. */
+function SoloState() {
+  const createSquad = useAppStore((s) => s.createSquad);
+  const joinSquad = useAppStore((s) => s.joinSquad);
+  const [code, setCode] = useState('');
+
+  return (
+    <View style={{ gap: 14 }}>
+      <Card style={{ alignItems: 'center', paddingVertical: 30 }}>
+        <UsersThree size={34} color={colors.neutral500} />
+        <Text style={styles.soloTitle}>No squad. No problem.</Text>
+        <Text style={styles.soloSub}>
+          The challenge counts the same solo. Add a squad when you want
+          witnesses.
+        </Text>
+        <OutlineButton
+          label="Create a squad"
+          onPress={() => {
+            createSquad('Group 1');
+            toast('Squad created — invite code K7X2FD');
+          }}
+          style={{ marginTop: 18, alignSelf: 'stretch' }}
+        />
+      </Card>
+      <View>
+        <Kicker color={colors.neutral500} style={{ marginBottom: 8 }}>
+          Have an invite code?
+        </Kicker>
+        <View style={styles.sendRow}>
+          <TextInput
+            value={code}
+            onChangeText={setCode}
+            placeholder="Enter invite code"
+            autoCapitalize="characters"
+            placeholderTextColor={colors.neutral600}
+            style={styles.input}
+          />
+          <OutlineButton
+            label="Join"
+            small
+            onPress={() => {
+              const c = code.trim();
+              if (!c) return;
+              joinSquad(c);
+              toast('Joined Group 1');
+              setCode('');
+            }}
+            style={{ minHeight: 42 }}
+          />
+        </View>
+      </View>
     </View>
   );
 }
@@ -129,11 +273,21 @@ function FeedRow({ item }: { item: FeedItem }) {
 function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
   const squad = useAppStore((s) => s.squad);
   const feed = useAppStore((s) => s.feed);
+  const blockedUsers = useAppStore((s) => s.blockedUsers);
+  const taskCount = useAppStore(selectTaskCount);
+  const pingsLeft = useAppStore(selectPingsLeft);
+  const [moderating, setModerating] = useState<FeedItem | null>(null);
 
   const copyCode = async () => {
+    if (!squad) return;
     await Clipboard.setStringAsync(squad.code);
     toast('Invite code copied');
   };
+
+  if (!squad) return <SoloState />;
+
+  const visibleFeed = feed.filter((f) => !blockedUsers.includes(f.who));
+  const outOfPings = pingsLeft === 0;
 
   return (
     <View style={{ gap: 14 }}>
@@ -153,35 +307,59 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
       </Card>
 
       <View>
-        <Kicker color={colors.neutral500} style={{ marginBottom: 8 }}>
-          Members
-        </Kicker>
+        <View style={styles.membersHeader}>
+          <Kicker color={colors.neutral500}>Members</Kicker>
+          <Text
+            style={[
+              styles.pingCounter,
+              outOfPings && { color: colors.neutral600 },
+            ]}
+          >
+            {pingsLeft} of {PINGS.maxPerDay} pings left today
+          </Text>
+        </View>
         {squad.members.map((m) => (
           <View key={m.id} style={styles.memberRow}>
             <FlairAvatar initials={m.initials} level={m.level} size={36} />
             <View style={{ flex: 1 }}>
               <Text style={styles.memberName}>{m.name}</Text>
-              <Text style={styles.memberMeta}>{m.doneToday} of 6 today</Text>
+              <Text style={styles.memberMeta}>
+                {Math.min(m.doneToday, taskCount)} of {taskCount} today
+              </Text>
             </View>
-            {!m.isSelf && (
-              <OutlineButton label="Ping" small onPress={() => onPing(m)} />
-            )}
+            {!m.isSelf &&
+              (outOfPings ? (
+                <View style={styles.pingDisabled}>
+                  <Text style={styles.pingDisabledText}>PING</Text>
+                </View>
+              ) : (
+                <OutlineButton label="Ping" small onPress={() => onPing(m)} />
+              ))}
           </View>
         ))}
+        {outOfPings && (
+          <Text style={styles.outOfPings}>
+            Out of pings — resets at midnight
+          </Text>
+        )}
       </View>
 
       <View>
         <Kicker color={colors.neutral500} style={{ marginBottom: 8 }}>
           Today
         </Kicker>
-        {feed.length === 0 ? (
+        {visibleFeed.length === 0 ? (
           <Text style={styles.empty}>
             No activity yet. Be the first to lock in.
           </Text>
         ) : (
-          feed.map((f) => <FeedRow key={f.id} item={f} />)
+          visibleFeed.map((f) => (
+            <FeedRow key={f.id} item={f} onLongPress={setModerating} />
+          ))
         )}
       </View>
+
+      <ModerationSheet item={moderating} onClose={() => setModerating(null)} />
     </View>
   );
 }
@@ -242,25 +420,27 @@ export default function SquadScreen() {
   const [pingTarget, setPingTarget] = useState<SquadMember | null>(null);
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.bg }}
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
-    >
-      <Text style={styles.title}>Squad</Text>
-      <SegmentedControl
-        segments={['SQUAD', 'LEADERBOARD']}
-        value={tab}
-        onChange={setTab}
-        style={{ marginBottom: 16 }}
-      />
-      {tab === 'SQUAD' ? (
-        <SquadTab onPing={setPingTarget} />
-      ) : (
-        <LeaderboardTab />
-      )}
-      <PingSheet member={pingTarget} onClose={() => setPingTarget(null)} />
-    </ScrollView>
+    <ScreenState>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.bg }}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.title}>Squad</Text>
+        <SegmentedControl
+          segments={['SQUAD', 'LEADERBOARD']}
+          value={tab}
+          onChange={setTab}
+          style={{ marginBottom: 16 }}
+        />
+        {tab === 'SQUAD' ? (
+          <SquadTab onPing={setPingTarget} />
+        ) : (
+          <LeaderboardTab />
+        )}
+        <PingSheet member={pingTarget} onClose={() => setPingTarget(null)} />
+      </ScrollView>
+    </ScreenState>
   );
 }
 
@@ -299,6 +479,17 @@ const styles = StyleSheet.create({
     color: colors.accent300,
     marginTop: 3,
   },
+  membersHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  pingCounter: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: colors.neutral500,
+  },
   memberRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -315,6 +506,28 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     color: colors.neutral500,
     marginTop: 1,
+  },
+  pingDisabled: {
+    minHeight: 32,
+    borderWidth: 1,
+    borderColor: colors.neutral700,
+    borderRadius: radius.sm,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pingDisabledText: {
+    fontFamily: font.medium,
+    fontSize: 10.5,
+    letterSpacing: 1.9,
+    color: colors.neutral600,
+  },
+  outOfPings: {
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    color: colors.neutral600,
+    marginTop: 6,
   },
   feedRow: {
     flexDirection: 'row',
@@ -347,6 +560,21 @@ const styles = StyleSheet.create({
     color: colors.neutral500,
     paddingVertical: 10,
   },
+  soloTitle: {
+    fontFamily: font.medium,
+    fontSize: 17,
+    color: colors.text,
+    marginTop: 12,
+  },
+  soloSub: {
+    fontFamily: font.regular,
+    fontSize: 12.5,
+    color: colors.neutral500,
+    marginTop: 6,
+    textAlign: 'center',
+    lineHeight: 18,
+    paddingHorizontal: 16,
+  },
   quipWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -364,6 +592,18 @@ const styles = StyleSheet.create({
     fontFamily: font.regular,
     fontSize: 12.5,
     color: colors.neutral300,
+  },
+  reasonRow: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    borderRadius: radius.sm,
+    marginBottom: 2,
+  },
+  reasonText: {
+    fontFamily: font.regular,
+    fontSize: 14,
+    color: colors.text,
   },
   sendRow: {
     flexDirection: 'row',

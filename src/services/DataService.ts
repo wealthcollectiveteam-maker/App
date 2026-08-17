@@ -1,11 +1,15 @@
+import { CHALLENGE } from '@/constants/challenge';
+import { TIERS } from '@/constants/tiers';
 import { buildScenario } from '@/data/mock';
 import type {
   FinalResults,
   JournalEntry,
   Meal,
   Milestone,
+  ReportReason,
   Scenario,
   ScenarioState,
+  Squad,
 } from '@/data/types';
 
 /**
@@ -24,6 +28,16 @@ export interface IDataService {
   toggleMilestone(id: string, day: number): Milestone[];
   getFinalResults(): FinalResults;
   saveCompletionFeeling(feeling: string | null, text: string): void;
+  // Squad membership (solo mode is squad === null)
+  createSquad(name: string): Squad;
+  joinSquad(code: string): Squad;
+  leaveSquad(): void;
+  // UGC moderation + compliance
+  reportContent(feedItemId: string, reason: ReportReason): void;
+  blockUser(name: string): string[];
+  unblockUser(name: string): string[];
+  getBlockedUsers(): string[];
+  deleteAccount(): void;
 }
 
 let uid = 0;
@@ -32,9 +46,12 @@ const nextId = (prefix: string) => `${prefix}-${Date.now()}-${uid++}`;
 class MockDataService implements IDataService {
   private state: ScenarioState = buildScenario('day12');
   private feeling: { feeling: string | null; text: string } | null = null;
+  private blocked: string[] = [];
+  private reports: { feedItemId: string; reason: ReportReason }[] = [];
 
   loadScenario(scenario: Scenario): ScenarioState {
     this.state = buildScenario(scenario);
+    this.blocked = [];
     return this.state;
   }
 
@@ -97,10 +114,14 @@ class MockDataService implements IDataService {
   }
 
   getFinalResults(): FinalResults {
+    const tier = TIERS[this.state.tier];
+    const workoutTasks = tier.taskKeys.filter((k) =>
+      k.startsWith('workout'),
+    ).length;
     return {
-      workouts: 150,
-      pagesRead: 750,
-      gallons: 75,
+      workouts: CHALLENGE.days * workoutTasks,
+      pagesRead: CHALLENGE.days * 10,
+      gallons: CHALLENGE.days,
       day1PhotoUri: null,
       day75PhotoUri: this.state.proofs.photo ?? null,
     };
@@ -109,6 +130,81 @@ class MockDataService implements IDataService {
   saveCompletionFeeling(feeling: string | null, text: string): void {
     this.feeling = { feeling, text };
   }
+
+  createSquad(name: string): Squad {
+    const squad: Squad = {
+      name,
+      code: 'K7X2FD',
+      streak: 0,
+      members: [
+        {
+          id: 'you',
+          name: 'You',
+          initials: 'YO',
+          level: 1,
+          doneToday: 0,
+          isSelf: true,
+        },
+      ],
+    };
+    this.state.squad = squad;
+    return squad;
+  }
+
+  joinSquad(code: string): Squad {
+    // Mock: any code joins the demo squad.
+    const squad: Squad = {
+      name: 'Group 1',
+      code: code.toUpperCase(),
+      streak: 9,
+      members: [
+        { id: 'you', name: 'You', initials: 'YO', level: 1, doneToday: 0, isSelf: true },
+        { id: 'maya', name: 'Maya', initials: 'MA', level: 4, doneToday: 1, isSelf: false },
+        { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, doneToday: 0, isSelf: false },
+        { id: 'sam', name: 'Sam', initials: 'SA', level: 2, doneToday: 0, isSelf: false },
+      ],
+    };
+    this.state.squad = squad;
+    return squad;
+  }
+
+  leaveSquad(): void {
+    this.state.squad = null;
+  }
+
+  reportContent(feedItemId: string, reason: ReportReason): void {
+    this.reports.push({ feedItemId, reason });
+  }
+
+  blockUser(name: string): string[] {
+    if (!this.blocked.includes(name)) this.blocked = [...this.blocked, name];
+    return this.blocked;
+  }
+
+  unblockUser(name: string): string[] {
+    this.blocked = this.blocked.filter((n) => n !== name);
+    return this.blocked;
+  }
+
+  getBlockedUsers(): string[] {
+    return this.blocked;
+  }
+
+  deleteAccount(): void {
+    this.state = buildScenario('day1');
+    this.blocked = [];
+    this.reports = [];
+    this.feeling = null;
+  }
+}
+
+// The backend does not exist yet; EXPO_PUBLIC_USE_MOCK=false is accepted but
+// falls back to the mock with a warning rather than crashing.
+const USE_MOCK = (process.env.EXPO_PUBLIC_USE_MOCK ?? 'true') !== 'false';
+if (!USE_MOCK) {
+  console.warn(
+    'EXPO_PUBLIC_USE_MOCK=false requested, but no backend implementation exists yet — using mock DataService.',
+  );
 }
 
 export const DataService: IDataService = new MockDataService();

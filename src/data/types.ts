@@ -80,6 +80,18 @@ export interface FinalResults {
   day75PhotoUri: string | null;
 }
 
+export type ReportReason =
+  | 'Spam'
+  | 'Harassment'
+  | 'Inappropriate content'
+  | 'Other';
+
+export interface NotificationPrefs {
+  pings: boolean;
+  squadActivity: boolean;
+  dailyReminder: boolean;
+}
+
 export interface ScenarioState {
   tier: Tier;
   day: number;
@@ -95,7 +107,8 @@ export interface ScenarioState {
   journal: JournalEntry[];
   meals: Meal[];
   milestones: Milestone[];
-  squad: Squad;
+  /** null = solo mode. A squad is optional, not assumed. */
+  squad: Squad | null;
   feed: FeedItem[];
   leaderboardWeek: LeaderRow[];
   leaderboardAllTime: LeaderRow[];

@@ -8,6 +8,7 @@ import {
   SignOutIcon as SignOut,
   TrophyIcon as Trophy,
 } from 'phosphor-react-native';
+import { useRouter } from 'expo-router';
 import React from 'react';
 import {
   Pressable,
@@ -18,7 +19,9 @@ import {
 } from 'react-native';
 
 import { FlairAvatar } from '@/components/FlairAvatar';
+import { ScreenState } from '@/components/ScreenState';
 import { Card, Kicker } from '@/components/ui';
+import { CHALLENGE, XP } from '@/constants/challenge';
 import {
   selectLevel,
   selectXpIntoLevel,
@@ -32,8 +35,8 @@ const BADGES = [
   { key: 'dayone', label: 'DAY ONE', Icon: Flag, unlocked: (s: BadgeState) => s.day >= 1 && (s.perfectDays >= 1 || s.day > 1) },
   { key: 'weekone', label: 'WEEK ONE', Icon: Fire, unlocked: (s: BadgeState) => s.bestFlame >= 7 },
   { key: 'digits', label: 'DOUBLE DIGITS', Icon: Lightning, unlocked: (s: BadgeState) => s.bestFlame >= 10 },
-  { key: 'halfway', label: 'HALFWAY', Icon: Diamond, unlocked: (s: BadgeState) => s.day >= 38 },
-  { key: 'finisher', label: 'FINISHER', Icon: Trophy, unlocked: (s: BadgeState) => s.day >= 75 && s.dayComplete },
+  { key: 'halfway', label: 'HALFWAY', Icon: Diamond, unlocked: (s: BadgeState) => s.day >= Math.ceil(CHALLENGE.days / 2) },
+  { key: 'finisher', label: 'FINISHER', Icon: Trophy, unlocked: (s: BadgeState) => s.day >= CHALLENGE.days && s.dayComplete },
 ];
 
 interface BadgeState {
@@ -51,6 +54,8 @@ export default function YouScreen() {
   const dayComplete = useAppStore((s) => s.dayComplete);
   const why = useAppStore((s) => s.why);
   const squad = useAppStore((s) => s.squad);
+  const profileName = useAppStore((s) => s.profileName);
+  const router = useRouter();
 
   const level = selectLevel(xp);
   const into = selectXpIntoLevel(xp);
@@ -58,19 +63,27 @@ export default function YouScreen() {
   const badgeState: BadgeState = { day, bestFlame, perfectDays, dayComplete };
 
   return (
+    <ScreenState>
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.bg }}
       contentContainerStyle={styles.content}
     >
       <View style={{ alignItems: 'center', marginTop: 6 }}>
-        <FlairAvatar initials="YO" level={level} size={58} />
-        <Text style={styles.name}>You</Text>
+        <FlairAvatar
+          initials={profileName.slice(0, 2).toUpperCase()}
+          level={level}
+          size={58}
+        />
+        <Text style={styles.name}>{profileName}</Text>
         <Text style={styles.meta}>
           LVL {level} · {xp.toLocaleString()} XP · Day {day}
         </Text>
         <View style={styles.xpTrack}>
           <View
-            style={[styles.xpFill, { width: `${(into / 800) * 100}%` }]}
+            style={[
+              styles.xpFill,
+              { width: `${(into / XP.perLevel) * 100}%` },
+            ]}
           />
         </View>
         <Text style={styles.xpHint}>
@@ -126,8 +139,8 @@ export default function YouScreen() {
 
       <View style={{ marginTop: 12 }}>
         {[
-          { label: 'Settings', Icon: Gear, meta: null, onPress: () => toast('Settings — coming soon') },
-          { label: 'Invite code', Icon: CaretRight, meta: squad.code, onPress: () => toast('Invite code copied') },
+          { label: 'Settings', Icon: Gear, meta: null, onPress: () => router.push('/settings') },
+          { label: 'Invite code', Icon: CaretRight, meta: squad?.code ?? 'Solo', onPress: () => toast(squad ? 'Invite code copied' : 'Running solo — create a squad from the Squad tab') },
           { label: 'Sign out', Icon: SignOut, meta: null, onPress: () => toast('Signed out (mock)') },
         ].map(({ label, Icon, meta, onPress }) => (
           <Pressable key={label} onPress={onPress} style={styles.row}>
@@ -138,6 +151,7 @@ export default function YouScreen() {
         ))}
       </View>
     </ScrollView>
+    </ScreenState>
   );
 }
 

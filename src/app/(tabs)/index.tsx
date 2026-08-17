@@ -4,24 +4,25 @@ import {
   CameraIcon as Camera,
   CheckSquareIcon as CheckSquare,
   SquareIcon as Square,
+  UsersThreeIcon as UsersThree,
 } from 'phosphor-react-native';
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { FlairAvatar } from '@/components/FlairAvatar';
 import { ProgressRing } from '@/components/ProgressRing';
+import { ScreenState } from '@/components/ScreenState';
 import { Card, FadingDivider, Kicker, OutlineButton } from '@/components/ui';
-import { TASKS } from '@/data/mock';
-import type { Tier } from '@/data/types';
-import { selectDoneCount, useAppStore } from '@/store/useAppStore';
+import { CHALLENGE } from '@/constants/challenge';
+import { missedDayCopy } from '@/constants/tiers';
+import type { TaskDef } from '@/data/types';
+import {
+  selectDoneCount,
+  selectTasks,
+  useAppStore,
+} from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
 import { colors, font, radius, space } from '@/theme/tokens';
-
-const MISSED_COPY: Record<Tier, string> = {
-  hard: 'Hard rules: the clock resets. Day 1 — again.',
-  medium: 'Streak broken. Day 13 still counts. Lock back in.',
-  soft: 'A miss, not a quit. Pick it back up today.',
-};
 
 function StatusBanner() {
   const day = useAppStore((s) => s.day);
@@ -30,7 +31,7 @@ function StatusBanner() {
   const dayComplete = useAppStore((s) => s.dayComplete);
   const router = useRouter();
 
-  if (day === 75 && dayComplete) {
+  if (day === CHALLENGE.days && dayComplete) {
     return (
       <LinearGradient
         colors={[colors.celebrationGround, colors.surface]}
@@ -40,7 +41,7 @@ function StatusBanner() {
       >
         <Kicker color={colors.accent200}>Challenge complete</Kicker>
         <Text style={styles.day75Title}>
-          75 days. Every task. Never missed.
+          {CHALLENGE.days} days. Every task. Never missed.
         </Text>
         <OutlineButton
           label="See your results"
@@ -52,11 +53,10 @@ function StatusBanner() {
   }
 
   if (missedDay) {
-    const copy = MISSED_COPY[tier].replace('Day 13', `Day ${day}`);
     return (
       <Card style={{ borderWidth: 1, borderColor: colors.neutral700 }}>
         <Kicker color={colors.neutral400}>Streak broken</Kicker>
-        <Text style={styles.bannerBody}>{copy}</Text>
+        <Text style={styles.bannerBody}>{missedDayCopy(tier, day)}</Text>
       </Card>
     );
   }
@@ -64,7 +64,7 @@ function StatusBanner() {
   if (day === 1) {
     return (
       <Card style={{ borderWidth: 1, borderColor: colors.accent800 }}>
-        <Kicker>Day 1 of 75</Kicker>
+        <Kicker>Day 1 of {CHALLENGE.days}</Kicker>
         <Text style={styles.bannerBody}>It starts now.</Text>
       </Card>
     );
@@ -73,9 +73,8 @@ function StatusBanner() {
   return null;
 }
 
-function TaskRow({ taskKey }: { taskKey: (typeof TASKS)[number]['key'] }) {
-  const task = TASKS.find((t) => t.key === taskKey)!;
-  const doneAt = useAppStore((s) => s.tasksDone[taskKey]);
+function TaskRow({ task }: { task: TaskDef }) {
+  const doneAt = useAppStore((s) => s.tasksDone[task.key]);
   const completeTask = useAppStore((s) => s.completeTask);
   const uncompleteTask = useAppStore((s) => s.uncompleteTask);
   const done = !!doneAt;
@@ -84,9 +83,9 @@ function TaskRow({ taskKey }: { taskKey: (typeof TASKS)[number]['key'] }) {
     <Pressable
       onPress={() => {
         if (done) {
-          uncompleteTask(taskKey);
+          uncompleteTask(task.key);
         } else {
-          completeTask(taskKey);
+          completeTask(task.key);
           toast('+20 XP');
         }
       }}
@@ -122,7 +121,29 @@ function TaskRow({ taskKey }: { taskKey: (typeof TASKS)[number]['key'] }) {
 
 function SquadSnapshot() {
   const squad = useAppStore((s) => s.squad);
+  const taskCount = useAppStore((s) => selectTasks(s).length);
   const router = useRouter();
+
+  if (!squad) {
+    return (
+      <Pressable onPress={() => router.navigate('/squad')}>
+        <Card style={styles.soloCard}>
+          <UsersThree size={22} color={colors.neutral500} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.soloTitle}>Running it solo.</Text>
+            <Text style={styles.soloSub}>
+              Invite a squad when you want witnesses.
+            </Text>
+          </View>
+          <OutlineButton
+            label="Invite"
+            small
+            onPress={() => router.navigate('/squad')}
+          />
+        </Card>
+      </Pressable>
+    );
+  }
 
   return (
     <Pressable onPress={() => router.navigate('/squad')}>
@@ -137,7 +158,9 @@ function SquadSnapshot() {
           {squad.members.map((m) => (
             <View key={m.id} style={{ alignItems: 'center', gap: 5 }}>
               <FlairAvatar initials={m.initials} level={m.level} size={36} />
-              <Text style={styles.snapshotCount}>{m.doneToday} of 6</Text>
+              <Text style={styles.snapshotCount}>
+                {Math.min(m.doneToday, taskCount)} of {taskCount}
+              </Text>
             </View>
           ))}
         </View>
@@ -150,45 +173,52 @@ export default function HomeScreen() {
   const day = useAppStore((s) => s.day);
   const why = useAppStore((s) => s.why);
   const dayComplete = useAppStore((s) => s.dayComplete);
+  const tasks = useAppStore(selectTasks);
   const doneCount = useAppStore(selectDoneCount);
   const router = useRouter();
-  const allDone = doneCount === 6;
+  const allDone = doneCount === tasks.length;
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.bg }}
-      contentContainerStyle={styles.content}
-    >
-      <StatusBanner />
+    <ScreenState>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.bg }}
+        contentContainerStyle={styles.content}
+      >
+        <StatusBanner />
 
-      <View style={{ alignItems: 'center', marginTop: 18 }}>
-        <ProgressRing day={day} />
-        <Text style={styles.todayCount}>{doneCount} OF 6 TODAY</Text>
-        <Text style={styles.why}>{'\u201C'}{why}{'\u201D'}</Text>
-      </View>
+        <View style={{ alignItems: 'center', marginTop: 18 }}>
+          <ProgressRing day={day} total={CHALLENGE.days} />
+          <Text style={styles.todayCount}>
+            {doneCount} OF {tasks.length} TODAY
+          </Text>
+          <Text style={styles.why}>{'\u201C'}{why}{'\u201D'}</Text>
+        </View>
 
-      <FadingDivider style={{ marginVertical: 18 }} />
+        <FadingDivider style={{ marginVertical: 18 }} />
 
-      <View>
-        {TASKS.map((t) => (
-          <TaskRow key={t.key} taskKey={t.key} />
-        ))}
-      </View>
+        <View>
+          {tasks.map((t) => (
+            <TaskRow key={t.key} task={t} />
+          ))}
+        </View>
 
-      {!dayComplete && (
-        <OutlineButton
-          label={allDone ? 'Finish the day' : 'Go to check-in'}
-          onPress={() =>
-            allDone ? router.push('/celebration') : router.navigate('/checkin')
-          }
-          style={{ marginTop: 16 }}
-        />
-      )}
+        {!dayComplete && (
+          <OutlineButton
+            label={allDone ? 'Finish the day' : 'Go to check-in'}
+            onPress={() =>
+              allDone
+                ? router.push('/celebration')
+                : router.navigate('/checkin')
+            }
+            style={{ marginTop: 16 }}
+          />
+        )}
 
-      <View style={{ marginTop: 16 }}>
-        <SquadSnapshot />
-      </View>
-    </ScrollView>
+        <View style={{ marginTop: 16 }}>
+          <SquadSnapshot />
+        </View>
+      </ScrollView>
+    </ScreenState>
   );
 }
 
@@ -274,5 +304,21 @@ const styles = StyleSheet.create({
     fontFamily: font.regular,
     fontSize: 10.5,
     color: colors.neutral500,
+  },
+  soloCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  soloTitle: {
+    fontFamily: font.medium,
+    fontSize: 14,
+    color: colors.text,
+  },
+  soloSub: {
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    color: colors.neutral500,
+    marginTop: 2,
   },
 });

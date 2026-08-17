@@ -5,13 +5,14 @@ import { Animated, Platform, StyleSheet, Text } from 'react-native';
 
 import { CelebrationGround } from '@/components/CelebrationGround';
 import { Kicker, OutlineButton } from '@/components/ui';
+import { XP } from '@/constants/challenge';
 import { useAppStore } from '@/store/useAppStore';
 import { colors, font } from '@/theme/tokens';
 
 export default function CelebrationScreen() {
   const router = useRouter();
   const day = useAppStore((s) => s.day);
-  const squadName = useAppStore((s) => s.squad.name);
+  const squadName = useAppStore((s) => s.squad?.name ?? null);
   const sealDay = useAppStore((s) => s.sealDay);
 
   const [fade] = useState(() => new Animated.Value(0));
@@ -43,7 +44,8 @@ export default function CelebrationScreen() {
         <Text style={styles.dayNumber}>{day}</Text>
         <Text style={styles.locked}>LOCKED IN.</Text>
         <Text style={styles.meta}>
-          +120 XP · flame +1 · {squadName} notified
+          +{XP.dayComplete} XP · flame +1
+          {squadName ? ` · ${squadName} notified` : ''}
         </Text>
         <OutlineButton
           label="Keep going"

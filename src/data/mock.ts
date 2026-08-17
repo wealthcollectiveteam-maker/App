@@ -1,27 +1,6 @@
-import type {
-  LeaderRow,
-  Scenario,
-  ScenarioState,
-  Squad,
-  TaskDef,
-} from './types';
+import { tierTaskCount } from '@/constants/tiers';
 
-export const TASKS: TaskDef[] = [
-  { key: 'workout1', label: 'Workout 1 — 45 min', sub: '45 minutes. Indoors or out. No skipping.', proof: true },
-  { key: 'workout2', label: 'Workout 2 — outdoors', sub: 'Outdoors, whatever the weather.', proof: true },
-  { key: 'water', label: 'Gallon of water', sub: 'One gallon across the day.', proof: false },
-  { key: 'read', label: 'Read 10 pages', sub: 'Ten pages of a real book.', proof: false },
-  { key: 'diet', label: 'Follow the diet', sub: 'No cheat meals. No alcohol.', proof: false },
-  { key: 'photo', label: 'Progress photo', sub: 'One photo. Same spot every day.', proof: true },
-];
-
-export const XP = {
-  task: 20,
-  journal: 10,
-  milestone: 50,
-  dayComplete: 120,
-  perLevel: 800,
-} as const;
+import type { LeaderRow, Scenario, ScenarioState, Squad } from './types';
 
 export const PING_QUIPS = [
   'No excuses.',
@@ -145,7 +124,7 @@ export function buildScenario(scenario: Scenario): ScenarioState {
         ]),
         feed: [
           { id: 'f4', kind: 'ping-in', who: 'Maya', text: '"Water won\u2019t drink itself."', timestamp: mins(38) },
-          { id: 'f3', kind: 'complete', who: 'Maya', text: 'locked in Day 12 — 6 of 6.', timestamp: mins(52) },
+          { id: 'f3', kind: 'complete', who: 'Maya', text: `locked in Day 12 — ${tierTaskCount('hard')} of ${tierTaskCount('hard')}.`, timestamp: mins(52) },
           { id: 'f2', kind: 'proof', who: 'Jordan', text: 'attached proof — Workout 2.', timestamp: mins(140) },
           { id: 'f1', kind: 'complete', who: 'Sam', text: 'checked off Gallon of water.', timestamp: mins(220) },
         ],
@@ -246,7 +225,7 @@ export function buildScenario(scenario: Scenario): ScenarioState {
           { id: 'sam', name: 'Sam', initials: 'SA', level: 2, doneToday: 3, isSelf: false },
         ]),
         feed: [
-          { id: 'f2', kind: 'complete', who: 'You', text: 'locked in Day 75 — 6 of 6.', timestamp: mins(20) },
+          { id: 'f2', kind: 'complete', who: 'You', text: `locked in Day 75 — ${tierTaskCount('hard')} of ${tierTaskCount('hard')}.`, timestamp: mins(20) },
           { id: 'f1', kind: 'ping-in', who: 'Maya', text: '"Still grinding?"', timestamp: mins(200) },
         ],
         leaderboardWeek: lb.week,

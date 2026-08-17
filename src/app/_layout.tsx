@@ -9,6 +9,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { ToastHost } from '@/components/ToastHost';
 import { colors } from '@/theme/tokens';
@@ -29,25 +30,27 @@ export default function RootLayout() {
   if (!loaded) return null;
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <StatusBar style="light" />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: colors.bg },
-        }}
-      >
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen
-          name="celebration"
-          options={{ presentation: 'transparentModal', animation: 'fade' }}
-        />
-        <Stack.Screen
-          name="finish"
-          options={{ presentation: 'transparentModal', animation: 'fade' }}
-        />
-      </Stack>
-      <ToastHost />
-    </View>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <View style={{ flex: 1, backgroundColor: colors.bg }}>
+        <StatusBar style="light" />
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: colors.bg },
+          }}
+        >
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen
+            name="celebration"
+            options={{ presentation: 'transparentModal', animation: 'fade' }}
+          />
+          <Stack.Screen
+            name="finish"
+            options={{ presentation: 'transparentModal', animation: 'fade' }}
+          />
+        </Stack>
+        <ToastHost />
+      </View>
+    </GestureHandlerRootView>
   );
 }

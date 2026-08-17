@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 
+import { ScreenState } from '@/components/ScreenState';
 import {
   Card,
   Kicker,
@@ -226,22 +227,24 @@ export default function TrackScreen() {
   const [tab, setTab] = useState('JOURNAL');
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.bg }}
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
-    >
-      <Text style={styles.title}>Track</Text>
-      <SegmentedControl
-        segments={['JOURNAL', 'MEALS', 'MILESTONES']}
-        value={tab}
-        onChange={setTab}
-        style={{ marginBottom: 16 }}
-      />
-      {tab === 'JOURNAL' && <JournalTab />}
-      {tab === 'MEALS' && <MealsTab />}
-      {tab === 'MILESTONES' && <MilestonesTab />}
-    </ScrollView>
+    <ScreenState>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.bg }}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.title}>Track</Text>
+        <SegmentedControl
+          segments={['JOURNAL', 'MEALS', 'MILESTONES']}
+          value={tab}
+          onChange={setTab}
+          style={{ marginBottom: 16 }}
+        />
+        {tab === 'JOURNAL' && <JournalTab />}
+        {tab === 'MEALS' && <MealsTab />}
+        {tab === 'MILESTONES' && <MilestonesTab />}
+      </ScrollView>
+    </ScreenState>
   );
 }
 
