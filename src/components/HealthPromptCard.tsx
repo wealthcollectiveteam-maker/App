@@ -74,6 +74,9 @@ export function HealthPromptCards() {
         onConfirm={() => {
           completeTask(pendingWorkout.key);
           toast('+20 XP');
+          // One Health workout vouches for one task — don't re-prompt for
+          // the second workout off the same activity.
+          dismissHealthPrompt('workout');
         }}
         onDismiss={() => dismissHealthPrompt('workout')}
       />,

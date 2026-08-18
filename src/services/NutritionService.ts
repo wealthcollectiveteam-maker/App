@@ -17,12 +17,14 @@ const SEARCH_URL = 'https://api.nal.usda.gov/fdc/v1/foods/search';
 const CACHE_PREFIX = 'ranked.nutrition.food.';
 const QUERY_CACHE_PREFIX = 'ranked.nutrition.query.';
 
-// USDA nutrient numbers
+// USDA nutrient identifiers. The search endpoint reports legacy
+// `nutrientNumber` strings ("208" = Energy kcal) alongside modern
+// `nutrientId` values (1008 = Energy); match on either.
 const NUTRIENTS = {
-  calories: ['1008', '2047', '2048'], // Energy (kcal, Atwater variants)
-  protein: ['1003'],
-  carbs: ['1005'],
-  fat: ['1004'],
+  calories: { numbers: ['208'], ids: [1008, 2047, 2048] },
+  protein: { numbers: ['203'], ids: [1003] },
+  carbs: { numbers: ['205'], ids: [1005] },
+  fat: { numbers: ['204'], ids: [1004] },
 } as const;
 
 interface FdcNutrient {
@@ -42,12 +44,16 @@ interface FdcFood {
   foodNutrients?: FdcNutrient[];
 }
 
-function pickNutrient(nutrients: FdcNutrient[], numbers: readonly string[]): number {
-  for (const num of numbers) {
-    const hit = nutrients.find((n) => n.nutrientNumber === num);
-    if (hit?.value != null) return hit.value;
-  }
-  return 0;
+function pickNutrient(
+  nutrients: FdcNutrient[],
+  spec: { numbers: readonly string[]; ids: readonly number[] },
+): number {
+  const hit = nutrients.find(
+    (n) =>
+      (n.nutrientNumber && spec.numbers.includes(n.nutrientNumber)) ||
+      (n.nutrientId != null && spec.ids.includes(n.nutrientId)),
+  );
+  return hit?.value ?? 0;
 }
 
 function normalize(food: FdcFood): FoodSearchResult {
