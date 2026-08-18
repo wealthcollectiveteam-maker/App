@@ -11,6 +11,7 @@ import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { FlairAvatar } from '@/components/FlairAvatar';
+import { HealthPromptCards } from '@/components/HealthPromptCard';
 import { ProgressRing } from '@/components/ProgressRing';
 import { ScreenState } from '@/components/ScreenState';
 import { Card, FadingDivider, Kicker, OutlineButton } from '@/components/ui';
@@ -204,6 +205,7 @@ export default function HomeScreen() {
         contentContainerStyle={styles.content}
       >
         <StatusBanner />
+        <HealthPromptCards />
 
         <View style={{ alignItems: 'center', marginTop: 18 }}>
           <ProgressRing day={day} total={CHALLENGE.days} />

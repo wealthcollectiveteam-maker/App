@@ -44,10 +44,60 @@ export interface JournalEntry {
   text: string;
 }
 
+/** Optional nutrition enrichment for a logged meal. Never required. */
+export interface MealNutrition {
+  fdcId: number;
+  foodName: string;
+  servingQty: number;
+  servingUnit: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+}
+
 export interface Meal {
   id: string;
   text: string;
   timestamp: number;
+  nutrition?: MealNutrition | null;
+}
+
+/** One USDA search hit, normalized per 100g (or per branded serving). */
+export interface FoodSearchResult {
+  fdcId: number;
+  description: string;
+  brand: string | null;
+  /** Base portion the nutrient values refer to. */
+  servingQty: number;
+  servingUnit: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+}
+
+export interface DailyNutritionTotals {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  mealsWithNutrition: number;
+}
+
+export interface HealthPrefs {
+  healthEnabled: boolean;
+  dietPromptEnabled: boolean;
+  workoutPromptEnabled: boolean;
+  weightPrefillEnabled: boolean;
+}
+
+/** Optional weekly weight+mood check-in. Private to the owner, always skippable. */
+export interface MetricCheckin {
+  id: string;
+  timestamp: number;
+  weightKg: number | null;
+  mood: number | null; // 1–5
 }
 
 export interface Milestone {

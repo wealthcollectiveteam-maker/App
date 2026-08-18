@@ -16,7 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Card, Kicker, OutlineButton } from '@/components/ui';
-import type { NotificationPrefs } from '@/data/types';
+import type { HealthPrefs, NotificationPrefs } from '@/data/types';
 import { useAppStore } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
 import { colors, font, radius, space } from '@/theme/tokens';
@@ -25,6 +25,12 @@ const PREF_ROWS: { key: keyof NotificationPrefs; label: string; sub: string }[] 
   { key: 'pings', label: 'Pings', sub: 'When a squadmate pings you' },
   { key: 'squadActivity', label: 'Squad activity', sub: 'Completions and proof in your squad' },
   { key: 'dailyReminder', label: 'Daily reminder', sub: 'An evening nudge if tasks are open' },
+];
+
+const HEALTH_SUB_ROWS: { key: keyof HealthPrefs; label: string; sub: string }[] = [
+  { key: 'dietPromptEnabled', label: 'Diet prompt', sub: 'Suggest marking diet complete when food is logged elsewhere' },
+  { key: 'workoutPromptEnabled', label: 'Workout prompt', sub: 'Suggest marking workouts found in Apple Health' },
+  { key: 'weightPrefillEnabled', label: 'Weight pre-fill', sub: 'Pre-fill the weekly check-in from your latest weight' },
 ];
 
 export default function SettingsScreen() {
@@ -40,6 +46,10 @@ export default function SettingsScreen() {
   const blockedUsers = useAppStore((s) => s.blockedUsers);
   const unblockUser = useAppStore((s) => s.unblockUser);
   const deleteAccount = useAppStore((s) => s.deleteAccount);
+  const healthPrefs = useAppStore((s) => s.healthPrefs);
+  const setHealthPref = useAppStore((s) => s.setHealthPref);
+  const weeklyCheckinEnabled = useAppStore((s) => s.weeklyCheckinEnabled);
+  const setWeeklyCheckinEnabled = useAppStore((s) => s.setWeeklyCheckinEnabled);
 
   const [name, setName] = useState(profileName);
   const [whyDraft, setWhyDraft] = useState(why);
@@ -85,6 +95,67 @@ export default function SettingsScreen() {
             />
           </View>
         ))}
+      </Card>
+
+      <Kicker style={styles.sectionKicker}>Apple Health</Kicker>
+      <Card>
+        <View style={styles.prefRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowLabel}>Connect Apple Health</Text>
+            <Text style={styles.rowSub}>
+              Read-only. Data stays on this device — never uploaded, never
+              visible to squadmates.
+            </Text>
+          </View>
+          <Switch
+            value={healthPrefs.healthEnabled}
+            onValueChange={(v) => setHealthPref('healthEnabled', v)}
+            trackColor={{ false: colors.neutral800, true: colors.accent700 }}
+            thumbColor={
+              healthPrefs.healthEnabled ? colors.accent300 : colors.neutral500
+            }
+          />
+        </View>
+        {healthPrefs.healthEnabled &&
+          HEALTH_SUB_ROWS.map(({ key, label, sub }) => (
+            <View key={key} style={[styles.prefRow, styles.rowBorder]}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowLabel}>{label}</Text>
+                <Text style={styles.rowSub}>{sub}</Text>
+              </View>
+              <Switch
+                value={healthPrefs[key]}
+                onValueChange={(v) => setHealthPref(key, v)}
+                trackColor={{
+                  false: colors.neutral800,
+                  true: colors.accent700,
+                }}
+                thumbColor={
+                  healthPrefs[key] ? colors.accent300 : colors.neutral500
+                }
+              />
+            </View>
+          ))}
+      </Card>
+
+      <Kicker style={styles.sectionKicker}>Track</Kicker>
+      <Card>
+        <View style={styles.prefRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowLabel}>Weekly check-in card</Text>
+            <Text style={styles.rowSub}>
+              The optional weight & mood card in Track. Off hides it for good.
+            </Text>
+          </View>
+          <Switch
+            value={weeklyCheckinEnabled}
+            onValueChange={setWeeklyCheckinEnabled}
+            trackColor={{ false: colors.neutral800, true: colors.accent700 }}
+            thumbColor={
+              weeklyCheckinEnabled ? colors.accent300 : colors.neutral500
+            }
+          />
+        </View>
       </Card>
 
       <Kicker style={styles.sectionKicker}>Profile</Kicker>

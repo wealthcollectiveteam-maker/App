@@ -5,9 +5,13 @@ import { TIERS } from '@/constants/tiers';
 import { buildScenario } from '@/data/mock';
 import type {
   ActiveTimer,
+  DailyNutritionTotals,
   FinalResults,
+  FoodSearchResult,
   JournalEntry,
   Meal,
+  MealNutrition,
+  MetricCheckin,
   Milestone,
   ReportReason,
   Scenario,
@@ -15,6 +19,7 @@ import type {
   Squad,
   TaskKey,
 } from '@/data/types';
+import { NutritionService } from '@/services/NutritionService';
 
 const TIMER_STORAGE_KEY = 'ranked.activeTimer.v1';
 
@@ -52,6 +57,14 @@ export interface IDataService {
   getActiveTimer(): Promise<ActiveTimer | null>;
   /** Records real elapsed training seconds against the completed task. */
   completeTimedTask(taskKey: TaskKey, elapsedSeconds: number): Promise<void>;
+  // Nutrition — optional enrichment on meals; owner-read-only when synced.
+  searchFoods(query: string): Promise<FoodSearchResult[]>;
+  attachNutrition(mealId: string, nutrition: MealNutrition): Meal[];
+  removeNutrition(mealId: string): Meal[];
+  getDailyNutritionTotals(): DailyNutritionTotals | null;
+  // Optional weekly metrics — private to the owner, never social.
+  saveMetricCheckin(weightKg: number | null, mood: number | null): MetricCheckin;
+  getMetricHistory(): MetricCheckin[];
 }
 
 let uid = 0;
@@ -85,7 +98,19 @@ class MockDataService implements IDataService {
   }
 
   logMeal(text: string, at: number = Date.now()): Meal {
-    const meal: Meal = { id: nextId('ml'), text, timestamp: at };
+    // Re-logging a meal (e.g. via a "recent" chip) carries its previously
+    // attached nutrition forward automatically — no network call.
+    const previous = this.state.meals.find(
+      (m) =>
+        m.text.trim().toLowerCase() === text.trim().toLowerCase() &&
+        m.nutrition,
+    );
+    const meal: Meal = {
+      id: nextId('ml'),
+      text,
+      timestamp: at,
+      nutrition: previous?.nutrition ? { ...previous.nutrition } : null,
+    };
     this.state.meals = [meal, ...this.state.meals];
     return meal;
   }
@@ -210,7 +235,9 @@ class MockDataService implements IDataService {
     this.reports = [];
     this.feeling = null;
     this.timedSessions = [];
+    this.metricCheckins = [];
     AsyncStorage.removeItem(TIMER_STORAGE_KEY).catch(() => {});
+    NutritionService.clearCache().catch(() => {});
   }
 
   // ---- Workout timer ----
@@ -260,6 +287,69 @@ class MockDataService implements IDataService {
       at: Date.now(),
     });
     await AsyncStorage.removeItem(TIMER_STORAGE_KEY);
+  }
+
+  // ---- Nutrition ----
+
+  searchFoods(query: string): Promise<FoodSearchResult[]> {
+    return NutritionService.searchFoods(query);
+  }
+
+  attachNutrition(mealId: string, nutrition: MealNutrition): Meal[] {
+    this.state.meals = this.state.meals.map((m) =>
+      m.id === mealId ? { ...m, nutrition } : m,
+    );
+    return this.state.meals;
+  }
+
+  removeNutrition(mealId: string): Meal[] {
+    this.state.meals = this.state.meals.map((m) =>
+      m.id === mealId ? { ...m, nutrition: null } : m,
+    );
+    return this.state.meals;
+  }
+
+  getDailyNutritionTotals(): DailyNutritionTotals | null {
+    const withNutrition = this.state.meals.filter((m) => m.nutrition);
+    if (withNutrition.length === 0) return null;
+    const totals = withNutrition.reduce(
+      (acc, m) => ({
+        calories: acc.calories + m.nutrition!.calories,
+        protein: acc.protein + m.nutrition!.protein,
+        carbs: acc.carbs + m.nutrition!.carbs,
+        fat: acc.fat + m.nutrition!.fat,
+        mealsWithNutrition: acc.mealsWithNutrition + 1,
+      }),
+      { calories: 0, protein: 0, carbs: 0, fat: 0, mealsWithNutrition: 0 },
+    );
+    return {
+      ...totals,
+      protein: Math.round(totals.protein),
+      carbs: Math.round(totals.carbs),
+      fat: Math.round(totals.fat),
+    };
+  }
+
+  // ---- Weekly metric check-ins (owner-only; never social) ----
+
+  private metricCheckins: MetricCheckin[] = [];
+
+  saveMetricCheckin(
+    weightKg: number | null,
+    mood: number | null,
+  ): MetricCheckin {
+    const checkin: MetricCheckin = {
+      id: nextId('mc'),
+      timestamp: Date.now(),
+      weightKg,
+      mood,
+    };
+    this.metricCheckins = [checkin, ...this.metricCheckins];
+    return checkin;
+  }
+
+  getMetricHistory(): MetricCheckin[] {
+    return this.metricCheckins;
   }
 }
 

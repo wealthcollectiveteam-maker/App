@@ -34,7 +34,15 @@
           "imageWidth": 76
         }
       ],
-      "expo-audio"
+      "expo-audio",
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "Ranked Fitness reads your logged food energy, most recent weight, and today's workouts so it can suggest marking your daily tasks complete and pre-fill your optional weekly weight check-in. This data stays on your device and is never uploaded or shared.",
+          "NSHealthUpdateUsageDescription": false,
+          "background": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

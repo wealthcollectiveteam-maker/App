@@ -1,3 +1,4 @@
+import * as Clipboard from 'expo-clipboard';
 import {
   CheckCircleIcon as CheckCircle,
   CircleIcon as Circle,
@@ -5,14 +6,17 @@ import {
 } from 'phosphor-react-native';
 import React, { useState } from 'react';
 import {
+  Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 
+import { NutritionSheet } from '@/components/NutritionSheet';
 import { ScreenState } from '@/components/ScreenState';
 import {
   Card,
@@ -20,6 +24,8 @@ import {
   OutlineButton,
   SegmentedControl,
 } from '@/components/ui';
+import { WeeklyCheckinCard } from '@/components/WeeklyCheckinCard';
+import type { Meal } from '@/data/types';
 import {
   formatClock,
   relativeTime,
@@ -83,14 +89,55 @@ function JournalTab() {
 function MealsTab() {
   const meals = useAppStore((s) => s.meals);
   const logMeal = useAppStore((s) => s.logMeal);
+  const day = useAppStore((s) => s.day);
   const recent = selectRecentMeals(meals);
   const [draft, setDraft] = useState('');
+  const [nutritionMeal, setNutritionMeal] = useState<Meal | null>(null);
 
   const log = (text: string) => {
     const t = text.trim();
     if (!t) return;
-    logMeal(t);
-    toast(`Logged — ${formatClock()}`);
+    const meal = logMeal(t);
+    toast(
+      meal.nutrition
+        ? `Logged — ${meal.nutrition.calories} cal carried over`
+        : `Logged — ${formatClock()}`,
+    );
+  };
+
+  const withNutrition = meals.filter((m) => m.nutrition);
+  const totals = withNutrition.reduce(
+    (acc, m) => ({
+      calories: acc.calories + m.nutrition!.calories,
+      protein: acc.protein + m.nutrition!.protein,
+      carbs: acc.carbs + m.nutrition!.carbs,
+      fat: acc.fat + m.nutrition!.fat,
+    }),
+    { calories: 0, protein: 0, carbs: 0, fat: 0 },
+  );
+
+  const copyToday = async () => {
+    const lines = [...meals]
+      .reverse()
+      .map(
+        (m) =>
+          `${formatClock(m.timestamp)} — ${m.text}` +
+          (m.nutrition
+            ? ` (${m.nutrition.calories} cal · ${Math.round(m.nutrition.protein)}P · ${Math.round(m.nutrition.carbs)}C · ${Math.round(m.nutrition.fat)}F)`
+            : ''),
+      );
+    const text = `Day ${day} — meals\n${lines.join('\n')}`;
+    if (Platform.OS === 'web') {
+      await Clipboard.setStringAsync(text);
+      toast('Meals copied');
+    } else {
+      try {
+        await Share.share({ message: text });
+      } catch {
+        await Clipboard.setStringAsync(text);
+        toast('Meals copied');
+      }
+    }
   };
 
   return (
@@ -144,6 +191,13 @@ function MealsTab() {
         <Kicker color={colors.neutral500} style={{ marginBottom: 8 }}>
           Today
         </Kicker>
+        {withNutrition.length > 0 && (
+          <Text style={styles.totalsLine}>
+            {totals.calories.toLocaleString()} cal ·{' '}
+            {Math.round(totals.protein)}g protein · {Math.round(totals.carbs)}g
+            carbs · {Math.round(totals.fat)}g fat
+          </Text>
+        )}
         {meals.length === 0 ? (
           <Text style={styles.empty}>Nothing logged yet. Fuel counts too.</Text>
         ) : (
@@ -151,11 +205,36 @@ function MealsTab() {
             <View key={m.id} style={styles.mealRow}>
               <ForkKnife size={16} color={colors.neutral500} />
               <Text style={styles.mealText}>{m.text}</Text>
+              {m.nutrition ? (
+                <Pressable onPress={() => setNutritionMeal(m)} hitSlop={6}>
+                  <Text style={styles.calFigure}>
+                    {m.nutrition.calories} cal
+                  </Text>
+                </Pressable>
+              ) : (
+                <Pressable onPress={() => setNutritionMeal(m)} hitSlop={6}>
+                  <Text style={styles.addNutrition}>+ nutrition</Text>
+                </Pressable>
+              )}
               <Text style={styles.timeMeta}>{formatClock(m.timestamp)}</Text>
             </View>
           ))
         )}
+        {meals.length > 0 && (
+          <OutlineButton
+            label="Copy today's meals"
+            tone="neutral"
+            small
+            onPress={copyToday}
+            style={{ marginTop: 10, alignSelf: 'flex-start' }}
+          />
+        )}
       </View>
+
+      <NutritionSheet
+        meal={nutritionMeal}
+        onClose={() => setNutritionMeal(null)}
+      />
     </View>
   );
 }
@@ -234,6 +313,7 @@ export default function TrackScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.title}>Track</Text>
+        <WeeklyCheckinCard />
         <SegmentedControl
           segments={['JOURNAL', 'MEALS', 'MILESTONES']}
           value={tab}
@@ -339,6 +419,24 @@ const styles = StyleSheet.create({
     fontFamily: font.regular,
     fontSize: 13.5,
     color: colors.text,
+  },
+  totalsLine: {
+    fontFamily: font.regular,
+    fontSize: 12,
+    color: colors.neutral400,
+    marginBottom: 8,
+    fontVariant: ['tabular-nums'],
+  },
+  calFigure: {
+    fontFamily: font.medium,
+    fontSize: 12,
+    color: colors.accent300,
+    fontVariant: ['tabular-nums'],
+  },
+  addNutrition: {
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    color: colors.neutral600,
   },
   milestoneRow: {
     flexDirection: 'row',

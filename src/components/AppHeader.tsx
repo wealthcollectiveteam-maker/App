@@ -38,6 +38,8 @@ export function AppHeader() {
   const setScreenState = useAppStore((s) => s.setScreenState);
   const leaveSquad = useAppStore((s) => s.leaveSquad);
   const joinSquad = useAppStore((s) => s.joinSquad);
+  const healthSimulated = useAppStore((s) => s.healthSimulated);
+  const toggleHealthSimulation = useAppStore((s) => s.toggleHealthSimulation);
   const [devOpen, setDevOpen] = useState(false);
 
   const openDev = () => setDevOpen(true);
@@ -133,6 +135,25 @@ export function AppHeader() {
             {squad
               ? 'Drop the squad to QA solo states.'
               : 'Restore the mock squad.'}
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => {
+            toggleHealthSimulation();
+            setDevOpen(false);
+          }}
+          style={styles.scenarioRow}
+        >
+          <Text style={styles.scenarioLabel}>
+            {healthSimulated
+              ? 'Disable simulated Health data'
+              : 'Simulate Health data'}
+          </Text>
+          <Text style={styles.scenarioSub}>
+            {healthSimulated
+              ? 'Back to real HealthKit (or none on web).'
+              : 'Fake dietary energy, weight and a 47-min workout for QA.'}
           </Text>
         </Pressable>
       </BottomSheet>

@@ -13,6 +13,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { TimerConflictSheet } from '@/components/TimerConflictSheet';
 import { ToastHost } from '@/components/ToastHost';
+import { useAppStore } from '@/store/useAppStore';
 import { remainingSeconds, useTimerStore } from '@/store/useTimerStore';
 import { colors } from '@/theme/tokens';
 
@@ -31,14 +32,17 @@ export default function RootLayout() {
 
   // Timer: rehydrate on cold launch, recompute on foreground. If the target
   // time passed while backgrounded or killed, complete the task now.
+  // Health readings refresh on launch and foreground (on-device only).
   useEffect(() => {
     useTimerStore.getState().hydrate();
+    useAppStore.getState().refreshHealth();
     const sub = AppState.addEventListener('change', (state) => {
       if (state !== 'active') return;
       const { active, completeActive } = useTimerStore.getState();
       if (active && !active.pausedAtISO && remainingSeconds(active) <= 0) {
         completeActive();
       }
+      useAppStore.getState().refreshHealth();
     });
     return () => sub.remove();
   }, []);

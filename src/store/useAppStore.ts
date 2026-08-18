@@ -4,8 +4,11 @@ import { PINGS, XP } from '@/constants/challenge';
 import { TIER_TASKS, TIERS } from '@/constants/tiers';
 import type {
   FeedItem,
+  HealthPrefs,
   JournalEntry,
   Meal,
+  MealNutrition,
+  MetricCheckin,
   Milestone,
   NotificationPrefs,
   ReportReason,
@@ -16,6 +19,11 @@ import type {
   Tier,
 } from '@/data/types';
 import { DataService } from '@/services/DataService';
+import {
+  getHealthService,
+  isHealthSimulated,
+  setHealthSimulation,
+} from '@/services/HealthService';
 
 export function formatClock(ts: number = Date.now()): string {
   const d = new Date(ts);
@@ -45,6 +53,34 @@ export function localDateKey(ts: number = Date.now()): string {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
+/** Coarse local week key — gates the weekly check-in card. */
+export function localWeekKey(ts: number = Date.now()): string {
+  const d = new Date(ts);
+  const start = new Date(d.getFullYear(), 0, 1);
+  const week = Math.floor((d.getTime() - start.getTime()) / (7 * 86_400_000));
+  return `${d.getFullYear()}-W${week}`;
+}
+
+/** On-device Apple Health readings. Render-only; never synced or logged. */
+export interface HealthReadings {
+  dietaryKcal: number | null;
+  bodyMassKg: number | null;
+  workoutMinutes: number | null;
+}
+
+const EMPTY_READINGS: HealthReadings = {
+  dietaryKcal: null,
+  bodyMassKg: null,
+  workoutMinutes: null,
+};
+
+const DEFAULT_HEALTH_PREFS: HealthPrefs = {
+  healthEnabled: true,
+  dietPromptEnabled: true,
+  workoutPromptEnabled: true,
+  weightPrefillEnabled: true,
+};
+
 let feedId = 0;
 
 export type ScreenStateKind = 'ready' | 'loading' | 'error';
@@ -61,6 +97,17 @@ interface AppState extends ScenarioState {
   pingsUsed: { date: string; count: number };
   /** Dev-forced screen state for QA of loading/error UI. */
   screenState: ScreenStateKind;
+  healthPrefs: HealthPrefs;
+  /** On-device only. Never written to a backend or log. */
+  healthReadings: HealthReadings;
+  /** Health prompt dismissals: 'diet' | 'workout' -> local date dismissed. */
+  healthPromptDismissed: Partial<Record<'diet' | 'workout', string>>;
+  healthSimulated: boolean;
+  metricCheckins: MetricCheckin[];
+  /** Week key when the check-in card was dismissed or saved. */
+  checkinHandledWeek: string | null;
+  /** Settings: permanently hide the weekly check-in card. */
+  weeklyCheckinEnabled: boolean;
 
   loadScenario: (scenario: Scenario) => void;
   setTier: (tier: Tier) => void;
@@ -84,6 +131,15 @@ interface AppState extends ScenarioState {
   unblockUser: (name: string) => void;
   updateProfile: (name: string, why: string) => void;
   setNotificationPref: (key: keyof NotificationPrefs, value: boolean) => void;
+  attachNutrition: (mealId: string, nutrition: MealNutrition) => void;
+  removeNutrition: (mealId: string) => void;
+  setHealthPref: (key: keyof HealthPrefs, value: boolean) => void;
+  refreshHealth: () => Promise<void>;
+  dismissHealthPrompt: (kind: 'diet' | 'workout') => void;
+  toggleHealthSimulation: () => void;
+  saveMetricCheckin: (weightKg: number | null, mood: number | null) => void;
+  dismissCheckinCard: () => void;
+  setWeeklyCheckinEnabled: (enabled: boolean) => void;
   deleteAccount: () => void;
   setScreenState: (state: ScreenStateKind) => void;
   setFinishFeeling: (feeling: string | null) => void;
@@ -111,6 +167,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   blockedUsers: [],
   pingsUsed: { date: localDateKey(), count: 0 },
   screenState: 'ready',
+  healthPrefs: DEFAULT_HEALTH_PREFS,
+  healthReadings: EMPTY_READINGS,
+  healthPromptDismissed: {},
+  healthSimulated: false,
+  metricCheckins: [],
+  checkinHandledWeek: null,
+  weeklyCheckinEnabled: true,
   ...fromScenario('day1'),
 
   loadScenario: (scenario) =>
@@ -309,6 +372,74 @@ export const useAppStore = create<AppState>((set, get) => ({
       notificationPrefs: { ...s.notificationPrefs, [key]: value },
     })),
 
+  attachNutrition: (mealId, nutrition) =>
+    set({ meals: [...DataService.attachNutrition(mealId, nutrition)] }),
+
+  removeNutrition: (mealId) =>
+    set({ meals: [...DataService.removeNutrition(mealId)] }),
+
+  setHealthPref: (key, value) => {
+    set((s) => ({ healthPrefs: { ...s.healthPrefs, [key]: value } }));
+    if (key === 'healthEnabled') {
+      if (value) {
+        const service = getHealthService();
+        service
+          .requestReadPermissions()
+          .then(() => get().refreshHealth())
+          .catch(() => {});
+      } else {
+        set({ healthReadings: EMPTY_READINGS });
+      }
+    }
+  },
+
+  refreshHealth: async () => {
+    const { healthPrefs } = get();
+    if (!healthPrefs.healthEnabled) {
+      set({ healthReadings: EMPTY_READINGS });
+      return;
+    }
+    const service = getHealthService();
+    if (!service.isAvailable()) {
+      set({ healthReadings: EMPTY_READINGS });
+      return;
+    }
+    const [dietaryKcal, bodyMassKg, workoutMinutes] = await Promise.all([
+      service.getTodayDietaryEnergyKcal(),
+      service.getLatestBodyMassKg(),
+      service.getTodayLongestWorkoutMinutes(),
+    ]);
+    set({ healthReadings: { dietaryKcal, bodyMassKg, workoutMinutes } });
+  },
+
+  dismissHealthPrompt: (kind) =>
+    set((s) => ({
+      healthPromptDismissed: {
+        ...s.healthPromptDismissed,
+        [kind]: localDateKey(),
+      },
+    })),
+
+  toggleHealthSimulation: () => {
+    const next = !isHealthSimulated();
+    setHealthSimulation(next);
+    set({ healthSimulated: next, healthPromptDismissed: {} });
+    get().refreshHealth();
+  },
+
+  saveMetricCheckin: (weightKg, mood) => {
+    const checkin = DataService.saveMetricCheckin(weightKg, mood);
+    set((s) => ({
+      metricCheckins: [checkin, ...s.metricCheckins],
+      checkinHandledWeek: localWeekKey(),
+    }));
+  },
+
+  dismissCheckinCard: () => set({ checkinHandledWeek: localWeekKey() }),
+
+  setWeeklyCheckinEnabled: (enabled) =>
+    set({ weeklyCheckinEnabled: enabled }),
+
   deleteAccount: () => {
     DataService.deleteAccount();
     set({
@@ -321,6 +452,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       blockedUsers: [],
       pingsUsed: { date: localDateKey(), count: 0 },
       screenState: 'ready',
+      healthPrefs: DEFAULT_HEALTH_PREFS,
+      healthReadings: EMPTY_READINGS,
+      healthPromptDismissed: {},
+      metricCheckins: [],
+      checkinHandledWeek: null,
+      weeklyCheckinEnabled: true,
       ...fromScenario('day1'),
     });
   },
