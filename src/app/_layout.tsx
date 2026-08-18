@@ -8,10 +8,12 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { View } from 'react-native';
+import { AppState, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { TimerConflictSheet } from '@/components/TimerConflictSheet';
 import { ToastHost } from '@/components/ToastHost';
+import { remainingSeconds, useTimerStore } from '@/store/useTimerStore';
 import { colors } from '@/theme/tokens';
 
 SplashScreen.preventAutoHideAsync();
@@ -26,6 +28,20 @@ export default function RootLayout() {
   useEffect(() => {
     if (loaded) SplashScreen.hideAsync();
   }, [loaded]);
+
+  // Timer: rehydrate on cold launch, recompute on foreground. If the target
+  // time passed while backgrounded or killed, complete the task now.
+  useEffect(() => {
+    useTimerStore.getState().hydrate();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      const { active, completeActive } = useTimerStore.getState();
+      if (active && !active.pausedAtISO && remainingSeconds(active) <= 0) {
+        completeActive();
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   if (!loaded) return null;
 
@@ -48,8 +64,13 @@ export default function RootLayout() {
             name="finish"
             options={{ presentation: 'transparentModal', animation: 'fade' }}
           />
+          <Stack.Screen
+            name="timer"
+            options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
+          />
         </Stack>
         <ToastHost />
+        <TimerConflictSheet />
       </View>
     </GestureHandlerRootView>
   );

@@ -26,6 +26,7 @@ import Animated, {
 import { ScreenState } from '@/components/ScreenState';
 import { Card, Kicker, OutlineButton } from '@/components/ui';
 import type { TaskDef, TaskKey } from '@/data/types';
+import { useStartTimer } from '@/hooks/useStartTimer';
 import {
   selectDoneCount,
   selectQueue,
@@ -86,12 +87,14 @@ function TopCard({
   total,
   onDone,
   onLater,
+  onStartTimer,
 }: {
   task: TaskDef;
   index: number;
   total: number;
   onDone: () => void;
   onLater: () => void;
+  onStartTimer: (task: TaskDef) => void;
 }) {
   const tx = useSharedValue(0);
   const busy = useSharedValue(false);
@@ -154,6 +157,14 @@ function TopCard({
         <Text style={styles.cardTitle}>{task.label}</Text>
         <Text style={styles.cardSub}>{task.sub}</Text>
         {task.proof && <ProofRow taskKey={task.key} />}
+        {task.timerMinutes ? (
+          <OutlineButton
+            label="Start timer"
+            small
+            onPress={() => onStartTimer(task)}
+            style={{ marginTop: 14, alignSelf: 'flex-start' }}
+          />
+        ) : null}
         <View style={{ flex: 1 }} />
         <Text style={styles.cardFooter}>
           {'\u2190'} later&nbsp;&nbsp;|&nbsp;&nbsp;swipe to complete {'\u2192'}
@@ -198,6 +209,7 @@ export default function CheckinScreen() {
   const deferred = useAppStore((s) => s.deferred);
   const completeTask = useAppStore((s) => s.completeTask);
   const deferTask = useAppStore((s) => s.deferTask);
+  const startTimer = useStartTimer();
 
   const total = tasks.length;
   const queue = selectQueue({ tier, tasksDone, deferred });
@@ -232,6 +244,7 @@ export default function CheckinScreen() {
                   toast('+20 XP');
                 }}
                 onLater={() => deferTask(topTask.key)}
+                onStartTimer={startTimer}
               />
             </>
           ) : (

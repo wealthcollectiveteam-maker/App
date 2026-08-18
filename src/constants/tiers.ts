@@ -10,12 +10,14 @@ export const TASK_LIBRARY: Record<TaskKey, TaskDef> = {
     label: 'Workout 1 — 45 min',
     sub: '45 minutes. Indoors or out. No skipping.',
     proof: true,
+    timerMinutes: 45,
   },
   workout2: {
     key: 'workout2',
     label: 'Workout 2 — outdoors',
     sub: 'Outdoors, whatever the weather.',
     proof: true,
+    timerMinutes: 45,
   },
   water: {
     key: 'water',
@@ -28,6 +30,8 @@ export const TASK_LIBRARY: Record<TaskKey, TaskDef> = {
     label: 'Read 10 pages',
     sub: 'Ten pages of a real book.',
     proof: false,
+    timerMinutes: 10,
+    timerUserSet: true,
   },
   diet: {
     key: 'diet',
@@ -104,6 +108,10 @@ export const TIER_TASKS: Record<Tier, TaskDef[]> = Object.fromEntries(
     TIERS[tier].taskKeys.map((key) => ({
       ...TASK_LIBRARY[key],
       label: TIERS[tier].labelOverrides?.[key] ?? TASK_LIBRARY[key].label,
+      // Workout countdowns follow the tier's prescribed duration.
+      timerMinutes: key.startsWith('workout')
+        ? TIERS[tier].workoutMinutes
+        : TASK_LIBRARY[key].timerMinutes,
     })),
   ]),
 ) as Record<Tier, TaskDef[]>;

@@ -1,7 +1,10 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import { CHALLENGE } from '@/constants/challenge';
 import { TIERS } from '@/constants/tiers';
 import { buildScenario } from '@/data/mock';
 import type {
+  ActiveTimer,
   FinalResults,
   JournalEntry,
   Meal,
@@ -10,7 +13,10 @@ import type {
   Scenario,
   ScenarioState,
   Squad,
+  TaskKey,
 } from '@/data/types';
+
+const TIMER_STORAGE_KEY = 'ranked.activeTimer.v1';
 
 /**
  * DataService contract. The app talks to this interface only; the shipped
@@ -38,6 +44,14 @@ export interface IDataService {
   unblockUser(name: string): string[];
   getBlockedUsers(): string[];
   deleteAccount(): void;
+  // Workout timer — client-owned state; only the finished session syncs.
+  startTimer(timer: ActiveTimer): Promise<void>;
+  pauseTimer(timer: ActiveTimer): Promise<void>;
+  resumeTimer(timer: ActiveTimer): Promise<void>;
+  cancelTimer(): Promise<void>;
+  getActiveTimer(): Promise<ActiveTimer | null>;
+  /** Records real elapsed training seconds against the completed task. */
+  completeTimedTask(taskKey: TaskKey, elapsedSeconds: number): Promise<void>;
 }
 
 let uid = 0;
@@ -195,6 +209,57 @@ class MockDataService implements IDataService {
     this.blocked = [];
     this.reports = [];
     this.feeling = null;
+    this.timedSessions = [];
+    AsyncStorage.removeItem(TIMER_STORAGE_KEY).catch(() => {});
+  }
+
+  // ---- Workout timer ----
+
+  private timedSessions: { taskKey: TaskKey; durationSeconds: number; at: number }[] =
+    [];
+
+  private async persistTimer(timer: ActiveTimer): Promise<void> {
+    await AsyncStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify(timer));
+  }
+
+  startTimer(timer: ActiveTimer): Promise<void> {
+    return this.persistTimer(timer);
+  }
+
+  pauseTimer(timer: ActiveTimer): Promise<void> {
+    return this.persistTimer(timer);
+  }
+
+  resumeTimer(timer: ActiveTimer): Promise<void> {
+    return this.persistTimer(timer);
+  }
+
+  async cancelTimer(): Promise<void> {
+    await AsyncStorage.removeItem(TIMER_STORAGE_KEY);
+  }
+
+  async getActiveTimer(): Promise<ActiveTimer | null> {
+    try {
+      const raw = await AsyncStorage.getItem(TIMER_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as ActiveTimer;
+      if (!parsed?.taskKey || !parsed?.startedAtISO) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  async completeTimedTask(
+    taskKey: TaskKey,
+    elapsedSeconds: number,
+  ): Promise<void> {
+    this.timedSessions.push({
+      taskKey,
+      durationSeconds: Math.round(elapsedSeconds),
+      at: Date.now(),
+    });
+    await AsyncStorage.removeItem(TIMER_STORAGE_KEY);
   }
 }
 

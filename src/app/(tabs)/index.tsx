@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import {
   CameraIcon as Camera,
   CheckSquareIcon as CheckSquare,
+  PlayIcon as Play,
   SquareIcon as Square,
   UsersThreeIcon as UsersThree,
 } from 'phosphor-react-native';
@@ -16,6 +17,7 @@ import { Card, FadingDivider, Kicker, OutlineButton } from '@/components/ui';
 import { CHALLENGE } from '@/constants/challenge';
 import { missedDayCopy } from '@/constants/tiers';
 import type { TaskDef } from '@/data/types';
+import { useStartTimer } from '@/hooks/useStartTimer';
 import {
   selectDoneCount,
   selectTasks,
@@ -77,6 +79,7 @@ function TaskRow({ task }: { task: TaskDef }) {
   const doneAt = useAppStore((s) => s.tasksDone[task.key]);
   const completeTask = useAppStore((s) => s.completeTask);
   const uncompleteTask = useAppStore((s) => s.uncompleteTask);
+  const startTimer = useStartTimer();
   const done = !!doneAt;
 
   return (
@@ -109,12 +112,28 @@ function TaskRow({ task }: { task: TaskDef }) {
       </Text>
       {done ? (
         <Text style={styles.taskMeta}>{doneAt}</Text>
-      ) : task.proof ? (
-        <View style={styles.proofMeta}>
-          <Camera size={12} color={colors.neutral600} />
-          <Text style={styles.taskMeta}>proof optional</Text>
-        </View>
-      ) : null}
+      ) : (
+        <>
+          {task.proof && (
+            <View style={styles.proofMeta}>
+              <Camera size={12} color={colors.neutral600} />
+              <Text style={styles.taskMeta}>proof optional</Text>
+            </View>
+          )}
+          {task.timerMinutes ? (
+            <Pressable
+              onPress={() => startTimer(task)}
+              hitSlop={8}
+              style={({ pressed, hovered }: any) => [
+                styles.playButton,
+                (hovered || pressed) && { borderColor: colors.accent400 },
+              ]}
+            >
+              <Play size={13} weight="fill" color={colors.accent400} />
+            </Pressable>
+          ) : null}
+        </>
+      )}
     </Pressable>
   );
 }
@@ -283,6 +302,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+  },
+  playButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: colors.accent700,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
   },
   snapshotHeader: {
     flexDirection: 'row',

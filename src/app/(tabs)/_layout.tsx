@@ -11,6 +11,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppHeader } from '@/components/AppHeader';
+import { TimerMiniBar } from '@/components/TimerMiniBar';
 import { colors, font } from '@/theme/tokens';
 
 const ICONS: Record<string, React.ComponentType<any>> = {
@@ -37,7 +38,9 @@ interface TabBarProps {
 function TabBar({ state, navigation }: TabBarProps) {
   const insets = useSafeAreaInsets();
   return (
-    <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+    <>
+      <TimerMiniBar />
+      <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
       {state.routes.map((route, index) => {
         const focused = state.index === index;
         const Icon = ICONS[route.name];
@@ -73,7 +76,8 @@ function TabBar({ state, navigation }: TabBarProps) {
           </Pressable>
         );
       })}
-    </View>
+      </View>
+    </>
   );
 }
 

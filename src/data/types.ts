@@ -16,6 +16,25 @@ export interface TaskDef {
   sub: string;
   /** Camera tasks show an optional-proof affordance. */
   proof: boolean;
+  /** Timed tasks: default countdown length in minutes. Absent = not timed. */
+  timerMinutes?: number;
+  /** User picks the duration before starting (e.g. reading). */
+  timerUserSet?: boolean;
+}
+
+/**
+ * The active countdown, persisted to AsyncStorage the moment it starts.
+ * Remaining time is always computed from wall-clock timestamps — never by
+ * decrementing a counter — so backgrounding cannot freeze or drift it.
+ */
+export interface ActiveTimer {
+  taskKey: TaskKey;
+  /** Task label frozen at start (survives tier changes mid-timer). */
+  label: string;
+  startedAtISO: string;
+  durationSeconds: number;
+  pausedAtISO: string | null;
+  accumulatedPauseSeconds: number;
 }
 
 export interface JournalEntry {
