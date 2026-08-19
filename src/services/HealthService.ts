@@ -1,4 +1,16 @@
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+
+import { canAttemptHealthKit, type HealthRuntimeEnv } from '@/services/healthEnv';
+
+/** Live runtime signals for the HealthKit gate (see healthEnv.ts). */
+function runtimeEnv(): HealthRuntimeEnv {
+  return {
+    platformOS: Platform.OS,
+    appOwnership: (Constants.appOwnership as string | null) ?? null,
+    hasExpoGoConfig: Constants.expoGoConfig != null,
+  };
+}
 
 /**
  * Read-only Apple Health access. HARD RULES:
@@ -72,7 +84,13 @@ class HealthKitService implements IHealthService {
   private loadFailed = false;
 
   private getModule(): any | null {
-    if (this.loadFailed || Platform.OS !== 'ios') return null;
+    // POSITIVE gate first: the require must never be evaluated in Expo Go.
+    // @kingstinct/react-native-healthkit creates NitroModules hybrid objects
+    // at module top level, and a throw inside a module factory is converted
+    // to a FATAL error by Metro's guardedLoadModule — a try/catch here
+    // cannot contain it. The catch below is only a backstop for exotic
+    // environments the gate misjudges.
+    if (this.loadFailed || !canAttemptHealthKit(runtimeEnv())) return null;
     if (!this.mod) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -194,6 +212,13 @@ const simulatedService = new SimulatedHealthService();
 
 export function getHealthService(): IHealthService {
   if (simulated) return simulatedService;
-  if (Platform.OS === 'ios' && healthKit.isAvailable()) return healthKit;
+  // The gate inside getModule() guarantees the healthkit require is never
+  // evaluated in Expo Go / non-iOS; this outer check skips it entirely.
+  if (!canAttemptHealthKit(runtimeEnv())) return nullService;
+  try {
+    if (healthKit.isAvailable()) return healthKit;
+  } catch {
+    // Any surprise from the health layer degrades to "no health data".
+  }
   return nullService;
 }

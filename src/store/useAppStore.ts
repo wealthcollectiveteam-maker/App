@@ -449,22 +449,28 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   refreshHealth: async () => {
-    const { healthPrefs } = get();
-    if (!healthPrefs.healthEnabled) {
+    // Defence in depth: nothing from the health layer may ever propagate
+    // into app startup. Any failure degrades to "no health data".
+    try {
+      const { healthPrefs } = get();
+      if (!healthPrefs.healthEnabled) {
+        set({ healthReadings: EMPTY_READINGS });
+        return;
+      }
+      const service = getHealthService();
+      if (!service.isAvailable()) {
+        set({ healthReadings: EMPTY_READINGS });
+        return;
+      }
+      const [dietaryKcal, bodyMassKg, workoutMinutes] = await Promise.all([
+        service.getTodayDietaryEnergyKcal(),
+        service.getLatestBodyMassKg(),
+        service.getTodayLongestWorkoutMinutes(),
+      ]);
+      set({ healthReadings: { dietaryKcal, bodyMassKg, workoutMinutes } });
+    } catch {
       set({ healthReadings: EMPTY_READINGS });
-      return;
     }
-    const service = getHealthService();
-    if (!service.isAvailable()) {
-      set({ healthReadings: EMPTY_READINGS });
-      return;
-    }
-    const [dietaryKcal, bodyMassKg, workoutMinutes] = await Promise.all([
-      service.getTodayDietaryEnergyKcal(),
-      service.getLatestBodyMassKg(),
-      service.getTodayLongestWorkoutMinutes(),
-    ]);
-    set({ healthReadings: { dietaryKcal, bodyMassKg, workoutMinutes } });
   },
 
   dismissHealthPrompt: (kind) =>

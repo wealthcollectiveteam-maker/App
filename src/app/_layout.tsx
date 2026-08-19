@@ -35,14 +35,14 @@ export default function RootLayout() {
   // Health readings refresh on launch and foreground (on-device only).
   useEffect(() => {
     useTimerStore.getState().hydrate();
-    useAppStore.getState().refreshHealth();
+    useAppStore.getState().refreshHealth().catch(() => {});
     const sub = AppState.addEventListener('change', (state) => {
       if (state !== 'active') return;
       const { active, completeActive } = useTimerStore.getState();
       if (active && !active.pausedAtISO && remainingSeconds(active) <= 0) {
         completeActive();
       }
-      useAppStore.getState().refreshHealth();
+      useAppStore.getState().refreshHealth().catch(() => {});
     });
     return () => sub.remove();
   }, []);
