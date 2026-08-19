@@ -1,10 +1,10 @@
-import type { TaskDef, TaskKey, Tier } from '@/data/types';
+import type { BuiltinTaskKey, TaskDef, Tier } from '@/data/types';
 
 /**
  * The full task library. Tiers select from it; labels can be overridden per
  * tier (e.g. a single-workout tier drops the "Workout 1" numbering).
  */
-export const TASK_LIBRARY: Record<TaskKey, TaskDef> = {
+export const TASK_LIBRARY: Record<BuiltinTaskKey, TaskDef> = {
   workout1: {
     key: 'workout1',
     label: 'Workout 1 — 45 min',
@@ -50,8 +50,8 @@ export const TASK_LIBRARY: Record<TaskKey, TaskDef> = {
 export interface TierDef {
   key: Tier;
   label: string;
-  taskKeys: TaskKey[];
-  labelOverrides?: Partial<Record<TaskKey, string>>;
+  taskKeys: BuiltinTaskKey[];
+  labelOverrides?: Partial<Record<BuiltinTaskKey, string>>;
   workoutMinutes: number;
   missedDay: {
     /** Hard: the whole challenge restarts at Day 1. */

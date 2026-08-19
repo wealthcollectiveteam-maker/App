@@ -40,6 +40,7 @@ export function AppHeader() {
   const joinSquad = useAppStore((s) => s.joinSquad);
   const healthSimulated = useAppStore((s) => s.healthSimulated);
   const toggleHealthSimulation = useAppStore((s) => s.toggleHealthSimulation);
+  const advanceDay = useAppStore((s) => s.advanceDay);
   const [devOpen, setDevOpen] = useState(false);
 
   const openDev = () => setDevOpen(true);
@@ -135,6 +136,19 @@ export function AppHeader() {
             {squad
               ? 'Drop the squad to QA solo states.'
               : 'Restore the mock squad.'}
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => {
+            advanceDay();
+            setDevOpen(false);
+          }}
+          style={styles.scenarioRow}
+        >
+          <Text style={styles.scenarioLabel}>Advance day (rollover)</Text>
+          <Text style={styles.scenarioSub}>
+            Simulate local midnight: pending task edits take effect.
           </Text>
         </Pressable>
 

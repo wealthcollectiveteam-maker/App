@@ -97,6 +97,22 @@ export default function SettingsScreen() {
         ))}
       </Card>
 
+      <Kicker style={styles.sectionKicker}>Challenge</Kicker>
+      <Card>
+        <Pressable
+          onPress={() => router.push('/my-challenge')}
+          style={styles.prefRow}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowLabel}>My Challenge</Text>
+            <Text style={styles.rowSub}>
+              Edit daily tasks and tier — changes always start tomorrow.
+            </Text>
+          </View>
+          <CaretRight size={15} color={colors.neutral600} />
+        </Pressable>
+      </Card>
+
       <Kicker style={styles.sectionKicker}>Apple Health</Kicker>
       <Card>
         <View style={styles.prefRow}>

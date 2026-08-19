@@ -1,10 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { CHALLENGE } from '@/constants/challenge';
-import { TIERS } from '@/constants/tiers';
+import { TIER_TASKS, TIERS } from '@/constants/tiers';
 import { buildScenario } from '@/data/mock';
 import type {
   ActiveTimer,
+  CustomTask,
   DailyNutritionTotals,
   FinalResults,
   FoodSearchResult,
@@ -13,11 +14,14 @@ import type {
   MealNutrition,
   MetricCheckin,
   Milestone,
+  PendingChanges,
   ReportReason,
   Scenario,
   ScenarioState,
   Squad,
+  TaskDef,
   TaskKey,
+  Tier,
 } from '@/data/types';
 import { NutritionService } from '@/services/NutritionService';
 
@@ -65,6 +69,27 @@ export interface IDataService {
   // Optional weekly metrics — private to the owner, never social.
   saveMetricCheckin(weightKg: number | null, mood: number | null): MetricCheckin;
   getMetricHistory(): MetricCheckin[];
+  // Editable daily tasks. Edits never affect today or the past: today's set
+  // is a day-start snapshot; every change takes effect at the next rollover.
+  initTaskConfig(tier: Tier, day: number): TaskDef[];
+  getTodayTasks(tier: Tier, day: number): TaskDef[];
+  getTomorrowTasks(currentTier: Tier, day: number): TaskDef[];
+  getDaySnapshot(day: number): TaskDef[] | null;
+  getCustomTasks(): CustomTask[];
+  addCustomTask(
+    input: { name: string; sub: string; proof: boolean; timerMinutes?: number },
+    day: number,
+  ): CustomTask;
+  updateCustomTask(
+    id: string,
+    patch: Partial<Pick<CustomTask, 'name' | 'sub' | 'proof' | 'timerMinutes'>>,
+  ): CustomTask[];
+  removeCustomTask(id: string, day: number): CustomTask[];
+  changeTier(tier: Tier | null): void;
+  getPendingChanges(currentTier: Tier, day: number): PendingChanges;
+  undoPendingChanges(day: number): void;
+  /** Applies pending changes and freezes the new day's snapshot. */
+  rolloverDay(currentTier: Tier, oldDay: number): { tier: Tier; day: number; todayTasks: TaskDef[] };
 }
 
 let uid = 0;
@@ -79,6 +104,7 @@ class MockDataService implements IDataService {
   loadScenario(scenario: Scenario): ScenarioState {
     this.state = buildScenario(scenario);
     this.blocked = [];
+    this.initTaskConfig(this.state.tier, this.state.day);
     return this.state;
   }
 
@@ -236,6 +262,7 @@ class MockDataService implements IDataService {
     this.feeling = null;
     this.timedSessions = [];
     this.metricCheckins = [];
+    this.initTaskConfig(this.state.tier, this.state.day);
     AsyncStorage.removeItem(TIMER_STORAGE_KEY).catch(() => {});
     NutritionService.clearCache().catch(() => {});
   }
@@ -350,6 +377,148 @@ class MockDataService implements IDataService {
 
   getMetricHistory(): MetricCheckin[] {
     return this.metricCheckins;
+  }
+
+  // ---- Editable daily tasks (day-start snapshots) ----
+
+  private customTasks: CustomTask[] = [];
+  /** Frozen task set per day. Once written, never rewritten. */
+  private daySnapshots: Record<number, TaskDef[]> = {};
+  private pendingTier: Tier | null = null;
+
+  private customToDef(c: CustomTask): TaskDef {
+    return {
+      key: `custom-${c.id}`,
+      label: c.name,
+      sub: c.sub,
+      proof: c.proof,
+      timerMinutes: c.timerMinutes,
+    };
+  }
+
+  /** The live task set for a given day: tier tasks + customs active then. */
+  private composeTaskSet(tier: Tier, day: number): TaskDef[] {
+    const customs = this.customTasks
+      .filter(
+        (c) =>
+          c.activeFromDay <= day &&
+          (c.removedFromDay == null || c.removedFromDay > day),
+      )
+      .map((c) => this.customToDef(c));
+    return [...TIER_TASKS[tier], ...customs];
+  }
+
+  initTaskConfig(tier: Tier, day: number): TaskDef[] {
+    this.customTasks = [];
+    this.pendingTier = null;
+    this.daySnapshots = { [day]: this.composeTaskSet(tier, day) };
+    return this.daySnapshots[day];
+  }
+
+  getTodayTasks(tier: Tier, day: number): TaskDef[] {
+    if (!this.daySnapshots[day]) {
+      // Backfill for days that predate snapshotting: freeze the current set.
+      this.daySnapshots[day] = this.composeTaskSet(tier, day);
+    }
+    return this.daySnapshots[day];
+  }
+
+  getTomorrowTasks(currentTier: Tier, day: number): TaskDef[] {
+    return this.composeTaskSet(this.pendingTier ?? currentTier, day + 1);
+  }
+
+  getDaySnapshot(day: number): TaskDef[] | null {
+    return this.daySnapshots[day] ?? null;
+  }
+
+  getCustomTasks(): CustomTask[] {
+    return this.customTasks;
+  }
+
+  addCustomTask(
+    input: { name: string; sub: string; proof: boolean; timerMinutes?: number },
+    day: number,
+  ): CustomTask {
+    const task: CustomTask = {
+      id: nextId('ct'),
+      name: input.name.trim(),
+      sub: input.sub.trim(),
+      proof: input.proof,
+      timerMinutes: input.timerMinutes,
+      activeFromDay: day + 1,
+      removedFromDay: null,
+    };
+    this.customTasks = [...this.customTasks, task];
+    return task;
+  }
+
+  updateCustomTask(
+    id: string,
+    patch: Partial<Pick<CustomTask, 'name' | 'sub' | 'proof' | 'timerMinutes'>>,
+  ): CustomTask[] {
+    // Definitions can be edited freely — today's snapshot holds frozen
+    // copies, so past and present days are untouched by design.
+    this.customTasks = this.customTasks.map((c) =>
+      c.id === id ? { ...c, ...patch, name: (patch.name ?? c.name).trim() } : c,
+    );
+    return this.customTasks;
+  }
+
+  removeCustomTask(id: string, day: number): CustomTask[] {
+    const target = this.customTasks.find((c) => c.id === id);
+    if (!target) return this.customTasks;
+    if (target.activeFromDay > day) {
+      // Pending add that was never in force — no history, safe to drop.
+      this.customTasks = this.customTasks.filter((c) => c.id !== id);
+    } else {
+      // Has (potential) history: end it from tomorrow, never hard-delete.
+      this.customTasks = this.customTasks.map((c) =>
+        c.id === id ? { ...c, removedFromDay: day + 1 } : c,
+      );
+    }
+    return this.customTasks;
+  }
+
+  changeTier(tier: Tier | null): void {
+    this.pendingTier = tier;
+  }
+
+  getPendingChanges(currentTier: Tier, day: number): PendingChanges {
+    return {
+      addedTomorrow: this.customTasks.filter(
+        (c) => c.activeFromDay === day + 1 && c.removedFromDay == null,
+      ),
+      removedTomorrow: this.customTasks.filter(
+        (c) => c.removedFromDay === day + 1 && c.activeFromDay <= day,
+      ),
+      pendingTier: this.pendingTier,
+      todayCount: this.getTodayTasks(currentTier, day).length,
+      tomorrowCount: this.getTomorrowTasks(currentTier, day).length,
+    };
+  }
+
+  undoPendingChanges(day: number): void {
+    // Drop pending adds (never active, no history) and reinstate pending
+    // removals; clear any pending tier change.
+    this.customTasks = this.customTasks
+      .filter((c) => c.activeFromDay !== day + 1)
+      .map((c) =>
+        c.removedFromDay === day + 1 ? { ...c, removedFromDay: null } : c,
+      );
+    this.pendingTier = null;
+  }
+
+  rolloverDay(
+    currentTier: Tier,
+    oldDay: number,
+  ): { tier: Tier; day: number; todayTasks: TaskDef[] } {
+    const tier = this.pendingTier ?? currentTier;
+    this.pendingTier = null;
+    const day = oldDay + 1;
+    if (!this.daySnapshots[day]) {
+      this.daySnapshots[day] = this.composeTaskSet(tier, day);
+    }
+    return { tier, day, todayTasks: this.daySnapshots[day] };
   }
 }
 

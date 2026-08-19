@@ -1,8 +1,9 @@
 import { create } from 'zustand';
 
 import { PINGS, XP } from '@/constants/challenge';
-import { TIER_TASKS, TIERS } from '@/constants/tiers';
+import { TIERS } from '@/constants/tiers';
 import type {
+  CustomTask,
   FeedItem,
   HealthPrefs,
   JournalEntry,
@@ -11,6 +12,7 @@ import type {
   MetricCheckin,
   Milestone,
   NotificationPrefs,
+  PendingChanges,
   ReportReason,
   Scenario,
   ScenarioState,
@@ -108,6 +110,16 @@ interface AppState extends ScenarioState {
   checkinHandledWeek: string | null;
   /** Settings: permanently hide the weekly check-in card. */
   weeklyCheckinEnabled: boolean;
+  /**
+   * TODAY's task set, frozen at day start. Every count, completion check
+   * and streak evaluation reads this snapshot — never the live task list —
+   * so edits can never alter today or the past.
+   */
+  todayTasks: TaskDef[];
+  /** Tomorrow's set, reflecting pending adds/removals and tier change. */
+  tomorrowTasks: TaskDef[];
+  customTasks: CustomTask[];
+  pendingChanges: PendingChanges;
 
   loadScenario: (scenario: Scenario) => void;
   setTier: (tier: Tier) => void;
@@ -140,6 +152,23 @@ interface AppState extends ScenarioState {
   saveMetricCheckin: (weightKg: number | null, mood: number | null) => void;
   dismissCheckinCard: () => void;
   setWeeklyCheckinEnabled: (enabled: boolean) => void;
+  /** Returns false when the 4-custom-task cap is hit. */
+  addCustomTask: (input: {
+    name: string;
+    sub: string;
+    proof: boolean;
+    timerMinutes?: number;
+  }) => boolean;
+  updateCustomTask: (
+    id: string,
+    patch: Partial<Pick<CustomTask, 'name' | 'sub' | 'proof' | 'timerMinutes'>>,
+  ) => void;
+  removeCustomTask: (id: string) => void;
+  /** Pending tier change — takes effect at the next rollover. */
+  requestTierChange: (tier: Tier) => void;
+  undoPendingChanges: () => void;
+  /** Dev: simulate the local-midnight rollover. */
+  advanceDay: () => void;
   deleteAccount: () => void;
   setScreenState: (state: ScreenStateKind) => void;
   setFinishFeeling: (feeling: string | null) => void;
@@ -151,11 +180,29 @@ function fromScenario(scenario: Scenario): ScenarioState {
   return DataService.loadScenario(scenario);
 }
 
+/** Everything DataService owns about the editable task config, mirrored. */
+function taskConfigMirror(tier: Tier, day: number) {
+  return {
+    todayTasks: DataService.getTodayTasks(tier, day),
+    tomorrowTasks: DataService.getTomorrowTasks(tier, day),
+    customTasks: [...DataService.getCustomTasks()],
+    pendingChanges: DataService.getPendingChanges(tier, day),
+  };
+}
+
+const MAX_CUSTOM_TASKS = 4;
+
 const DEFAULT_PREFS: NotificationPrefs = {
   pings: true,
   squadActivity: true,
   dailyReminder: false,
 };
+
+const initialScenario = fromScenario('day1');
+const initialTaskConfig = taskConfigMirror(
+  initialScenario.tier,
+  initialScenario.day,
+);
 
 export const useAppStore = create<AppState>((set, get) => ({
   scenario: 'day1',
@@ -174,9 +221,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   metricCheckins: [],
   checkinHandledWeek: null,
   weeklyCheckinEnabled: true,
-  ...fromScenario('day1'),
+  ...initialScenario,
+  ...initialTaskConfig,
 
-  loadScenario: (scenario) =>
+  loadScenario: (scenario) => {
+    const st = fromScenario(scenario);
     set({
       scenario,
       deferred: [],
@@ -185,19 +234,27 @@ export const useAppStore = create<AppState>((set, get) => ({
       blockedUsers: [],
       pingsUsed: { date: localDateKey(), count: 0 },
       screenState: 'ready',
-      ...fromScenario(scenario),
-    }),
+      ...st,
+      ...taskConfigMirror(st.tier, st.day),
+    });
+  },
 
+  // Dev/QA tier switch: instant, re-freezes today's snapshot for the new
+  // tier and drops custom tasks. User-facing tier changes go through
+  // requestTierChange and take effect tomorrow.
   setTier: (tier) => {
     const s = get();
-    const allowed = new Set(TIERS[tier].taskKeys);
+    DataService.initTaskConfig(tier, s.day);
+    const config = taskConfigMirror(tier, s.day);
+    const allowed = new Set(config.todayTasks.map((t) => t.key));
     const tasksDone: Partial<Record<TaskKey, string>> = {};
     for (const [k, v] of Object.entries(s.tasksDone)) {
-      if (allowed.has(k as TaskKey)) tasksDone[k as TaskKey] = v;
+      if (allowed.has(k)) tasksDone[k] = v;
     }
-    const count = TIERS[tier].taskKeys.length;
+    const count = config.todayTasks.length;
     set({
       tier,
+      ...config,
       tasksDone,
       deferred: s.deferred.filter((k) => allowed.has(k)),
       squad: s.squad
@@ -227,10 +284,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   completeTask: (key) => {
-    const { tasksDone, feed, tier } = get();
+    const { tasksDone, feed, todayTasks } = get();
     if (tasksDone[key]) return;
-    const label =
-      TIER_TASKS[tier].find((t) => t.key === key)?.label ?? key;
+    const label = todayTasks.find((t) => t.key === key)?.label ?? key;
     const item: FeedItem = {
       id: `f-local-${++feedId}`,
       kind: 'complete',
@@ -262,9 +318,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
 
   attachProof: (key) => {
-    const { feed, tier } = get();
-    const label =
-      TIER_TASKS[tier].find((t) => t.key === key)?.label ?? key;
+    const { feed, todayTasks } = get();
+    const label = todayTasks.find((t) => t.key === key)?.label ?? key;
     const item: FeedItem = {
       id: `f-local-${++feedId}`,
       kind: 'proof',
@@ -281,7 +336,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sealDay: () => {
     const s = get();
     if (s.dayComplete) return;
-    const count = TIER_TASKS[s.tier].length;
+    const count = s.todayTasks.length;
     const item: FeedItem = {
       id: `f-local-${++feedId}`,
       kind: 'complete',
@@ -440,8 +495,106 @@ export const useAppStore = create<AppState>((set, get) => ({
   setWeeklyCheckinEnabled: (enabled) =>
     set({ weeklyCheckinEnabled: enabled }),
 
+  addCustomTask: (input) => {
+    const s = get();
+    const activeTomorrow = DataService.getCustomTasks().filter(
+      (c) =>
+        c.activeFromDay <= s.day + 1 &&
+        (c.removedFromDay == null || c.removedFromDay > s.day + 1),
+    );
+    if (activeTomorrow.length >= MAX_CUSTOM_TASKS) return false;
+    DataService.addCustomTask(input, s.day);
+    const config = taskConfigMirror(s.tier, s.day);
+    const updates: Partial<AppState> = { ...config };
+    if (s.squad) {
+      const item: FeedItem = {
+        id: `f-local-${++feedId}`,
+        kind: 'change',
+        who: 'You',
+        text: `added \u201C${input.name.trim()}\u201D — ${config.pendingChanges.tomorrowCount} tasks from tomorrow.`,
+        timestamp: Date.now(),
+      };
+      updates.feed = [item, ...s.feed];
+    }
+    set(updates);
+    return true;
+  },
+
+  updateCustomTask: (id, patch) => {
+    const s = get();
+    DataService.updateCustomTask(id, patch);
+    set(taskConfigMirror(s.tier, s.day));
+  },
+
+  removeCustomTask: (id) => {
+    const s = get();
+    const target = DataService.getCustomTasks().find((c) => c.id === id);
+    if (!target) return;
+    const wasActive = target.activeFromDay <= s.day;
+    DataService.removeCustomTask(id, s.day);
+    const config = taskConfigMirror(s.tier, s.day);
+    const updates: Partial<AppState> = { ...config };
+    // Retracting a not-yet-active pending add is silent; removing a live
+    // task is visible to the squad — accountability, not punishment.
+    if (s.squad && wasActive) {
+      const item: FeedItem = {
+        id: `f-local-${++feedId}`,
+        kind: 'change',
+        who: 'You',
+        text: `removed \u201C${target.name}\u201D — ${config.pendingChanges.tomorrowCount} tasks from tomorrow.`,
+        timestamp: Date.now(),
+      };
+      updates.feed = [item, ...s.feed];
+    }
+    set(updates);
+  },
+
+  requestTierChange: (tier) => {
+    const s = get();
+    DataService.changeTier(tier === s.tier ? null : tier);
+    const config = taskConfigMirror(s.tier, s.day);
+    const updates: Partial<AppState> = { ...config };
+    if (s.squad && tier !== s.tier) {
+      const item: FeedItem = {
+        id: `f-local-${++feedId}`,
+        kind: 'change',
+        who: 'You',
+        text: `changed tier to ${TIERS[tier].label} — starts tomorrow.`,
+        timestamp: Date.now(),
+      };
+      updates.feed = [item, ...s.feed];
+    }
+    set(updates);
+  },
+
+  undoPendingChanges: () => {
+    const s = get();
+    DataService.undoPendingChanges(s.day);
+    set(taskConfigMirror(s.tier, s.day));
+  },
+
+  /**
+   * Simulates the local-midnight rollover: pending changes take effect,
+   * the new day's task set freezes, and today's progress resets.
+   */
+  advanceDay: () => {
+    const s = get();
+    const next = DataService.rolloverDay(s.tier, s.day);
+    set({
+      day: next.day,
+      tier: next.tier,
+      tasksDone: {},
+      deferred: [],
+      dayComplete: false,
+      missedDay: false,
+      healthPromptDismissed: {},
+      ...taskConfigMirror(next.tier, next.day),
+    });
+  },
+
   deleteAccount: () => {
     DataService.deleteAccount();
+    const st = fromScenario('day1');
     set({
       scenario: 'day1',
       deferred: [],
@@ -458,7 +611,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       metricCheckins: [],
       checkinHandledWeek: null,
       weeklyCheckinEnabled: true,
-      ...fromScenario('day1'),
+      ...st,
+      ...taskConfigMirror(st.tier, st.day),
     });
   },
 
@@ -473,28 +627,32 @@ export const useAppStore = create<AppState>((set, get) => ({
 
 // ---- Derived selectors ----
 
-/** Active tier's task list (stable array reference per tier). */
-export const selectTasks = (s: { tier: Tier }): TaskDef[] =>
-  TIER_TASKS[s.tier];
+/**
+ * TODAY's task set — the day-start snapshot, never the live list. All
+ * counts, completion checks and streak logic must read through this.
+ */
+export const selectTasks = (s: { todayTasks: TaskDef[] }): TaskDef[] =>
+  s.todayTasks;
 
-export const selectTaskCount = (s: { tier: Tier }) =>
-  TIER_TASKS[s.tier].length;
+export const selectTaskCount = (s: { todayTasks: TaskDef[] }) =>
+  s.todayTasks.length;
 
 export const selectLevel = (xp: number) => Math.floor(xp / XP.perLevel) + 1;
 export const selectXpIntoLevel = (xp: number) => xp % XP.perLevel;
 export const selectXpToNext = (xp: number) => XP.perLevel - (xp % XP.perLevel);
 
-export const selectDoneCount = (
-  s: Pick<ScenarioState, 'tasksDone' | 'tier'>,
-) => TIER_TASKS[s.tier].filter((t) => s.tasksDone[t.key]).length;
+export const selectDoneCount = (s: {
+  todayTasks: TaskDef[];
+  tasksDone: Partial<Record<TaskKey, string>>;
+}) => s.todayTasks.filter((t) => s.tasksDone[t.key]).length;
 
 /** Pending tasks in deck order: undeferred first, deferred at the back. */
 export const selectQueue = (s: {
-  tier: Tier;
+  todayTasks: TaskDef[];
   tasksDone: Partial<Record<TaskKey, string>>;
   deferred: TaskKey[];
 }): TaskKey[] => {
-  const pending = TIER_TASKS[s.tier]
+  const pending = s.todayTasks
     .map((t) => t.key)
     .filter((k) => !s.tasksDone[k]);
   const fresh = pending.filter((k) => !s.deferred.includes(k));

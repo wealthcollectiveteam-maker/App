@@ -139,6 +139,7 @@ export default function YouScreen() {
 
       <View style={{ marginTop: 12 }}>
         {[
+          { label: 'My Challenge', Icon: CaretRight, meta: null, onPress: () => router.push('/my-challenge') },
           { label: 'Settings', Icon: Gear, meta: null, onPress: () => router.push('/settings') },
           { label: 'Invite code', Icon: CaretRight, meta: squad?.code ?? 'Solo', onPress: () => toast(squad ? 'Invite code copied' : 'Running solo — create a squad from the Squad tab') },
           { label: 'Sign out', Icon: SignOut, meta: null, onPress: () => toast('Signed out (mock)') },

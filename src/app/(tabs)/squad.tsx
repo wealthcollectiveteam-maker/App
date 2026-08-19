@@ -4,6 +4,7 @@ import {
   CameraIcon as Camera,
   CheckCircleIcon as CheckCircle,
   PaperPlaneRightIcon as PaperPlaneRight,
+  PencilSimpleIcon as PencilSimple,
   UsersThreeIcon as UsersThree,
 } from 'phosphor-react-native';
 import React, { useState } from 'react';
@@ -189,9 +190,11 @@ function FeedRow({
       ? Camera
       : item.kind === 'complete'
         ? CheckCircle
-        : inbound
-          ? Bell
-          : PaperPlaneRight;
+        : item.kind === 'change'
+          ? PencilSimple
+          : inbound
+            ? Bell
+            : PaperPlaneRight;
 
   return (
     <Pressable

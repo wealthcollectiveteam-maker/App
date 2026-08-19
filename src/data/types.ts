@@ -2,13 +2,41 @@ export type Tier = 'hard' | 'medium' | 'soft';
 
 export type Scenario = 'day1' | 'day12' | 'missed' | 'day75';
 
-export type TaskKey =
+export type BuiltinTaskKey =
   | 'workout1'
   | 'workout2'
   | 'water'
   | 'read'
   | 'diet'
   | 'photo';
+
+/** Tier task keys plus user-defined `custom-<id>` keys. */
+export type TaskKey = BuiltinTaskKey | (string & {});
+
+/**
+ * A user-defined daily task. Never hard-deleted once it has been active —
+ * `removedFromDay` ends it so history stays reconstructable.
+ */
+export interface CustomTask {
+  id: string;
+  name: string;
+  sub: string;
+  proof: boolean;
+  timerMinutes?: number;
+  /** First day this task counts. Edits always start tomorrow. */
+  activeFromDay: number;
+  /** Day from which it no longer counts; null = still active. */
+  removedFromDay: number | null;
+}
+
+/** Pending edits that take effect at the next day rollover. */
+export interface PendingChanges {
+  addedTomorrow: CustomTask[];
+  removedTomorrow: CustomTask[];
+  pendingTier: Tier | null;
+  todayCount: number;
+  tomorrowCount: number;
+}
 
 export interface TaskDef {
   key: TaskKey;
@@ -116,7 +144,7 @@ export interface SquadMember {
   isSelf: boolean;
 }
 
-export type FeedKind = 'ping-in' | 'ping-out' | 'complete' | 'proof';
+export type FeedKind = 'ping-in' | 'ping-out' | 'complete' | 'proof' | 'change';
 
 export interface FeedItem {
   id: string;

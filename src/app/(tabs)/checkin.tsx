@@ -204,7 +204,6 @@ function AllDone({ total }: { total: number }) {
 export default function CheckinScreen() {
   const tasks = useAppStore(selectTasks);
   const doneCount = useAppStore(selectDoneCount);
-  const tier = useAppStore((s) => s.tier);
   const tasksDone = useAppStore((s) => s.tasksDone);
   const deferred = useAppStore((s) => s.deferred);
   const completeTask = useAppStore((s) => s.completeTask);
@@ -212,7 +211,7 @@ export default function CheckinScreen() {
   const startTimer = useStartTimer();
 
   const total = tasks.length;
-  const queue = selectQueue({ tier, tasksDone, deferred });
+  const queue = selectQueue({ todayTasks: tasks, tasksDone, deferred });
   const topKey = queue[0];
   const topTask = tasks.find((t) => t.key === topKey);
 
