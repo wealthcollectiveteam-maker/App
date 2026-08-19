@@ -17,10 +17,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BottomSheet } from '@/components/BottomSheet';
 import { Card, Kicker, OutlineButton } from '@/components/ui';
-import { TIERS } from '@/constants/tiers';
-import type { CustomTask, TaskDef, Tier } from '@/data/types';
+import {
+  isAboveStandard,
+  targetText,
+  TASK_BASES,
+  TIERS,
+} from '@/constants/tiers';
+import type {
+  BuiltinTaskKey,
+  CustomTask,
+  TaskDef,
+  Tier,
+} from '@/data/types';
 import { DataService } from '@/services/DataService';
-import { useAppStore } from '@/store/useAppStore';
+import { selectTierLabel, useAppStore } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
 import { colors, font, radius, space } from '@/theme/tokens';
 
@@ -147,6 +157,110 @@ function TaskFormSheet({
   );
 }
 
+/**
+ * Editor for a tier task's target. Raising above standard is free (quiet
+ * "above standard" marker); lowering below standard asks for confirmation
+ * and relabels the challenge CUSTOM — the label, not the rules.
+ */
+function TargetEditorSheet({
+  task,
+  onClose,
+}: {
+  task: TaskDef | null;
+  onClose: () => void;
+}) {
+  const tier = useAppStore((s) => s.tier);
+  const updateTaskTarget = useAppStore((s) => s.updateTaskTarget);
+  const [value, setValue] = useState('');
+  const [confirmingLower, setConfirmingLower] = useState(false);
+  const [seenKey, setSeenKey] = useState<string | null>(null);
+
+  const openKey = task ? task.key : null;
+  if (openKey !== seenKey) {
+    setSeenKey(openKey);
+    if (task?.target) setValue(String(task.target.value));
+    setConfirmingLower(false);
+  }
+
+  if (!task?.target) return null;
+  const base = TASK_BASES[task.key as BuiltinTaskKey];
+  const standard = task.tierStandard;
+  const parsed = parseInt(value, 10);
+  const valid = Number.isFinite(parsed) && parsed >= 1;
+
+  const apply = () => {
+    updateTaskTarget(task.key, parsed);
+    toast('Target updated — applies from tomorrow');
+    onClose();
+  };
+
+  const save = () => {
+    if (!valid) return;
+    if (standard && parsed < standard.value && !confirmingLower) {
+      setConfirmingLower(true);
+      return;
+    }
+    apply();
+  };
+
+  return (
+    <BottomSheet visible={!!task} onClose={onClose}>
+      <Kicker style={{ marginBottom: 6 }}>
+        {base?.shortName ?? task.label} — target
+      </Kicker>
+      {standard && (
+        <Text style={styles.standardRef}>
+          {TIERS[tier].label} standard: {targetText(standard)}
+        </Text>
+      )}
+
+      {!confirmingLower ? (
+        <>
+          <View style={styles.targetRow}>
+            <OutlineButton
+              label="−"
+              small
+              tone="neutral"
+              onPress={() => setValue(String(Math.max(1, (parsed || 1) - (task.target!.unit === 'minutes' ? 5 : 1))))}
+            />
+            <TextInput
+              value={value}
+              onChangeText={setValue}
+              keyboardType="numeric"
+              style={styles.targetInput}
+            />
+            <Text style={styles.targetUnit}>{task.target.unit}</Text>
+            <OutlineButton
+              label="+"
+              small
+              tone="neutral"
+              onPress={() => setValue(String((parsed || 0) + (task.target!.unit === 'minutes' ? 5 : 1)))}
+            />
+          </View>
+          <OutlineButton
+            label="Save target"
+            onPress={save}
+            style={{ marginTop: 14 }}
+          />
+        </>
+      ) : (
+        <>
+          <Text style={styles.lowerConfirm}>
+            Lowering this below the {TIERS[tier].label} standard. Your
+            challenge will show as CUSTOM.
+          </Text>
+          <OutlineButton label="Confirm" onPress={apply} style={{ marginBottom: 8 }} />
+          <OutlineButton
+            label="Cancel"
+            tone="neutral"
+            onPress={() => setConfirmingLower(false)}
+          />
+        </>
+      )}
+    </BottomSheet>
+  );
+}
+
 /** Confirmation for a tier change — significant, effective tomorrow. */
 function TierConfirmSheet({
   target,
@@ -242,11 +356,14 @@ export default function MyChallengeScreen() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<CustomTask | null>(null);
   const [tierTarget, setTierTarget] = useState<Tier | null>(null);
+  const [targetTask, setTargetTask] = useState<TaskDef | null>(null);
+  const tierLabelNow = useAppStore(selectTierLabel);
 
   const hasPending =
     pending.addedTomorrow.length > 0 ||
     pending.removedTomorrow.length > 0 ||
-    pending.pendingTier != null;
+    pending.pendingTier != null ||
+    pending.targetChanges.length > 0;
 
   const customByKey = new Map(customTasks.map((c) => [`custom-${c.id}`, c]));
 
@@ -273,8 +390,10 @@ export default function MyChallengeScreen() {
       <Card>
         <View style={styles.summaryRow}>
           <View style={styles.summaryCell}>
-            <Text style={styles.summaryValue}>{TIERS[tier].label}</Text>
-            <Kicker color={colors.neutral500}>Tier</Kicker>
+            <Text style={styles.summaryValue}>{tierLabelNow}</Text>
+            <Kicker color={colors.neutral500}>
+              {tierLabelNow === 'Custom' ? `${TIERS[tier].label} rules` : 'Tier'}
+            </Kicker>
           </View>
           <View style={styles.summaryCell}>
             <Text style={styles.summaryValue}>{day}</Text>
@@ -317,6 +436,12 @@ export default function MyChallengeScreen() {
           const isPendingAdd = custom
             ? custom.activeFromDay === day + 1
             : false;
+          const above = !custom && isAboveStandard(t);
+          const tierMeta = above
+            ? 'above standard'
+            : !custom && t.key === 'workout2' && t.target
+              ? targetText(t.target)
+              : undefined;
           return (
             <TaskRow
               key={t.key}
@@ -326,7 +451,7 @@ export default function MyChallengeScreen() {
                   ? 'starts tomorrow'
                   : custom
                     ? 'custom task'
-                    : undefined
+                    : tierMeta
               }
               onEdit={
                 custom
@@ -334,7 +459,9 @@ export default function MyChallengeScreen() {
                       setEditing(custom);
                       setFormOpen(true);
                     }
-                  : undefined
+                  : t.target
+                    ? () => setTargetTask(t)
+                    : undefined
               }
               onRemove={
                 custom
@@ -444,6 +571,12 @@ export default function MyChallengeScreen() {
               {pending.pendingTier
                 ? ` · tier → ${TIERS[pending.pendingTier].label}`
                 : ''}
+              {pending.targetChanges
+                .map(
+                  (c) =>
+                    ` · ${c.name} → ${targetText({ value: c.toValue, unit: c.unit })}`,
+                )
+                .join('')}
             </Text>
           </View>
           <OutlineButton
@@ -467,6 +600,7 @@ export default function MyChallengeScreen() {
         }}
       />
       <TierConfirmSheet target={tierTarget} onClose={() => setTierTarget(null)} />
+      <TargetEditorSheet task={targetTask} onClose={() => setTargetTask(null)} />
     </ScrollView>
   );
 }
@@ -637,6 +771,43 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     color: colors.neutral300,
     lineHeight: 19,
+  },
+  standardRef: {
+    fontFamily: font.regular,
+    fontSize: 12,
+    color: colors.neutral500,
+    marginBottom: 12,
+  },
+  targetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  targetInput: {
+    fontFamily: font.medium,
+    fontSize: 18,
+    color: colors.text,
+    minHeight: 44,
+    width: 84,
+    textAlign: 'center',
+    borderWidth: 1,
+    borderColor: colors.divider,
+    borderRadius: radius.sm,
+    backgroundColor: colors.bg,
+    fontVariant: ['tabular-nums'],
+  },
+  targetUnit: {
+    flex: 1,
+    fontFamily: font.regular,
+    fontSize: 13,
+    color: colors.neutral400,
+  },
+  lowerConfirm: {
+    fontFamily: font.regular,
+    fontSize: 13.5,
+    color: colors.neutral300,
+    lineHeight: 19,
+    marginBottom: 14,
   },
   tierConfirmMeta: {
     fontFamily: font.regular,

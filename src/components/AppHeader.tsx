@@ -8,7 +8,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomSheet } from '@/components/BottomSheet';
 import { Kicker, SegmentedControl } from '@/components/ui';
 import type { Scenario, Tier } from '@/data/types';
-import { useAppStore, type ScreenStateKind } from '@/store/useAppStore';
+import {
+  selectTierLabel,
+  useAppStore,
+  type ScreenStateKind,
+} from '@/store/useAppStore';
 import { colors, font, radius } from '@/theme/tokens';
 
 const SCENARIOS: { key: Scenario; label: string; sub: string }[] = [
@@ -29,6 +33,7 @@ const STATE_SEGMENTS = ['READY', 'LOADING', 'ERROR'];
 export function AppHeader() {
   const insets = useSafeAreaInsets();
   const tier = useAppStore((s) => s.tier);
+  const tierLabel = useAppStore(selectTierLabel);
   const flame = useAppStore((s) => s.flame);
   const scenario = useAppStore((s) => s.scenario);
   const squad = useAppStore((s) => s.squad);
@@ -64,7 +69,7 @@ export function AppHeader() {
 
       <View style={styles.right}>
         <View style={styles.tierTag}>
-          <Text style={styles.tierText}>{tier}</Text>
+          <Text style={styles.tierText}>{tierLabel}</Text>
         </View>
         <View style={styles.flameChip}>
           <Fire

@@ -1,10 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { CHALLENGE } from '@/constants/challenge';
-import { TIER_TASKS, TIERS } from '@/constants/tiers';
+import { buildTierTask, TASK_BASES, TIERS } from '@/constants/tiers';
 import { buildScenario } from '@/data/mock';
 import type {
   ActiveTimer,
+  BuiltinTaskKey,
   CustomTask,
   DailyNutritionTotals,
   FinalResults,
@@ -19,8 +20,10 @@ import type {
   Scenario,
   ScenarioState,
   Squad,
+  TargetChange,
   TaskDef,
   TaskKey,
+  TaskTarget,
   Tier,
 } from '@/data/types';
 import { NutritionService } from '@/services/NutritionService';
@@ -90,6 +93,12 @@ export interface IDataService {
   undoPendingChanges(day: number): void;
   /** Applies pending changes and freezes the new day's snapshot. */
   rolloverDay(currentTier: Tier, oldDay: number): { tier: Tier; day: number; todayTasks: TaskDef[] };
+  /**
+   * Set a tier task's target value (effective tomorrow like all edits).
+   * Passing the tier standard clears the override.
+   */
+  updateTaskTarget(taskKey: TaskKey, value: number, currentTier: Tier): void;
+  getTierStandards(tier: Tier): Partial<Record<TaskKey, TaskTarget>>;
 }
 
 let uid = 0;
@@ -385,6 +394,10 @@ class MockDataService implements IDataService {
   /** Frozen task set per day. Once written, never rewritten. */
   private daySnapshots: Record<number, TaskDef[]> = {};
   private pendingTier: Tier | null = null;
+  /** Tier-task target values differing from the tier standard. */
+  private targetOverrides: Partial<Record<TaskKey, number>> = {};
+  /** Copy taken at day start so UNDO can revert today's pending edits. */
+  private overridesAtDayStart: Partial<Record<TaskKey, number>> = {};
 
   private customToDef(c: CustomTask): TaskDef {
     return {
@@ -392,12 +405,21 @@ class MockDataService implements IDataService {
       label: c.name,
       sub: c.sub,
       proof: c.proof,
+      // One source of truth: a custom timer duration IS a minutes target.
+      target: c.timerMinutes ? { value: c.timerMinutes, unit: 'minutes' } : null,
+      tierStandard: null,
       timerMinutes: c.timerMinutes,
     };
   }
 
-  /** The live task set for a given day: tier tasks + customs active then. */
+  /**
+   * The live task set for a given day: tier tasks (with target overrides
+   * resolved to values — snapshots store data, not references) + customs.
+   */
   private composeTaskSet(tier: Tier, day: number): TaskDef[] {
+    const tierTasks = TIERS[tier].taskKeys.map((key) =>
+      buildTierTask(tier, key, this.targetOverrides[key]),
+    );
     const customs = this.customTasks
       .filter(
         (c) =>
@@ -405,12 +427,14 @@ class MockDataService implements IDataService {
           (c.removedFromDay == null || c.removedFromDay > day),
       )
       .map((c) => this.customToDef(c));
-    return [...TIER_TASKS[tier], ...customs];
+    return [...tierTasks, ...customs];
   }
 
   initTaskConfig(tier: Tier, day: number): TaskDef[] {
     this.customTasks = [];
     this.pendingTier = null;
+    this.targetOverrides = {};
+    this.overridesAtDayStart = {};
     this.daySnapshots = { [day]: this.composeTaskSet(tier, day) };
     return this.daySnapshots[day];
   }
@@ -483,6 +507,32 @@ class MockDataService implements IDataService {
     this.pendingTier = tier;
   }
 
+  /** Target edits made today (they apply tomorrow). */
+  private pendingTargetChanges(currentTier: Tier): TargetChange[] {
+    const keys = new Set([
+      ...Object.keys(this.targetOverrides),
+      ...Object.keys(this.overridesAtDayStart),
+    ]) as Set<BuiltinTaskKey>;
+    const changes: TargetChange[] = [];
+    for (const key of keys) {
+      const base = TASK_BASES[key];
+      if (!base?.unit) continue;
+      const standard = TIERS[currentTier].standards[key];
+      const from = this.overridesAtDayStart[key] ?? standard;
+      const to = this.targetOverrides[key] ?? standard;
+      if (from != null && to != null && from !== to) {
+        changes.push({
+          taskKey: key,
+          name: base.shortName,
+          fromValue: from,
+          toValue: to,
+          unit: base.unit,
+        });
+      }
+    }
+    return changes;
+  }
+
   getPendingChanges(currentTier: Tier, day: number): PendingChanges {
     return {
       addedTomorrow: this.customTasks.filter(
@@ -492,20 +542,22 @@ class MockDataService implements IDataService {
         (c) => c.removedFromDay === day + 1 && c.activeFromDay <= day,
       ),
       pendingTier: this.pendingTier,
+      targetChanges: this.pendingTargetChanges(currentTier),
       todayCount: this.getTodayTasks(currentTier, day).length,
       tomorrowCount: this.getTomorrowTasks(currentTier, day).length,
     };
   }
 
   undoPendingChanges(day: number): void {
-    // Drop pending adds (never active, no history) and reinstate pending
-    // removals; clear any pending tier change.
+    // Drop pending adds (never active, no history), reinstate pending
+    // removals, revert target edits, and clear any pending tier change.
     this.customTasks = this.customTasks
       .filter((c) => c.activeFromDay !== day + 1)
       .map((c) =>
         c.removedFromDay === day + 1 ? { ...c, removedFromDay: null } : c,
       );
     this.pendingTier = null;
+    this.targetOverrides = { ...this.overridesAtDayStart };
   }
 
   rolloverDay(
@@ -514,11 +566,34 @@ class MockDataService implements IDataService {
   ): { tier: Tier; day: number; todayTasks: TaskDef[] } {
     const tier = this.pendingTier ?? currentTier;
     this.pendingTier = null;
+    this.overridesAtDayStart = { ...this.targetOverrides };
     const day = oldDay + 1;
     if (!this.daySnapshots[day]) {
       this.daySnapshots[day] = this.composeTaskSet(tier, day);
     }
     return { tier, day, todayTasks: this.daySnapshots[day] };
+  }
+
+  updateTaskTarget(taskKey: TaskKey, value: number, currentTier: Tier): void {
+    const base = TASK_BASES[taskKey as BuiltinTaskKey];
+    if (!base?.unit) return;
+    const standard = TIERS[currentTier].standards[taskKey as BuiltinTaskKey];
+    if (value === standard) {
+      delete this.targetOverrides[taskKey];
+    } else {
+      this.targetOverrides[taskKey] = value;
+    }
+    // Today's snapshot is already frozen; the change surfaces tomorrow.
+  }
+
+  getTierStandards(tier: Tier): Partial<Record<TaskKey, TaskTarget>> {
+    const out: Partial<Record<TaskKey, TaskTarget>> = {};
+    for (const key of TIERS[tier].taskKeys) {
+      const base = TASK_BASES[key];
+      const value = TIERS[tier].standards[key];
+      if (base.unit && value != null) out[key] = { value, unit: base.unit };
+    }
+    return out;
   }
 }
 

@@ -33,6 +33,7 @@ import {
   relativeTime,
   selectPingsLeft,
   selectTaskCount,
+  selectTierLabel,
   useAppStore,
 } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
@@ -371,6 +372,8 @@ function LeaderboardTab() {
   const [range, setRange] = useState('THIS WEEK');
   const week = useAppStore((s) => s.leaderboardWeek);
   const allTime = useAppStore((s) => s.leaderboardAllTime);
+  // The self row's tier tag renders live so CUSTOM shows the day it applies.
+  const selfTierLabel = useAppStore(selectTierLabel);
   const rows = range === 'THIS WEEK' ? week : allTime;
 
   return (
@@ -407,6 +410,11 @@ function LeaderboardTab() {
               size={32}
             />
             <Text style={styles.leaderName}>{r.name}</Text>
+            <View style={styles.leaderTierTag}>
+              <Text style={styles.leaderTierText}>
+                {r.isSelf ? selfTierLabel : r.tierLabel}
+              </Text>
+            </View>
             <Text style={styles.leaderXp}>{r.xp.toLocaleString()} XP</Text>
           </View>
         ))}
@@ -643,6 +651,19 @@ const styles = StyleSheet.create({
     fontFamily: font.medium,
     fontSize: 14,
     color: colors.text,
+  },
+  leaderTierTag: {
+    backgroundColor: colors.accent900,
+    borderRadius: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  leaderTierText: {
+    fontFamily: font.medium,
+    fontSize: 8.5,
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    color: colors.accent300,
   },
   leaderXp: {
     fontFamily: font.regular,

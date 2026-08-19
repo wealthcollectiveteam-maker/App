@@ -29,22 +29,48 @@ export interface CustomTask {
   removedFromDay: number | null;
 }
 
+/** A target edit taking effect tomorrow. */
+export interface TargetChange {
+  taskKey: TaskKey;
+  name: string;
+  fromValue: number;
+  toValue: number;
+  unit: TargetUnit;
+}
+
 /** Pending edits that take effect at the next day rollover. */
 export interface PendingChanges {
   addedTomorrow: CustomTask[];
   removedTomorrow: CustomTask[];
   pendingTier: Tier | null;
+  targetChanges: TargetChange[];
   todayCount: number;
   tomorrowCount: number;
 }
 
+export type TargetUnit = 'pages' | 'minutes' | 'gallons' | 'litres' | 'count';
+
+/** A structured task quantity. Null = no meaningful quantity (diet, photo). */
+export interface TaskTarget {
+  value: number;
+  unit: TargetUnit;
+}
+
 export interface TaskDef {
   key: TaskKey;
+  /** Rendered FROM the target (e.g. "Read 15 pages") — never hand-edited. */
   label: string;
   sub: string;
   /** Camera tasks show an optional-proof affordance. */
   proof: boolean;
-  /** Timed tasks: default countdown length in minutes. Absent = not timed. */
+  /** The quantity in force. Snapshots store the resolved value. */
+  target?: TaskTarget | null;
+  /** The tier's standard for this task, for comparison and restoration. */
+  tierStandard?: TaskTarget | null;
+  /**
+   * Timed tasks: countdown length in minutes. Derived from `target` when
+   * its unit is minutes (one source of truth). Absent = not timed.
+   */
   timerMinutes?: number;
   /** User picks the duration before starting (e.g. reading). */
   timerUserSet?: boolean;
@@ -160,6 +186,8 @@ export interface LeaderRow {
   level: number;
   xp: number;
   isSelf: boolean;
+  /** What each person is actually running — HARD/MEDIUM/SOFT/CUSTOM. */
+  tierLabel: string;
 }
 
 export interface Squad {

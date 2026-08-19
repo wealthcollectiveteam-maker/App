@@ -26,7 +26,6 @@ export function HealthPromptCards() {
   const dismissHealthPrompt = useAppStore((s) => s.dismissHealthPrompt);
   const completeTask = useAppStore((s) => s.completeTask);
   const tier = useAppStore((s) => s.tier);
-  const tierWorkoutMinutes = TIERS[tier].workoutMinutes;
 
   if (!healthPrefs.healthEnabled) return null;
   const today = localDateKey();
@@ -56,16 +55,21 @@ export function HealthPromptCards() {
     );
   }
 
-  // Workout: a Health workout at least as long as the tier's duration.
+  // Workout: a Health workout at least as long as TODAY's workout target
+  // (the snapshot value — an edited target applies from tomorrow).
   const pendingWorkout = tasks.find(
     (t) => t.key.startsWith('workout') && !tasksDone[t.key],
   );
+  const requiredMinutes =
+    pendingWorkout?.target?.unit === 'minutes'
+      ? pendingWorkout.target.value
+      : TIERS[tier].workoutMinutes;
   if (
     healthPrefs.workoutPromptEnabled &&
     pendingWorkout &&
     dismissed.workout !== today &&
     readings.workoutMinutes != null &&
-    readings.workoutMinutes >= tierWorkoutMinutes
+    readings.workoutMinutes >= requiredMinutes
   ) {
     prompts.push(
       <PromptCard

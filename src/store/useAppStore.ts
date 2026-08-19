@@ -1,8 +1,14 @@
 import { create } from 'zustand';
 
 import { PINGS, XP } from '@/constants/challenge';
-import { TIERS } from '@/constants/tiers';
+import {
+  displayTierLabel,
+  targetText,
+  TASK_BASES,
+  TIERS,
+} from '@/constants/tiers';
 import type {
+  BuiltinTaskKey,
   CustomTask,
   FeedItem,
   HealthPrefs,
@@ -166,6 +172,8 @@ interface AppState extends ScenarioState {
   removeCustomTask: (id: string) => void;
   /** Pending tier change — takes effect at the next rollover. */
   requestTierChange: (tier: Tier) => void;
+  /** Set a tier task's target — effective tomorrow, like every edit. */
+  updateTaskTarget: (taskKey: TaskKey, value: number) => void;
   undoPendingChanges: () => void;
   /** Dev: simulate the local-midnight rollover. */
   advanceDay: () => void;
@@ -573,6 +581,36 @@ export const useAppStore = create<AppState>((set, get) => ({
     set(updates);
   },
 
+  updateTaskTarget: (taskKey, value) => {
+    const s = get();
+    const before = s.tomorrowTasks.find((t) => t.key === taskKey);
+    if (!before?.target || value === before.target.value || value < 1) return;
+    DataService.updateTaskTarget(taskKey, value, s.tier);
+    const config = taskConfigMirror(s.tier, s.day);
+    const updates: Partial<AppState> = { ...config };
+    if (s.squad) {
+      const name =
+        TASK_BASES[taskKey as BuiltinTaskKey]?.shortName ?? before.label;
+      const raised = value > before.target.value;
+      const effectiveTier = config.pendingChanges.pendingTier ?? s.tier;
+      const becomesCustom =
+        displayTierLabel(config.tomorrowTasks, effectiveTier) === 'Custom' &&
+        displayTierLabel(s.tomorrowTasks, effectiveTier) !== 'Custom';
+      const item: FeedItem = {
+        id: `f-local-${++feedId}`,
+        kind: 'change',
+        who: 'You',
+        text: `${raised ? 'raised' : 'lowered'} ${name} to ${targetText({
+          value,
+          unit: before.target.unit,
+        })}${becomesCustom ? ' — challenge now CUSTOM' : ''}.`,
+        timestamp: Date.now(),
+      };
+      updates.feed = [item, ...s.feed];
+    }
+    set(updates);
+  },
+
   undoPendingChanges: () => {
     const s = get();
     DataService.undoPendingChanges(s.day);
@@ -639,6 +677,16 @@ export const useAppStore = create<AppState>((set, get) => ({
  */
 export const selectTasks = (s: { todayTasks: TaskDef[] }): TaskDef[] =>
   s.todayTasks;
+
+/**
+ * The tier tag the app displays: the base tier's label, or CUSTOM when any
+ * of TODAY's tier tasks runs below its standard. Derived from the snapshot,
+ * so a lowered target only relabels the challenge from tomorrow.
+ */
+export const selectTierLabel = (s: {
+  todayTasks: TaskDef[];
+  tier: Tier;
+}): string => displayTierLabel(s.todayTasks, s.tier);
 
 export const selectTaskCount = (s: { todayTasks: TaskDef[] }) =>
   s.todayTasks.length;

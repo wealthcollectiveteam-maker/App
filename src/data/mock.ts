@@ -22,17 +22,19 @@ function leaderboards(selfXp: number): {
   week: LeaderRow[];
   allTime: LeaderRow[];
 } {
+  // tierLabel shows what each person actually runs; the self row renders
+  // live from the store, so its value here is a placeholder.
   const week: LeaderRow[] = [
-    { id: 'maya', name: 'Maya', level: 4, xp: 980, isSelf: false },
-    { id: 'you', name: 'You', level: 3, xp: Math.min(940, 340 + Math.round(selfXp / 10)), isSelf: true },
-    { id: 'jordan', name: 'Jordan', level: 2, xp: 760, isSelf: false },
-    { id: 'sam', name: 'Sam', level: 2, xp: 520, isSelf: false },
+    { id: 'maya', name: 'Maya', level: 4, xp: 980, isSelf: false, tierLabel: 'Hard' },
+    { id: 'you', name: 'You', level: 3, xp: Math.min(940, 340 + Math.round(selfXp / 10)), isSelf: true, tierLabel: 'Hard' },
+    { id: 'jordan', name: 'Jordan', level: 2, xp: 760, isSelf: false, tierLabel: 'Custom' },
+    { id: 'sam', name: 'Sam', level: 2, xp: 520, isSelf: false, tierLabel: 'Soft' },
   ];
   const allTime: LeaderRow[] = [
-    { id: 'you', name: 'You', level: 3, xp: selfXp, isSelf: true },
-    { id: 'maya', name: 'Maya', level: 4, xp: Math.max(selfXp - 120, 0) + 3080, isSelf: false },
-    { id: 'jordan', name: 'Jordan', level: 2, xp: 1490, isSelf: false },
-    { id: 'sam', name: 'Sam', level: 2, xp: 1210, isSelf: false },
+    { id: 'you', name: 'You', level: 3, xp: selfXp, isSelf: true, tierLabel: 'Hard' },
+    { id: 'maya', name: 'Maya', level: 4, xp: Math.max(selfXp - 120, 0) + 3080, isSelf: false, tierLabel: 'Hard' },
+    { id: 'jordan', name: 'Jordan', level: 2, xp: 1490, isSelf: false, tierLabel: 'Custom' },
+    { id: 'sam', name: 'Sam', level: 2, xp: 1210, isSelf: false, tierLabel: 'Soft' },
   ];
   week.sort((a, b) => b.xp - a.xp);
   allTime.sort((a, b) => b.xp - a.xp);
