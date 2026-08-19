@@ -367,11 +367,21 @@ export default function MyChallengeScreen() {
 
   const customByKey = new Map(customTasks.map((c) => [`custom-${c.id}`, c]));
 
-  // Recent day snapshots (history renders against what was in force then).
-  const history: { day: number; count: number }[] = [];
+  // Recent day snapshots — history renders against what was in force then,
+  // including the target values of that day (not today's).
+  const history: { day: number; count: number; targets: string }[] = [];
   for (let d = day - 1; d >= Math.max(1, day - 5); d--) {
     const snap = DataService.getDaySnapshot(d);
-    if (snap) history.push({ day: d, count: snap.length });
+    if (snap) {
+      history.push({
+        day: d,
+        count: snap.length,
+        targets: snap
+          .filter((t) => t.target)
+          .map((t) => t.label)
+          .join(' · '),
+      });
+    }
   }
 
   return (
@@ -549,10 +559,15 @@ export default function MyChallengeScreen() {
           <Card>
             {history.map((h) => (
               <View key={h.day} style={styles.historyRow}>
-                <Text style={styles.taskLabel}>Day {h.day}</Text>
-                <Text style={styles.taskMeta}>
-                  {h.count} tasks were in force
-                </Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <Text style={styles.taskLabel}>Day {h.day}</Text>
+                  <Text style={styles.taskMeta}>
+                    {h.count} tasks were in force
+                  </Text>
+                </View>
+                {h.targets ? (
+                  <Text style={styles.historyTargets}>{h.targets}</Text>
+                ) : null}
               </View>
             ))}
           </Card>
@@ -711,10 +726,15 @@ const styles = StyleSheet.create({
     color: colors.accent100,
   },
   historyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     minHeight: 40,
+    justifyContent: 'center',
+    paddingVertical: 6,
+  },
+  historyTargets: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: colors.neutral500,
+    marginTop: 3,
   },
   pendingBar: {
     flexDirection: 'row',
