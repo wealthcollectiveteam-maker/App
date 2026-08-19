@@ -38,6 +38,24 @@ Hard rules, enforced in `src/services/HealthService.ts`:
 - When the backend lands, `metric_checkins` requires RLS restricting reads
   to the owner only.
 
+## Backend enforcement (Phase 8)
+
+The privacy promises above are enforced server-side by row-level security in
+`supabase/migrations/0001_init.sql` and PROVEN by executable tests
+(`npm run test:rls`, `supabase/tests/rls_test.sql`):
+
+- A squadmate can read another member's profile name/XP and squad feed only.
+  Journal entries, meals (and nutrition), metric check-ins, "why I started"
+  (`profile_private`), milestones, custom-task detail, day snapshots and
+  per-task completions all return zero rows through the API.
+- The sanctioned social surface is `get_squad_status()` — completion counts,
+  XP, and tier label. Nothing else.
+- Day snapshots and completions are server-owned: direct INSERT/UPDATE/
+  DELETE privileges are revoked from clients; the SECURITY DEFINER RPCs only
+  ever operate on the server-computed current day, and an immutability
+  trigger rejects snapshot rewrites even from privileged code.
+- There are NO HealthKit tables. Health data never syncs, by construction.
+
 ## Nutrition data
 
 - Nutrition attachment on meals is optional enrichment; plain-text logging
