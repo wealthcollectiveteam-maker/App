@@ -724,20 +724,6 @@ create policy reports_select on public.content_reports for select to authenticat
 create policy blocked_all on public.blocked_users for all to authenticated
   using (blocker = auth.uid()) with check (blocker = auth.uid());
 
--- ---------- immutability: no direct writes to server-owned tables ----------
-
-revoke insert, update, delete on public.challenges       from authenticated;
-revoke insert, update, delete on public.tier_history     from authenticated;
-revoke insert, update, delete on public.custom_tasks     from authenticated;
-revoke insert, update, delete on public.target_overrides from authenticated;
-revoke insert, update, delete on public.challenge_days   from authenticated;
-revoke insert, update, delete on public.task_completions from authenticated;
-revoke insert, update, delete on public.squads           from authenticated;
-revoke insert, update, delete on public.squad_members    from authenticated;
-revoke insert, update, delete on public.pings            from authenticated;
-revoke all on public.tier_standards from authenticated;
-grant select on public.tier_standards to authenticated;
-
 -- Belt and braces: even a definer bug can never rewrite a frozen snapshot.
 create or replace function public.forbid_snapshot_mutation()
 returns trigger
@@ -759,3 +745,47 @@ $$;
 create trigger challenge_days_immutable
   before update or delete on public.challenge_days
   for each row execute function public.forbid_snapshot_mutation();
+
+-- ---------- privilege lockdown: explicit allow-list ----------
+-- Supabase's default privileges grant ALL on new public tables — and
+-- EXECUTE on new functions — to BOTH `anon` and `authenticated`. RLS
+-- default-deny would still hold without policies, but the privilege layer
+-- is a deliberate first wall: start every client role from zero, then
+-- grant exactly what the app is sanctioned to do. `anon` gets NOTHING —
+-- this app has no unauthenticated surface. Keep this section last so it
+-- covers everything the migration created, and repeat the pattern in every
+-- future migration (Supabase re-applies defaults to new objects).
+
+revoke all on all tables    in schema public from public, anon, authenticated;
+revoke all on all sequences in schema public from public, anon, authenticated;
+revoke all on all functions in schema public from public, anon, authenticated;
+
+-- Reads: every table is guarded by an owner/member-scoped RLS policy.
+grant select on
+  public.tier_standards, public.profiles, public.profile_private,
+  public.challenges, public.tier_history, public.custom_tasks,
+  public.target_overrides, public.challenge_days, public.task_completions,
+  public.journal_entries, public.meals, public.metric_checkins,
+  public.milestones, public.squads, public.squad_members,
+  public.feed_items, public.pings, public.content_reports,
+  public.blocked_users
+to authenticated;
+
+-- Direct writes: ONLY owner-scoped personal data and moderation. Anything
+-- server-owned (challenges, snapshots, completions, tier/target/custom-task
+-- config, squads, membership, pings) writes exclusively through the
+-- SECURITY DEFINER RPCs.
+grant insert on
+  public.profiles, public.profile_private, public.journal_entries,
+  public.meals, public.metric_checkins, public.milestones,
+  public.feed_items, public.content_reports, public.blocked_users
+to authenticated;
+
+grant update on
+  public.profiles, public.profile_private, public.meals, public.milestones
+to authenticated;
+
+grant delete on public.blocked_users to authenticated;
+
+-- RPCs and RLS policy helpers are callable by authenticated users only.
+grant execute on all functions in schema public to authenticated;

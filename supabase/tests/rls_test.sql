@@ -10,6 +10,96 @@
 \set QUIET on
 \pset pager off
 
+-- ---------------- PROOF 0: the privilege surface itself ----------------
+-- RLS is the second wall; this asserts the FIRST wall — the actual grants.
+-- Supabase's defaults hand `anon` and `authenticated` ALL on every new
+-- table and EXECUTE on every function; the migration must claw that back
+-- to an explicit allow-list. Table-driven and two-directional: a table
+-- missing its revoke fails, and so does an unexpected new grant.
+do $$
+declare
+  t record;
+  f record;
+  qualified text;
+  -- the sanctioned direct-write surface for `authenticated`
+  ins_allow text[] := array['profiles','profile_private','journal_entries',
+    'meals','metric_checkins','milestones','feed_items','content_reports',
+    'blocked_users'];
+  upd_allow text[] := array['profiles','profile_private','meals','milestones'];
+  del_allow text[] := array['blocked_users'];
+begin
+  for t in select tablename from pg_tables where schemaname = 'public' loop
+    qualified := format('public.%I', t.tablename);
+
+    -- anon: ZERO privileges on every table, SELECT included.
+    if has_table_privilege('anon', qualified, 'SELECT')
+       or has_table_privilege('anon', qualified, 'INSERT')
+       or has_table_privilege('anon', qualified, 'UPDATE')
+       or has_table_privilege('anon', qualified, 'DELETE') then
+      raise exception 'FAIL: anon holds a privilege on %', qualified;
+    end if;
+
+    -- authenticated: SELECT everywhere (all RLS-scoped), writes = allow-list.
+    if not has_table_privilege('authenticated', qualified, 'SELECT') then
+      raise exception 'FAIL: authenticated missing SELECT on %', qualified;
+    end if;
+    if has_table_privilege('authenticated', qualified, 'INSERT')
+       <> (t.tablename = any(ins_allow)) then
+      raise exception 'FAIL: authenticated INSERT grant wrong on %', qualified;
+    end if;
+    if has_table_privilege('authenticated', qualified, 'UPDATE')
+       <> (t.tablename = any(upd_allow)) then
+      raise exception 'FAIL: authenticated UPDATE grant wrong on %', qualified;
+    end if;
+    if has_table_privilege('authenticated', qualified, 'DELETE')
+       <> (t.tablename = any(del_allow)) then
+      raise exception 'FAIL: authenticated DELETE grant wrong on %', qualified;
+    end if;
+  end loop;
+
+  -- functions: anon can execute NOTHING in public; authenticated everything.
+  for f in
+    select p.oid from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+  loop
+    if has_function_privilege('anon', f.oid, 'EXECUTE') then
+      raise exception 'FAIL: anon can execute %', f.oid::regprocedure;
+    end if;
+    if not has_function_privilege('authenticated', f.oid, 'EXECUTE') then
+      raise exception 'FAIL: authenticated cannot execute %', f.oid::regprocedure;
+    end if;
+  end loop;
+
+  raise notice 'PASS: privilege surface — anon holds nothing; authenticated writes match the allow-list exactly';
+end $$;
+
+-- Runtime probe as anon: the privilege wall fires before RLS ever runs.
+set role anon;
+do $$
+begin
+  begin
+    perform count(*) from public.journal_entries;
+    raise exception 'FAIL: anon read a private table';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon SELECT denied at the privilege layer';
+  end;
+  begin
+    insert into public.feed_items (squad_id, author, kind, text)
+    values (gen_random_uuid(), gen_random_uuid(), 'complete', 'x');
+    raise exception 'FAIL: anon inserted into feed_items';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon INSERT denied at the privilege layer';
+  end;
+  begin
+    perform public.complete_task('read');
+    raise exception 'FAIL: anon executed a SECURITY DEFINER RPC';
+  exception when insufficient_privilege then
+    raise notice 'PASS: anon cannot execute RPCs';
+  end;
+end $$;
+reset role;
+
 -- ---- fixtures (as superuser) ----
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-00000000000a', 'aly@test.dev'),
