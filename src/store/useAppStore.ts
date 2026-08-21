@@ -125,6 +125,9 @@ interface AppState extends ScenarioState {
   /**
    * Start times of Health workouts already used to confirm a task — one
    * recorded activity vouches for at most one completion.
+   * PRIVACY: in-memory ONLY. This is HealthKit-derived data; it must never
+   * be written to AsyncStorage or any backend (see PRIVACY_NOTES.md). It
+   * resets on relaunch by design — completed tasks are filtered out anyway.
    */
   healthWorkoutsConsumed: string[];
   healthSimulated: boolean;

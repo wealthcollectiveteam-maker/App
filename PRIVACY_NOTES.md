@@ -38,6 +38,22 @@ Hard rules, enforced in `src/services/HealthService.ts`:
 - When the backend lands, `metric_checkins` requires RLS restricting reads
   to the owner only.
 
+## Workout suggestion consumption (Phase 9 review, A3)
+
+One recorded Apple Health workout may vouch for at most one task
+completion. The record of which workouts were "used" lives in
+`useAppStore.healthWorkoutsConsumed` — **in memory only**, mutated
+exclusively via zustand `set()` calls. It is deliberately excluded from
+`hydratePersisted`/AsyncStorage and from every backend payload, because a
+workout's start time is HealthKit-derived data. It resets on relaunch by
+design; completed tasks are filtered out of the suggestion pass anyway, so
+the reset cannot double-award anything.
+
+The workout log (addendum) is composed only of data the app owns: duration
+from our own timer or typed by the user, plus a user-picked type, optional
+effort, and an optional note. No HealthKit-derived value is written to
+`workout_logs` or any network payload.
+
 ## Backend enforcement (Phase 8)
 
 The privacy promises above are enforced server-side by row-level security in

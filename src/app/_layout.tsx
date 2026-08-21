@@ -13,7 +13,10 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { TimerConflictSheet } from '@/components/TimerConflictSheet';
 import { ToastHost } from '@/components/ToastHost';
-import { initNotificationHandling } from '@/services/timerEffects';
+import {
+  handleColdLaunchNotification,
+  initNotificationHandling,
+} from '@/services/timerEffects';
 import { useAppStore } from '@/store/useAppStore';
 import { remainingSeconds, useTimerStore } from '@/store/useTimerStore';
 import { colors } from '@/theme/tokens';
@@ -44,7 +47,20 @@ export default function RootLayout() {
   // time passed while backgrounded or killed, complete the task now.
   // Health readings refresh on launch and foreground (on-device only).
   useEffect(() => {
-    useTimerStore.getState().hydrate();
+    useTimerStore
+      .getState()
+      .hydrate()
+      .then(() =>
+        // A2: a notification tap that cold-launched the app arrives via the
+        // last-response API, not the live listener. Router is mounted by
+        // now (post-mount effect), and hydrate() ran first so "is a timer
+        // active" is answerable.
+        handleColdLaunchNotification(
+          () => useTimerStore.getState().active != null,
+          () => router.push('/timer'),
+        ),
+      )
+      .catch(() => {});
     useAppStore.getState().hydratePersisted().catch(() => {});
     useAppStore.getState().refreshHealth().catch(() => {});
     const sub = AppState.addEventListener('change', (state) => {
@@ -56,6 +72,7 @@ export default function RootLayout() {
       useAppStore.getState().refreshHealth().catch(() => {});
     });
     return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!loaded) return null;

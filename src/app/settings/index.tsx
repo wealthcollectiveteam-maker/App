@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { NotificationPermissionBanner } from '@/components/NotificationPermissionBanner';
 import { Card, Kicker, OutlineButton, SegmentedControl } from '@/components/ui';
 import type { HealthPrefs, NotificationPrefs } from '@/data/types';
 import { useAppStore } from '@/store/useAppStore';
@@ -77,6 +78,7 @@ export default function SettingsScreen() {
       </View>
 
       <Kicker style={styles.sectionKicker}>Notifications</Kicker>
+      <NotificationPermissionBanner />
       <Card>
         {PREF_ROWS.map(({ key, label, sub }, i) => (
           <View

@@ -118,7 +118,9 @@ function countdownLabel(seconds: number): string {
 
 /**
  * Post the running notification and schedule halfway / 5-min / completion.
- * Call on start and on resume (after cancelTimerNotifications).
+ * ALWAYS clears its own ids first (cancel pending + dismiss delivered), so
+ * every lifecycle transition is a serialized clear-then-post — a
+ * fire-and-forget cancel can never race a fresh post and kill it.
  */
 export async function postTimerNotifications(
   taskLabel: string,
@@ -128,6 +130,7 @@ export async function postTimerNotifications(
   if (!mod) return;
   const remainingMs = targetAtMs - Date.now();
   if (remainingMs <= 0) return;
+  await cancelTimerNotifications();
   try {
     // Visible immediately on the Lock Screen: absolute end time — the
     // information a glance actually needs, since iOS won't live-count.
@@ -193,7 +196,16 @@ export async function postTimerNotifications(
   }
 }
 
-/** Cancel + dismiss precisely by identifier — never cancelAll. */
+/**
+ * Cancel + dismiss precisely by identifier — never cancelAll (which would
+ * nuke ping/push notifications too). Both calls are needed because they
+ * cover different states: cancelScheduledNotificationAsync removes PENDING
+ * notifications (halfway / 5-min / completion that haven't fired), while
+ * dismissNotificationAsync removes DELIVERED ones from Notification Center
+ * (the immediately-posted "timer running" one, and any of the scheduled
+ * ones that already fired). Cancelling a scheduled id has no effect on a
+ * delivered notification.
+ */
 export async function cancelTimerNotifications(): Promise<void> {
   const mod = getNotifications();
   if (!mod) return;
@@ -205,6 +217,28 @@ export async function cancelTimerNotifications(): Promise<void> {
       ]),
     );
   } catch {}
+}
+
+/**
+ * A2: notification taps that COLD-LAUNCH the app never reach
+ * addNotificationResponseReceivedListener — they arrive via
+ * getLastNotificationResponseAsync. Call once after the router has mounted.
+ * Navigates only when a timer is genuinely active, so a stale response
+ * from a previous session can't hijack a normal launch.
+ */
+export async function handleColdLaunchNotification(
+  hasActiveTimer: () => boolean,
+  onOpenTimer: () => void,
+): Promise<void> {
+  const mod = getNotifications();
+  if (!mod) return;
+  try {
+    const response = await mod.getLastNotificationResponseAsync();
+    const url = response?.notification.request.content.data?.url;
+    if (url === '/timer' && hasActiveTimer()) onOpenTimer();
+  } catch {
+    // Deep-link recovery is best-effort; a normal launch must never break.
+  }
 }
 
 let chime: AudioPlayer | null = null;
