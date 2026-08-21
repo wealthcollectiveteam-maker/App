@@ -220,6 +220,7 @@ const DEFAULT_PREFS: NotificationPrefs = {
   pings: true,
   squadActivity: true,
   dailyReminder: false,
+  timerAlerts: true,
 };
 
 const UNIT_PREF_KEY = 'ranked.unitPreference.v1';

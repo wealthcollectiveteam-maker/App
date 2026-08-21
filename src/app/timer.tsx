@@ -1,14 +1,21 @@
 import { useKeepAwake } from 'expo-keep-awake';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { CheckCircleIcon as CheckCircle } from 'phosphor-react-native';
-import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import {
+  BellSlashIcon as BellSlash,
+  CheckCircleIcon as CheckCircle,
+} from 'phosphor-react-native';
+import React, { useCallback, useState } from 'react';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ProgressRing } from '@/components/ProgressRing';
 import { Kicker, OutlineButton } from '@/components/ui';
 import type { TaskKey } from '@/data/types';
 import { useTimerTick } from '@/hooks/useTimerTick';
+import {
+  getNotificationPermissionStatus,
+  type NotificationPermission,
+} from '@/services/timerEffects';
 import { selectTasks, useAppStore } from '@/store/useAppStore';
 import {
   formatCountdown,
@@ -21,6 +28,37 @@ import { colors, font, radius, space } from '@/theme/tokens';
 function KeepAwakeWhileVisible() {
   useKeepAwake();
   return null;
+}
+
+/**
+ * Never fail silently: when notification permission is denied, say so and
+ * offer the system settings. Without it a backgrounded timer is invisible.
+ */
+function NotificationDeniedNotice() {
+  const [status, setStatus] = useState<NotificationPermission>('unavailable');
+
+  useFocusEffect(
+    useCallback(() => {
+      getNotificationPermissionStatus().then(setStatus).catch(() => {});
+    }, []),
+  );
+
+  if (status !== 'denied') return null;
+  return (
+    <View style={styles.deniedNotice}>
+      <BellSlash size={15} color={colors.neutral400} />
+      <Text style={styles.deniedText}>
+        Timer alerts are off — you won{'\u2019'}t be notified when this
+        finishes.
+      </Text>
+      <OutlineButton
+        label="Open Settings"
+        small
+        tone="neutral"
+        onPress={() => Linking.openSettings().catch(() => {})}
+      />
+    </View>
+  );
 }
 
 function CompletedState({
@@ -130,6 +168,7 @@ export default function TimerScreen() {
     body = (
       <View style={styles.center}>
         <KeepAwakeWhileVisible />
+        <NotificationDeniedNotice />
         <Kicker style={{ marginBottom: 10 }}>
           {paused ? 'Paused' : 'Timer running'}
         </Kicker>
@@ -266,5 +305,23 @@ const styles = StyleSheet.create({
   },
   stepper: {
     borderRadius: radius.sm,
+  },
+  deniedNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: colors.neutral700,
+    borderRadius: radius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 16,
+  },
+  deniedText: {
+    flex: 1,
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    color: colors.neutral400,
+    lineHeight: 15,
   },
 });

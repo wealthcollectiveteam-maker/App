@@ -7,7 +7,32 @@ import { Platform } from 'react-native';
  * they fire even if the app never returns to the foreground), success
  * haptics, and a completion chime that respects the device silent switch
  * (expo-audio's default iOS audio mode does not play in silent mode).
+ *
+ * NOTIFICATION MODEL (Phase 9 Part 3): a timer posts FOUR notifications
+ * with STABLE identifiers so they can be cancelled precisely — never via
+ * cancelAllScheduledNotificationsAsync, which would nuke ping/push
+ * notifications too:
+ *   timer-running   — posted immediately; sits on the Lock Screen showing
+ *                     the absolute end time (iOS can't live-count-down)
+ *   timer-halfway   — scheduled at the halfway point
+ *   timer-5min      — scheduled at T-5:00
+ *   timer-complete  — scheduled at the target time
+ * All cancelled on pause/cancel, reposted on resume against the recomputed
+ * target. Tapping any of them deep-links to the timer screen.
  */
+
+const TIMER_NOTIFICATION_IDS = [
+  'timer-running',
+  'timer-halfway',
+  'timer-5min',
+  'timer-complete',
+] as const;
+
+export type NotificationPermission =
+  | 'granted'
+  | 'denied'
+  | 'undetermined'
+  | 'unavailable';
 
 // expo-notifications is unsupported on web; import lazily and guard.
 type NotificationsModule = typeof import('expo-notifications');
@@ -18,7 +43,22 @@ function getNotifications(): NotificationsModule | null {
     // Lazy require: expo-notifications must never load on web.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     notifications = require('expo-notifications') as NotificationsModule;
-    notifications.setNotificationHandler({
+  }
+  return notifications;
+}
+
+/**
+ * Register the foreground-presentation handler and the tap-to-deep-link
+ * listener ONCE at app root (previously this was lazily registered on the
+ * first timer use, so early notifications had no handler).
+ */
+export function initNotificationHandling(
+  onOpenTimer: () => void,
+): () => void {
+  const mod = getNotifications();
+  if (!mod) return () => {};
+  try {
+    mod.setNotificationHandler({
       handleNotification: async () => ({
         shouldPlaySound: true,
         shouldSetBadge: false,
@@ -26,8 +66,27 @@ function getNotifications(): NotificationsModule | null {
         shouldShowList: true,
       }),
     });
+    const sub = mod.addNotificationResponseReceivedListener((response) => {
+      const url = response.notification.request.content.data?.url;
+      if (url === '/timer') onOpenTimer();
+    });
+    return () => sub.remove();
+  } catch {
+    return () => {};
   }
-  return notifications;
+}
+
+export async function getNotificationPermissionStatus(): Promise<NotificationPermission> {
+  const mod = getNotifications();
+  if (!mod) return 'unavailable';
+  try {
+    const current = await mod.getPermissionsAsync();
+    if (current.granted) return 'granted';
+    if (current.canAskAgain) return 'undetermined';
+    return 'denied';
+  } catch {
+    return 'unavailable';
+  }
 }
 
 export async function ensureNotificationPermission(): Promise<void> {
@@ -35,27 +94,94 @@ export async function ensureNotificationPermission(): Promise<void> {
   if (!mod) return;
   try {
     const current = await mod.getPermissionsAsync();
-    if (!current.granted) await mod.requestPermissionsAsync();
+    if (!current.granted && current.canAskAgain) {
+      await mod.requestPermissionsAsync();
+    }
   } catch {
     // Permission problems must never break the timer itself.
   }
 }
 
-/** Schedule the "time's up" notification for the target wall-clock time. */
-export async function scheduleCompletionNotification(
+function clockLabel(atMs: number): string {
+  return new Date(atMs).toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function countdownLabel(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Post the running notification and schedule halfway / 5-min / completion.
+ * Call on start and on resume (after cancelTimerNotifications).
+ */
+export async function postTimerNotifications(
   taskLabel: string,
   targetAtMs: number,
 ): Promise<void> {
   const mod = getNotifications();
   if (!mod) return;
+  const remainingMs = targetAtMs - Date.now();
+  if (remainingMs <= 0) return;
   try {
-    await mod.cancelAllScheduledNotificationsAsync();
-    if (targetAtMs <= Date.now()) return;
+    // Visible immediately on the Lock Screen: absolute end time — the
+    // information a glance actually needs, since iOS won't live-count.
     await mod.scheduleNotificationAsync({
+      identifier: 'timer-running',
+      content: {
+        title: `${taskLabel} — timer running`,
+        body: `${countdownLabel(remainingMs / 1000)} · ends at ${clockLabel(targetAtMs)}`,
+        sound: false,
+        data: { url: '/timer' },
+      },
+      trigger: null,
+    });
+
+    if (remainingMs > 2 * 60_000) {
+      const halfAtMs = Date.now() + remainingMs / 2;
+      await mod.scheduleNotificationAsync({
+        identifier: 'timer-halfway',
+        content: {
+          title: taskLabel,
+          body: `${countdownLabel(remainingMs / 2000)} left`,
+          sound: false,
+          data: { url: '/timer' },
+        },
+        trigger: {
+          type: mod.SchedulableTriggerInputTypes.DATE,
+          date: new Date(halfAtMs),
+        },
+      });
+    }
+
+    if (remainingMs > 5.5 * 60_000) {
+      await mod.scheduleNotificationAsync({
+        identifier: 'timer-5min',
+        content: {
+          title: taskLabel,
+          body: '5:00 left',
+          sound: false,
+          data: { url: '/timer' },
+        },
+        trigger: {
+          type: mod.SchedulableTriggerInputTypes.DATE,
+          date: new Date(targetAtMs - 5 * 60_000),
+        },
+      });
+    }
+
+    await mod.scheduleNotificationAsync({
+      identifier: 'timer-complete',
       content: {
         title: 'Time.',
         body: `${taskLabel} — done. Locked in.`,
         sound: true,
+        data: { url: '/timer' },
       },
       trigger: {
         type: mod.SchedulableTriggerInputTypes.DATE,
@@ -67,11 +193,17 @@ export async function scheduleCompletionNotification(
   }
 }
 
-export async function cancelCompletionNotification(): Promise<void> {
+/** Cancel + dismiss precisely by identifier — never cancelAll. */
+export async function cancelTimerNotifications(): Promise<void> {
   const mod = getNotifications();
   if (!mod) return;
   try {
-    await mod.cancelAllScheduledNotificationsAsync();
+    await Promise.all(
+      TIMER_NOTIFICATION_IDS.flatMap((id) => [
+        mod.cancelScheduledNotificationAsync(id),
+        mod.dismissNotificationAsync(id),
+      ]),
+    );
   } catch {}
 }
 

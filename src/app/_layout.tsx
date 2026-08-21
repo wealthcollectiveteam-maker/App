@@ -4,7 +4,7 @@ import {
   Inter_600SemiBold,
   useFonts,
 } from '@expo-google-fonts/inter';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
@@ -13,6 +13,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { TimerConflictSheet } from '@/components/TimerConflictSheet';
 import { ToastHost } from '@/components/ToastHost';
+import { initNotificationHandling } from '@/services/timerEffects';
 import { useAppStore } from '@/store/useAppStore';
 import { remainingSeconds, useTimerStore } from '@/store/useTimerStore';
 import { colors } from '@/theme/tokens';
@@ -20,6 +21,7 @@ import { colors } from '@/theme/tokens';
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
+  const router = useRouter();
   const [loaded] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -29,6 +31,14 @@ export default function RootLayout() {
   useEffect(() => {
     if (loaded) SplashScreen.hideAsync();
   }, [loaded]);
+
+  // Notification handler + tap-to-deep-link, registered ONCE at app root
+  // (not lazily on first timer use).
+  useEffect(() => {
+    const unsubscribe = initNotificationHandling(() => router.push('/timer'));
+    return unsubscribe;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Timer: rehydrate on cold launch, recompute on foreground. If the target
   // time passed while backgrounded or killed, complete the task now.

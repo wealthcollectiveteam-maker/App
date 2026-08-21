@@ -22,6 +22,7 @@ import { toast } from '@/store/useToastStore';
 import { colors, font, radius, space } from '@/theme/tokens';
 
 const PREF_ROWS: { key: keyof NotificationPrefs; label: string; sub: string }[] = [
+  { key: 'timerAlerts', label: 'Timer alerts', sub: 'Running, halfway, 5-min and done notifications' },
   { key: 'pings', label: 'Pings', sub: 'When a squadmate pings you' },
   { key: 'squadActivity', label: 'Squad activity', sub: 'Completions and proof in your squad' },
   { key: 'dailyReminder', label: 'Daily reminder', sub: 'An evening nudge if tasks are open' },

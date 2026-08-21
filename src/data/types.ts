@@ -215,6 +215,8 @@ export interface NotificationPrefs {
   pings: boolean;
   squadActivity: boolean;
   dailyReminder: boolean;
+  /** Running/halfway/5-min/completion timer notifications. */
+  timerAlerts: boolean;
 }
 
 export interface ScenarioState {

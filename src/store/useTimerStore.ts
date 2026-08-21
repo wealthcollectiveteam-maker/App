@@ -3,13 +3,26 @@ import { create } from 'zustand';
 import type { ActiveTimer, TaskDef, TaskKey } from '@/data/types';
 import { DataService } from '@/services/DataService';
 import {
-  cancelCompletionNotification,
+  cancelTimerNotifications,
   ensureNotificationPermission,
   playCompletionEffects,
-  scheduleCompletionNotification,
+  postTimerNotifications,
 } from '@/services/timerEffects';
 import { useAppStore } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
+
+/** Timer alerts respect the settings toggle (on by default). */
+function timerAlertsEnabled(): boolean {
+  return useAppStore.getState().notificationPrefs.timerAlerts;
+}
+
+function repostNotifications(timer: ActiveTimer): void {
+  if (!timerAlertsEnabled()) return;
+  postTimerNotifications(
+    timer.label,
+    Date.now() + remainingSeconds(timer) * 1000,
+  ).catch(() => {});
+}
 
 /**
  * Workout timer engine. Remaining time is always derived from wall-clock
@@ -31,10 +44,6 @@ export function remainingSeconds(t: ActiveTimer, now: number = Date.now()): numb
   return t.durationSeconds - elapsedActiveSeconds(t, now);
 }
 
-/** Wall-clock time at which the timer will hit zero (while running). */
-function targetAtMs(t: ActiveTimer, now: number = Date.now()): number {
-  return now + remainingSeconds(t, now) * 1000;
-}
 
 export function formatCountdown(seconds: number): string {
   const s = Math.max(0, Math.ceil(seconds));
@@ -86,9 +95,7 @@ export const useTimerStore = create<TimerState>((set, get) => {
     };
     set({ active: timer, lastCompleted: null });
     DataService.startTimer(timer).catch(() => {});
-    ensureNotificationPermission().then(() =>
-      scheduleCompletionNotification(timer.label, targetAtMs(timer)),
-    );
+    ensureNotificationPermission().then(() => repostNotifications(timer));
   };
 
   return {
@@ -137,7 +144,7 @@ export const useTimerStore = create<TimerState>((set, get) => {
       pendingStart = null;
       set({ conflict: null });
       if (!discardAndStart || !request) return;
-      cancelCompletionNotification();
+      cancelTimerNotifications().catch(() => {});
       DataService.cancelTimer().catch(() => {});
       set({ active: null });
       start(request.task, request.durationSeconds);
@@ -152,7 +159,8 @@ export const useTimerStore = create<TimerState>((set, get) => {
       };
       set({ active: next });
       DataService.pauseTimer(next).catch(() => {});
-      cancelCompletionNotification();
+      // Pause cancels EVERY scheduled timer notification (precisely by id).
+      cancelTimerNotifications().catch(() => {});
     },
 
     resume: () => {
@@ -167,7 +175,8 @@ export const useTimerStore = create<TimerState>((set, get) => {
       };
       set({ active: next });
       DataService.resumeTimer(next).catch(() => {});
-      scheduleCompletionNotification(next.label, targetAtMs(next));
+      // Resume reschedules against the recomputed target.
+      repostNotifications(next);
     },
 
     addMinute: () => {
@@ -180,12 +189,15 @@ export const useTimerStore = create<TimerState>((set, get) => {
       set({ active: next });
       DataService.resumeTimer(next).catch(() => {});
       if (!next.pausedAtISO) {
-        scheduleCompletionNotification(next.label, targetAtMs(next));
+        cancelTimerNotifications()
+          .then(() => repostNotifications(next))
+          .catch(() => {});
       }
     },
 
     cancel: () => {
-      cancelCompletionNotification();
+      // Leaves zero orphaned notifications — cancelled precisely by id.
+      cancelTimerNotifications().catch(() => {});
       DataService.cancelTimer().catch(() => {});
       set({ active: null, conflict: null });
       pendingStart = null;
@@ -202,7 +214,7 @@ export const useTimerStore = create<TimerState>((set, get) => {
       // Same completion path as a swipe: XP, feed entry, streak effect.
       useAppStore.getState().completeTask(active.taskKey);
       DataService.completeTimedTask(active.taskKey, elapsed).catch(() => {});
-      cancelCompletionNotification();
+      cancelTimerNotifications().catch(() => {});
       playCompletionEffects();
       toast('+20 XP');
       set({
