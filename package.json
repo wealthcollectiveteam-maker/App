@@ -18,6 +18,7 @@
     "expo-keep-awake": "~15.0.8",
     "expo-linear-gradient": "~15.0.8",
     "expo-linking": "~8.0.12",
+    "expo-localization": "~17.0.9",
     "expo-notifications": "~0.32.17",
     "expo-router": "~6.0.24",
     "expo-splash-screen": "~31.0.13",
@@ -53,6 +54,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "test:health-gate": "node --experimental-strip-types scripts/health-env.test.mjs",
+    "test:units": "node --experimental-strip-types scripts/units.test.mjs",
     "test:rls": "bash scripts/test-rls.sh"
   },
   "private": true

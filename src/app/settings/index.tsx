@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Card, Kicker, OutlineButton } from '@/components/ui';
+import { Card, Kicker, OutlineButton, SegmentedControl } from '@/components/ui';
 import type { HealthPrefs, NotificationPrefs } from '@/data/types';
 import { useAppStore } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
@@ -50,6 +50,8 @@ export default function SettingsScreen() {
   const setHealthPref = useAppStore((s) => s.setHealthPref);
   const weeklyCheckinEnabled = useAppStore((s) => s.weeklyCheckinEnabled);
   const setWeeklyCheckinEnabled = useAppStore((s) => s.setWeeklyCheckinEnabled);
+  const unitPreference = useAppStore((s) => s.unitPreference);
+  const setUnitPreference = useAppStore((s) => s.setUnitPreference);
 
   const [name, setName] = useState(profileName);
   const [whyDraft, setWhyDraft] = useState(why);
@@ -95,6 +97,22 @@ export default function SettingsScreen() {
             />
           </View>
         ))}
+      </Card>
+
+      <Kicker style={styles.sectionKicker}>Units</Kicker>
+      <Card>
+        <Text style={styles.rowSub}>
+          One preference for weight and height. Stored values never change —
+          only how they read.
+        </Text>
+        <SegmentedControl
+          segments={['LB / FT', 'KG / CM']}
+          value={unitPreference === 'imperial' ? 'LB / FT' : 'KG / CM'}
+          onChange={(v) =>
+            setUnitPreference(v === 'LB / FT' ? 'imperial' : 'metric')
+          }
+          style={{ marginTop: 10 }}
+        />
       </Card>
 
       <Kicker style={styles.sectionKicker}>Challenge</Kicker>

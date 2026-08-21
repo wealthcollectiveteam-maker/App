@@ -12,8 +12,12 @@ sudo -u postgres psql -v ON_ERROR_STOP=1 -q \
   -c "create database ranked_test"
 
 sudo -u postgres psql -v ON_ERROR_STOP=1 -q -d ranked_test \
-  -f supabase/tests/setup_local.sql \
-  -f supabase/migrations/0001_init.sql
+  -f supabase/tests/setup_local.sql
+
+# Apply ALL migrations in order so new ones stay covered by the proofs.
+for m in supabase/migrations/*.sql; do
+  sudo -u postgres psql -v ON_ERROR_STOP=1 -q -d ranked_test -f "$m"
+done
 
 sudo -u postgres psql -v ON_ERROR_STOP=1 -d ranked_test \
   -f supabase/tests/rls_test.sql 2>&1 | grep -E "PASS|FAIL|ALL PROOFS"

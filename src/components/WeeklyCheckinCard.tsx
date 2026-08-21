@@ -9,42 +9,79 @@ import {
 } from 'react-native';
 
 import { Card, Kicker, OutlineButton } from '@/components/ui';
+import {
+  formatWeight,
+  formatWeightValue,
+  parseWeightToKg,
+  weightUnitLabel,
+} from '@/lib/units';
 import { localWeekKey, useAppStore } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
 import { colors, font, radius } from '@/theme/tokens';
 
 const MOODS = ['Rough', 'Low', 'Okay', 'Good', 'Strong'];
 
+function healthPrefillDateLabel(): string {
+  // The prefill is today's latest sample; the simulated source uses today.
+  return new Date().toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
 /**
  * Optional weekly weight+mood check-in. Dismissible, never pushed,
  * permanently disableable from settings. Weight pre-fills from Apple
- * Health when available — editable, never silently overwritten.
- * This data is private to the owner and never shown to squadmates.
+ * Health when a sample from the last 7 days exists — editable, never
+ * silently overwritten. Input/display follow the unit preference; storage
+ * is ALWAYS canonical kg via lib/units.ts. Private to the owner.
  */
 export function WeeklyCheckinCard() {
   const weeklyCheckinEnabled = useAppStore((s) => s.weeklyCheckinEnabled);
   const checkinHandledWeek = useAppStore((s) => s.checkinHandledWeek);
   const healthPrefs = useAppStore((s) => s.healthPrefs);
   const bodyMassKg = useAppStore((s) => s.healthReadings.bodyMassKg);
+  const unitPreference = useAppStore((s) => s.unitPreference);
+  const metricCheckins = useAppStore((s) => s.metricCheckins);
   const saveMetricCheckin = useAppStore((s) => s.saveMetricCheckin);
   const dismissCheckinCard = useAppStore((s) => s.dismissCheckinCard);
 
-  const prefill =
+  const prefillKg =
     healthPrefs.healthEnabled && healthPrefs.weightPrefillEnabled
       ? bodyMassKg
       : null;
 
-  const [weight, setWeight] = useState(prefill != null ? String(prefill) : '');
+  const [weight, setWeight] = useState(
+    prefillKg != null ? formatWeightValue(prefillKg, unitPreference) : '',
+  );
   const [touched, setTouched] = useState(false);
   const [mood, setMood] = useState<number | null>(null);
 
   // Pre-fill arrives async from Health; apply only if the user hasn't typed.
   useEffect(() => {
-    if (!touched && prefill != null) setWeight(String(prefill));
-  }, [prefill, touched]);
+    if (!touched && prefillKg != null) {
+      setWeight(formatWeightValue(prefillKg, unitPreference));
+    }
+  }, [prefillKg, touched, unitPreference]);
 
   if (!weeklyCheckinEnabled) return null;
-  if (checkinHandledWeek === localWeekKey()) return null;
+
+  // Handled for this week: show the read-back line instead of the card,
+  // rendered through the unit preference (history re-renders, storage
+  // never rewrites).
+  if (checkinHandledWeek === localWeekKey()) {
+    const last = metricCheckins[0];
+    if (!last?.weightKg) return null;
+    return (
+      <Text style={styles.lastLine}>
+        Last check-in: {formatWeight(last.weightKg, unitPreference)} ·{' '}
+        {new Date(last.timestamp).toLocaleDateString(undefined, {
+          month: 'short',
+          day: 'numeric',
+        })}
+      </Text>
+    );
+  }
 
   return (
     <Card style={{ marginBottom: 14 }}>
@@ -71,9 +108,11 @@ export function WeeklyCheckinCard() {
           placeholderTextColor={colors.neutral600}
           style={styles.input}
         />
-        <Text style={styles.unit}>kg</Text>
-        {prefill != null && !touched && (
-          <Text style={styles.prefillNote}>from Apple Health — editable</Text>
+        <Text style={styles.unit}>{weightUnitLabel(unitPreference)}</Text>
+        {prefillKg != null && !touched && (
+          <Text style={styles.prefillNote}>
+            From Apple Health · {healthPrefillDateLabel()} — editable
+          </Text>
         )}
       </View>
 
@@ -109,8 +148,8 @@ export function WeeklyCheckinCard() {
         label="Save check-in"
         small
         onPress={() => {
-          const w = parseFloat(weight);
-          saveMetricCheckin(Number.isFinite(w) ? w : null, mood);
+          const kg = parseWeightToKg(weight, unitPreference);
+          saveMetricCheckin(kg, mood);
           toast('Check-in saved');
         }}
         style={{ marginTop: 12, alignSelf: 'flex-start' }}
@@ -179,5 +218,11 @@ const styles = StyleSheet.create({
     fontFamily: font.regular,
     fontSize: 12,
     color: colors.neutral300,
+  },
+  lastLine: {
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    color: colors.neutral500,
+    marginBottom: 12,
   },
 });

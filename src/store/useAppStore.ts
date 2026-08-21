@@ -1,6 +1,9 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getLocales } from 'expo-localization';
 import { create } from 'zustand';
 
 import { PINGS, XP } from '@/constants/challenge';
+import type { UnitPreference } from '@/lib/units';
 import {
   displayTierLabel,
   targetText,
@@ -112,6 +115,8 @@ interface AppState extends ScenarioState {
   healthPromptDismissed: Partial<Record<'diet' | 'workout', string>>;
   healthSimulated: boolean;
   metricCheckins: MetricCheckin[];
+  /** Display preference only — storage is ALWAYS kg/cm (see lib/units.ts). */
+  unitPreference: UnitPreference;
   /** Week key when the check-in card was dismissed or saved. */
   checkinHandledWeek: string | null;
   /** Settings: permanently hide the weekly check-in card. */
@@ -158,6 +163,9 @@ interface AppState extends ScenarioState {
   saveMetricCheckin: (weightKg: number | null, mood: number | null) => void;
   dismissCheckinCard: () => void;
   setWeeklyCheckinEnabled: (enabled: boolean) => void;
+  setUnitPreference: (pref: UnitPreference) => void;
+  /** Load persisted preference + check-ins (call once at app start). */
+  hydratePersisted: () => Promise<void>;
   /** Returns false when the 4-custom-task cap is hit. */
   addCustomTask: (input: {
     name: string;
@@ -206,6 +214,19 @@ const DEFAULT_PREFS: NotificationPrefs = {
   dailyReminder: false,
 };
 
+const UNIT_PREF_KEY = 'ranked.unitPreference.v1';
+const CHECKINS_KEY = 'ranked.metricCheckins.v1';
+
+/** Seed from the device locale; the user can change it in Settings. */
+function localeUnitPreference(): UnitPreference {
+  try {
+    const system = getLocales()[0]?.measurementSystem;
+    return system === 'us' ? 'imperial' : 'metric';
+  } catch {
+    return 'metric';
+  }
+}
+
 const initialScenario = fromScenario('day1');
 const initialTaskConfig = taskConfigMirror(
   initialScenario.tier,
@@ -227,6 +248,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   healthPromptDismissed: {},
   healthSimulated: false,
   metricCheckins: [],
+  unitPreference: localeUnitPreference(),
   checkinHandledWeek: null,
   weeklyCheckinEnabled: true,
   ...initialScenario,
@@ -497,17 +519,52 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   saveMetricCheckin: (weightKg, mood) => {
+    // weightKg is ALWAYS canonical kg — conversion happened at the input
+    // boundary via lib/units.ts. Never store display units.
     const checkin = DataService.saveMetricCheckin(weightKg, mood);
-    set((s) => ({
-      metricCheckins: [checkin, ...s.metricCheckins],
-      checkinHandledWeek: localWeekKey(),
-    }));
+    set((s) => {
+      const metricCheckins = [checkin, ...s.metricCheckins];
+      AsyncStorage.setItem(CHECKINS_KEY, JSON.stringify(metricCheckins)).catch(
+        () => {},
+      );
+      return { metricCheckins, checkinHandledWeek: localWeekKey() };
+    });
   },
 
   dismissCheckinCard: () => set({ checkinHandledWeek: localWeekKey() }),
 
   setWeeklyCheckinEnabled: (enabled) =>
     set({ weeklyCheckinEnabled: enabled }),
+
+  setUnitPreference: (pref) => {
+    set({ unitPreference: pref });
+    AsyncStorage.setItem(UNIT_PREF_KEY, pref).catch(() => {});
+  },
+
+  hydratePersisted: async () => {
+    try {
+      const [pref, checkins] = await Promise.all([
+        AsyncStorage.getItem(UNIT_PREF_KEY),
+        AsyncStorage.getItem(CHECKINS_KEY),
+      ]);
+      const updates: Partial<AppState> = {};
+      if (pref === 'metric' || pref === 'imperial') {
+        updates.unitPreference = pref;
+      }
+      if (checkins) {
+        const parsed = JSON.parse(checkins) as MetricCheckin[];
+        if (Array.isArray(parsed)) {
+          updates.metricCheckins = parsed;
+          if (parsed[0] && localWeekKey(parsed[0].timestamp) === localWeekKey()) {
+            updates.checkinHandledWeek = localWeekKey();
+          }
+        }
+      }
+      if (Object.keys(updates).length) set(updates);
+    } catch {
+      // persisted state is a convenience; never block startup on it
+    }
+  },
 
   addCustomTask: (input) => {
     const s = get();
@@ -638,6 +695,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   deleteAccount: () => {
     DataService.deleteAccount();
+    AsyncStorage.multiRemove([UNIT_PREF_KEY, CHECKINS_KEY]).catch(() => {});
     const st = fromScenario('day1');
     set({
       scenario: 'day1',
@@ -653,6 +711,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       healthReadings: EMPTY_READINGS,
       healthPromptDismissed: {},
       metricCheckins: [],
+      unitPreference: localeUnitPreference(),
       checkinHandledWeek: null,
       weeklyCheckinEnabled: true,
       ...st,
