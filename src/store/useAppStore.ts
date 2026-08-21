@@ -34,6 +34,8 @@ import {
   getHealthService,
   isHealthSimulated,
   setHealthSimulation,
+  type BodyMassSample,
+  type HealthWorkout,
 } from '@/services/HealthService';
 
 export function formatClock(ts: number = Date.now()): string {
@@ -75,14 +77,18 @@ export function localWeekKey(ts: number = Date.now()): string {
 /** On-device Apple Health readings. Render-only; never synced or logged. */
 export interface HealthReadings {
   dietaryKcal: number | null;
-  bodyMassKg: number | null;
-  workoutMinutes: number | null;
+  steps: number | null;
+  activeEnergyKcal: number | null;
+  workouts: HealthWorkout[];
+  bodyMass: BodyMassSample | null;
 }
 
 const EMPTY_READINGS: HealthReadings = {
   dietaryKcal: null,
-  bodyMassKg: null,
-  workoutMinutes: null,
+  steps: null,
+  activeEnergyKcal: null,
+  workouts: [],
+  bodyMass: null,
 };
 
 const DEFAULT_HEALTH_PREFS: HealthPrefs = {
@@ -111,6 +117,8 @@ interface AppState extends ScenarioState {
   healthPrefs: HealthPrefs;
   /** On-device only. Never written to a backend or log. */
   healthReadings: HealthReadings;
+  /** Whether a HealthKit source can be queried right now. */
+  healthAvailable: boolean;
   /** Health prompt dismissals: 'diet' | 'workout' -> local date dismissed. */
   healthPromptDismissed: Partial<Record<'diet' | 'workout', string>>;
   healthSimulated: boolean;
@@ -245,6 +253,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   screenState: 'ready',
   healthPrefs: DEFAULT_HEALTH_PREFS,
   healthReadings: EMPTY_READINGS,
+  healthAvailable: false,
   healthPromptDismissed: {},
   healthSimulated: false,
   metricCheckins: [],
@@ -482,22 +491,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Defence in depth: nothing from the health layer may ever propagate
     // into app startup. Any failure degrades to "no health data".
     try {
-      const { healthPrefs } = get();
-      if (!healthPrefs.healthEnabled) {
-        set({ healthReadings: EMPTY_READINGS });
-        return;
-      }
       const service = getHealthService();
-      if (!service.isAvailable()) {
-        set({ healthReadings: EMPTY_READINGS });
+      const available = service.isAvailable();
+      const { healthPrefs } = get();
+      if (!available || !healthPrefs.healthEnabled) {
+        set({ healthReadings: EMPTY_READINGS, healthAvailable: available });
         return;
       }
-      const [dietaryKcal, bodyMassKg, workoutMinutes] = await Promise.all([
-        service.getTodayDietaryEnergyKcal(),
-        service.getLatestBodyMassKg(),
-        service.getTodayLongestWorkoutMinutes(),
-      ]);
-      set({ healthReadings: { dietaryKcal, bodyMassKg, workoutMinutes } });
+      const [dietaryKcal, steps, activeEnergyKcal, workouts, bodyMass] =
+        await Promise.all([
+          service.getTodayDietaryEnergyKcal(),
+          service.getTodaySteps(),
+          service.getTodayActiveEnergyKcal(),
+          service.getTodayWorkouts(),
+          service.getLatestBodyMass(),
+        ]);
+      set({
+        healthReadings: { dietaryKcal, steps, activeEnergyKcal, workouts, bodyMass },
+        healthAvailable: true,
+      });
     } catch {
       set({ healthReadings: EMPTY_READINGS });
     }
@@ -779,6 +791,54 @@ export const selectPingsLeft = (s: {
 }) => {
   const used = s.pingsUsed.date === localDateKey() ? s.pingsUsed.count : 0;
   return Math.max(0, PINGS.maxPerDay - used);
+};
+
+/**
+ * Match today's HealthKit workouts to incomplete workout tasks.
+ * Chronological, one workout per task, qualifying = duration >= the task's
+ * snapshot target. Suggestions only — the user always confirms (never
+ * auto-complete), and completion goes through the existing path.
+ */
+export const selectWorkoutSuggestions = (s: {
+  healthPrefs: HealthPrefs;
+  healthReadings: HealthReadings;
+  todayTasks: TaskDef[];
+  tasksDone: Partial<Record<TaskKey, string>>;
+}): Partial<Record<TaskKey, HealthWorkout>> => {
+  if (!s.healthPrefs.healthEnabled || !s.healthPrefs.workoutPromptEnabled) {
+    return {};
+  }
+  const pendingWorkoutTasks = s.todayTasks.filter(
+    (t) => t.key.startsWith('workout') && !s.tasksDone[t.key],
+  );
+  if (pendingWorkoutTasks.length === 0) return {};
+  const out: Partial<Record<TaskKey, HealthWorkout>> = {};
+  const unclaimed = [...s.healthReadings.workouts]; // already chronological
+  for (const task of pendingWorkoutTasks) {
+    const required =
+      task.target?.unit === 'minutes' ? task.target.value : Infinity;
+    const idx = unclaimed.findIndex((w) => w.minutes >= required);
+    if (idx >= 0) {
+      out[task.key] = unclaimed[idx];
+      unclaimed.splice(idx, 1);
+    }
+  }
+  return out;
+};
+
+/** Body-mass prefill: only a sample from the last 7 days qualifies. */
+export const selectWeightPrefillKg = (s: {
+  healthPrefs: HealthPrefs;
+  healthReadings: HealthReadings;
+}): { kg: number; dateISO: string } | null => {
+  if (!s.healthPrefs.healthEnabled || !s.healthPrefs.weightPrefillEnabled) {
+    return null;
+  }
+  const sample = s.healthReadings.bodyMass;
+  if (!sample) return null;
+  const ageMs = Date.now() - Date.parse(sample.dateISO);
+  if (ageMs > 7 * 86_400_000) return null;
+  return { kg: sample.kg, dateISO: sample.dateISO };
 };
 
 export const selectRecentMeals = (meals: Meal[]): string[] => {

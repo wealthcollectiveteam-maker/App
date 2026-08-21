@@ -3,7 +3,6 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { Card, OutlineButton } from '@/components/ui';
-import { TIERS } from '@/constants/tiers';
 import {
   localDateKey,
   selectTasks,
@@ -13,9 +12,10 @@ import { toast } from '@/store/useToastStore';
 import { colors, font } from '@/theme/tokens';
 
 /**
- * Apple Health-driven suggestions. Health data proves logging/activity,
- * not adherence — so these always PROMPT and the user confirms; nothing
- * auto-completes. Dismissing hides the prompt for that task for the day.
+ * Apple Health diet prompt. Health data proves logging, not adherence —
+ * so this always PROMPTS and the user confirms; nothing auto-completes.
+ * Dismissing hides it for the day. (Workout suggestions render inline on
+ * the task rows — see WorkoutSuggestion.)
  */
 export function HealthPromptCards() {
   const tasks = useAppStore(selectTasks);
@@ -25,70 +25,35 @@ export function HealthPromptCards() {
   const dismissed = useAppStore((s) => s.healthPromptDismissed);
   const dismissHealthPrompt = useAppStore((s) => s.dismissHealthPrompt);
   const completeTask = useAppStore((s) => s.completeTask);
-  const tier = useAppStore((s) => s.tier);
 
   if (!healthPrefs.healthEnabled) return null;
   const today = localDateKey();
 
-  const prompts: React.ReactNode[] = [];
-
   // Diet: food logged in another app today -> offer to mark diet complete.
   const dietTask = tasks.find((t) => t.key === 'diet');
   if (
-    healthPrefs.dietPromptEnabled &&
-    dietTask &&
-    !tasksDone.diet &&
-    dismissed.diet !== today &&
-    readings.dietaryKcal != null &&
-    readings.dietaryKcal > 0
+    !healthPrefs.dietPromptEnabled ||
+    !dietTask ||
+    tasksDone.diet ||
+    dismissed.diet === today ||
+    readings.dietaryKcal == null ||
+    readings.dietaryKcal <= 0
   ) {
-    prompts.push(
+    return null;
+  }
+
+  return (
+    <View style={{ gap: 10, marginTop: 12 }}>
       <PromptCard
-        key="diet"
         text="You logged food in another app today — mark diet complete?"
         onConfirm={() => {
           completeTask('diet');
           toast('+20 XP');
         }}
         onDismiss={() => dismissHealthPrompt('diet')}
-      />,
-    );
-  }
-
-  // Workout: a Health workout at least as long as TODAY's workout target
-  // (the snapshot value — an edited target applies from tomorrow).
-  const pendingWorkout = tasks.find(
-    (t) => t.key.startsWith('workout') && !tasksDone[t.key],
+      />
+    </View>
   );
-  const requiredMinutes =
-    pendingWorkout?.target?.unit === 'minutes'
-      ? pendingWorkout.target.value
-      : TIERS[tier].workoutMinutes;
-  if (
-    healthPrefs.workoutPromptEnabled &&
-    pendingWorkout &&
-    dismissed.workout !== today &&
-    readings.workoutMinutes != null &&
-    readings.workoutMinutes >= requiredMinutes
-  ) {
-    prompts.push(
-      <PromptCard
-        key="workout"
-        text={`Apple Health shows a ${readings.workoutMinutes}-minute workout today — mark ${pendingWorkout.label.split(' — ')[0]} complete?`}
-        onConfirm={() => {
-          completeTask(pendingWorkout.key);
-          toast('+20 XP');
-          // One Health workout vouches for one task — don't re-prompt for
-          // the second workout off the same activity.
-          dismissHealthPrompt('workout');
-        }}
-        onDismiss={() => dismissHealthPrompt('workout')}
-      />,
-    );
-  }
-
-  if (prompts.length === 0) return null;
-  return <View style={{ gap: 10, marginTop: 12 }}>{prompts}</View>;
 }
 
 function PromptCard({

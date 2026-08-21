@@ -25,12 +25,14 @@ import Animated, {
 
 import { ScreenState } from '@/components/ScreenState';
 import { Card, Kicker, OutlineButton } from '@/components/ui';
+import { WorkoutSuggestion } from '@/components/WorkoutSuggestion';
 import type { TaskDef, TaskKey } from '@/data/types';
 import { useStartTimer } from '@/hooks/useStartTimer';
 import {
   selectDoneCount,
   selectQueue,
   selectTasks,
+  selectWorkoutSuggestions,
   useAppStore,
 } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
@@ -88,6 +90,7 @@ function TopCard({
   onDone,
   onLater,
   onStartTimer,
+  suggestion,
 }: {
   task: TaskDef;
   index: number;
@@ -95,6 +98,7 @@ function TopCard({
   onDone: () => void;
   onLater: () => void;
   onStartTimer: (task: TaskDef) => void;
+  suggestion?: import('@/services/HealthService').HealthWorkout;
 }) {
   const tx = useSharedValue(0);
   const busy = useSharedValue(false);
@@ -156,6 +160,9 @@ function TopCard({
         </Kicker>
         <Text style={styles.cardTitle}>{task.label}</Text>
         <Text style={styles.cardSub}>{task.sub}</Text>
+        {suggestion && (
+          <WorkoutSuggestion taskKey={task.key} workout={suggestion} />
+        )}
         {task.proof && <ProofRow taskKey={task.key} />}
         {task.timerMinutes ? (
           <OutlineButton
@@ -208,6 +215,7 @@ export default function CheckinScreen() {
   const deferred = useAppStore((s) => s.deferred);
   const completeTask = useAppStore((s) => s.completeTask);
   const deferTask = useAppStore((s) => s.deferTask);
+  const workoutSuggestions = useAppStore(selectWorkoutSuggestions);
   const startTimer = useStartTimer();
 
   const total = tasks.length;
@@ -244,6 +252,7 @@ export default function CheckinScreen() {
                 }}
                 onLater={() => deferTask(topTask.key)}
                 onStartTimer={startTimer}
+                suggestion={workoutSuggestions[topTask.key]}
               />
             </>
           ) : (

@@ -15,19 +15,15 @@ import {
   parseWeightToKg,
   weightUnitLabel,
 } from '@/lib/units';
-import { localWeekKey, useAppStore } from '@/store/useAppStore';
+import {
+  localWeekKey,
+  selectWeightPrefillKg,
+  useAppStore,
+} from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
 import { colors, font, radius } from '@/theme/tokens';
 
 const MOODS = ['Rough', 'Low', 'Okay', 'Good', 'Strong'];
-
-function healthPrefillDateLabel(): string {
-  // The prefill is today's latest sample; the simulated source uses today.
-  return new Date().toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-  });
-}
 
 /**
  * Optional weekly weight+mood check-in. Dismissible, never pushed,
@@ -39,17 +35,13 @@ function healthPrefillDateLabel(): string {
 export function WeeklyCheckinCard() {
   const weeklyCheckinEnabled = useAppStore((s) => s.weeklyCheckinEnabled);
   const checkinHandledWeek = useAppStore((s) => s.checkinHandledWeek);
-  const healthPrefs = useAppStore((s) => s.healthPrefs);
-  const bodyMassKg = useAppStore((s) => s.healthReadings.bodyMassKg);
   const unitPreference = useAppStore((s) => s.unitPreference);
   const metricCheckins = useAppStore((s) => s.metricCheckins);
   const saveMetricCheckin = useAppStore((s) => s.saveMetricCheckin);
   const dismissCheckinCard = useAppStore((s) => s.dismissCheckinCard);
-
-  const prefillKg =
-    healthPrefs.healthEnabled && healthPrefs.weightPrefillEnabled
-      ? bodyMassKg
-      : null;
+  // Only a Health sample from the last 7 days pre-fills (older = stale).
+  const prefill = useAppStore(selectWeightPrefillKg);
+  const prefillKg = prefill?.kg ?? null;
 
   const [weight, setWeight] = useState(
     prefillKg != null ? formatWeightValue(prefillKg, unitPreference) : '',
@@ -109,9 +101,14 @@ export function WeeklyCheckinCard() {
           style={styles.input}
         />
         <Text style={styles.unit}>{weightUnitLabel(unitPreference)}</Text>
-        {prefillKg != null && !touched && (
+        {prefill != null && !touched && (
           <Text style={styles.prefillNote}>
-            From Apple Health · {healthPrefillDateLabel()} — editable
+            From Apple Health ·{' '}
+            {new Date(prefill.dateISO).toLocaleDateString(undefined, {
+              month: 'short',
+              day: 'numeric',
+            })}{' '}
+            — editable
           </Text>
         )}
       </View>

@@ -15,6 +15,7 @@ import { HealthPromptCards } from '@/components/HealthPromptCard';
 import { ProgressRing } from '@/components/ProgressRing';
 import { ScreenState } from '@/components/ScreenState';
 import { Card, FadingDivider, Kicker, OutlineButton } from '@/components/ui';
+import { WorkoutSuggestion } from '@/components/WorkoutSuggestion';
 import { CHALLENGE } from '@/constants/challenge';
 import { missedDayCopy } from '@/constants/tiers';
 import type { TaskDef } from '@/data/types';
@@ -22,6 +23,7 @@ import { useStartTimer } from '@/hooks/useStartTimer';
 import {
   selectDoneCount,
   selectTasks,
+  selectWorkoutSuggestions,
   useAppStore,
 } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
@@ -195,6 +197,7 @@ export default function HomeScreen() {
   const dayComplete = useAppStore((s) => s.dayComplete);
   const tasks = useAppStore(selectTasks);
   const doneCount = useAppStore(selectDoneCount);
+  const workoutSuggestions = useAppStore(selectWorkoutSuggestions);
   const router = useRouter();
   const allDone = doneCount === tasks.length;
 
@@ -219,7 +222,15 @@ export default function HomeScreen() {
 
         <View>
           {tasks.map((t) => (
-            <TaskRow key={t.key} task={t} />
+            <View key={t.key}>
+              <TaskRow task={t} />
+              {workoutSuggestions[t.key] && (
+                <WorkoutSuggestion
+                  taskKey={t.key}
+                  workout={workoutSuggestions[t.key]!}
+                />
+              )}
+            </View>
           ))}
         </View>
 

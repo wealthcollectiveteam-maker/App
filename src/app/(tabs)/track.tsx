@@ -1,10 +1,11 @@
 import * as Clipboard from 'expo-clipboard';
+import { useFocusEffect } from 'expo-router';
 import {
   CheckCircleIcon as CheckCircle,
   CircleIcon as Circle,
   ForkKnifeIcon as ForkKnife,
 } from 'phosphor-react-native';
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -18,6 +19,7 @@ import {
 
 import { NutritionSheet } from '@/components/NutritionSheet';
 import { ScreenState } from '@/components/ScreenState';
+import { TodaysHealthCard } from '@/components/TodaysHealthCard';
 import {
   Card,
   Kicker,
@@ -304,6 +306,14 @@ function MilestonesTab() {
 
 export default function TrackScreen() {
   const [tab, setTab] = useState('JOURNAL');
+  const refreshHealth = useAppStore((s) => s.refreshHealth);
+
+  // Refresh Health readings when the screen gains focus (no polling).
+  useFocusEffect(
+    useCallback(() => {
+      refreshHealth().catch(() => {});
+    }, [refreshHealth]),
+  );
 
   return (
     <ScreenState>
@@ -313,6 +323,7 @@ export default function TrackScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.title}>Track</Text>
+        <TodaysHealthCard />
         <WeeklyCheckinCard />
         <SegmentedControl
           segments={['JOURNAL', 'MEALS', 'MILESTONES']}

@@ -12,14 +12,26 @@ function runtimeEnv(): HealthRuntimeEnv {
   };
 }
 
+export interface HealthWorkout {
+  /** Human-readable activity type ("Functional Strength Training"). */
+  type: string;
+  minutes: number;
+  startISO: string;
+}
+
+export interface BodyMassSample {
+  kg: number;
+  dateISO: string;
+}
+
 /**
  * Read-only Apple Health access. HARD RULES:
  * - Read permissions only; write permission is never requested.
  * - Values are used to render prompts and pre-fill fields on-device only.
- *   They are never written to a backend, included in sync payloads, or
- *   logged anywhere.
+ *   They are never written to a backend or AsyncStorage, never logged, and
+ *   never shown to other users.
  * - Health is a convenience layer: when unavailable, denied, or revoked,
- *   every method resolves to null and the app behaves normally.
+ *   every method resolves to null/empty and the app behaves normally.
  */
 export interface IHealthService {
   /** True when a HealthKit source can be queried on this device. */
@@ -27,10 +39,14 @@ export interface IHealthService {
   requestReadPermissions(): Promise<boolean>;
   /** Total dietary energy (kcal) logged today, or null when unknown. */
   getTodayDietaryEnergyKcal(): Promise<number | null>;
-  /** Most recent body mass in kg, or null when unknown. */
-  getLatestBodyMassKg(): Promise<number | null>;
-  /** Longest workout today in minutes, or null when unknown. */
-  getTodayLongestWorkoutMinutes(): Promise<number | null>;
+  /** Total steps today, or null when unknown. */
+  getTodaySteps(): Promise<number | null>;
+  /** Active energy burned today (kcal), or null when unknown. */
+  getTodayActiveEnergyKcal(): Promise<number | null>;
+  /** Today's workouts, chronological. Empty when none or unknown. */
+  getTodayWorkouts(): Promise<HealthWorkout[]>;
+  /** Most recent body-mass sample with its date, or null when unknown. */
+  getLatestBodyMass(): Promise<BodyMassSample | null>;
 }
 
 /** Used on web/Android/Expo Go and whenever HealthKit cannot load. */
@@ -44,17 +60,23 @@ class NullHealthService implements IHealthService {
   async getTodayDietaryEnergyKcal() {
     return null;
   }
-  async getLatestBodyMassKg() {
+  async getTodaySteps() {
     return null;
   }
-  async getTodayLongestWorkoutMinutes() {
+  async getTodayActiveEnergyKcal() {
+    return null;
+  }
+  async getTodayWorkouts() {
+    return [];
+  }
+  async getLatestBodyMass() {
     return null;
   }
 }
 
 /**
- * Dev-menu simulation so the Health-driven UI (prompts, prefill) is
- * QA-able in Expo Go and on web where HealthKit does not exist.
+ * Dev-menu simulation so the Health-driven UI (card, suggestions, prefill)
+ * is QA-able in Expo Go and on web where HealthKit does not exist.
  */
 class SimulatedHealthService implements IHealthService {
   isAvailable() {
@@ -66,30 +88,52 @@ class SimulatedHealthService implements IHealthService {
   async getTodayDietaryEnergyKcal() {
     return 1430;
   }
-  async getLatestBodyMassKg() {
-    return 82.5;
+  async getTodaySteps() {
+    return 7412;
   }
-  async getTodayLongestWorkoutMinutes() {
-    return 47;
+  async getTodayActiveEnergyKcal() {
+    return 534;
   }
+  async getTodayWorkouts(): Promise<HealthWorkout[]> {
+    const start = new Date();
+    start.setHours(18, 12, 0, 0);
+    return [
+      {
+        type: 'Functional Strength Training',
+        minutes: 47,
+        startISO: start.toISOString(),
+      },
+    ];
+  }
+  async getLatestBodyMass(): Promise<BodyMassSample> {
+    return { kg: 82.5, dateISO: new Date().toISOString() };
+  }
+}
+
+/** Best-effort humanization of HealthKit workout activity types. */
+function humanizeActivityType(raw: unknown): string {
+  if (typeof raw === 'string' && raw.length > 0) {
+    // e.g. "functionalStrengthTraining" -> "Functional Strength Training"
+    const spaced = raw
+      .replace(/^HKWorkoutActivityType/, '')
+      .replace(/([a-z])([A-Z])/g, '$1 $2');
+    return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+  }
+  return 'Workout';
 }
 
 /**
  * Real HealthKit reads via @kingstinct/react-native-healthkit. The module
- * is lazy-required so bundles without the native module (web, Expo Go)
- * never touch it. Every method degrades to null on any failure.
+ * is lazy-required behind a POSITIVE environment gate (see healthEnv.ts) —
+ * a throw inside a module factory becomes a fatal error in Metro, so the
+ * require must never be evaluated where the native side can't exist.
+ * Every method degrades to null/empty on any failure.
  */
 class HealthKitService implements IHealthService {
   private mod: any | null = null;
   private loadFailed = false;
 
   private getModule(): any | null {
-    // POSITIVE gate first: the require must never be evaluated in Expo Go.
-    // @kingstinct/react-native-healthkit creates NitroModules hybrid objects
-    // at module top level, and a throw inside a module factory is converted
-    // to a FATAL error by Metro's guardedLoadModule — a try/catch here
-    // cannot contain it. The catch below is only a backstop for exotic
-    // environments the gate misjudges.
     if (this.loadFailed || !canAttemptHealthKit(runtimeEnv())) return null;
     if (!this.mod) {
       try {
@@ -121,6 +165,8 @@ class HealthKitService implements IHealthService {
         read: [
           'HKQuantityTypeIdentifierDietaryEnergyConsumed',
           'HKQuantityTypeIdentifierBodyMass',
+          'HKQuantityTypeIdentifierStepCount',
+          'HKQuantityTypeIdentifierActiveEnergyBurned',
           'HKWorkoutTypeIdentifier',
         ],
         share: [],
@@ -137,14 +183,17 @@ class HealthKitService implements IHealthService {
     return d;
   }
 
-  async getTodayDietaryEnergyKcal(): Promise<number | null> {
+  private async sumQuantityToday(
+    identifier: string,
+    unit: string,
+  ): Promise<number | null> {
     const mod = this.getModule();
     if (!mod) return null;
     try {
-      const samples = await mod.queryQuantitySamples(
-        'HKQuantityTypeIdentifierDietaryEnergyConsumed',
-        { filter: { startDate: this.startOfToday(), endDate: new Date() }, unit: 'kcal' },
-      );
+      const samples = await mod.queryQuantitySamples(identifier, {
+        filter: { startDate: this.startOfToday(), endDate: new Date() },
+        unit,
+      });
       if (!samples?.length) return null;
       const total = samples.reduce(
         (sum: number, s: { quantity?: number }) => sum + (s.quantity ?? 0),
@@ -156,7 +205,62 @@ class HealthKitService implements IHealthService {
     }
   }
 
-  async getLatestBodyMassKg(): Promise<number | null> {
+  getTodayDietaryEnergyKcal(): Promise<number | null> {
+    return this.sumQuantityToday(
+      'HKQuantityTypeIdentifierDietaryEnergyConsumed',
+      'kcal',
+    );
+  }
+
+  getTodaySteps(): Promise<number | null> {
+    return this.sumQuantityToday('HKQuantityTypeIdentifierStepCount', 'count');
+  }
+
+  getTodayActiveEnergyKcal(): Promise<number | null> {
+    return this.sumQuantityToday(
+      'HKQuantityTypeIdentifierActiveEnergyBurned',
+      'kcal',
+    );
+  }
+
+  async getTodayWorkouts(): Promise<HealthWorkout[]> {
+    const mod = this.getModule();
+    if (!mod) return [];
+    try {
+      const workouts = await mod.queryWorkoutSamples({
+        filter: { startDate: this.startOfToday(), endDate: new Date() },
+      });
+      if (!workouts?.length) return [];
+      return workouts
+        .map(
+          (w: {
+            duration?: { quantity?: number } | number;
+            workoutActivityType?: unknown;
+            startDate?: string | Date;
+          }) => {
+            const seconds =
+              typeof w.duration === 'number'
+                ? w.duration
+                : (w.duration?.quantity ?? 0);
+            return {
+              type: humanizeActivityType(w.workoutActivityType),
+              minutes: Math.round(seconds / 60),
+              startISO: w.startDate
+                ? new Date(w.startDate).toISOString()
+                : new Date().toISOString(),
+            };
+          },
+        )
+        .filter((w: HealthWorkout) => w.minutes > 0)
+        .sort((a: HealthWorkout, b: HealthWorkout) =>
+          a.startISO.localeCompare(b.startISO),
+        );
+    } catch {
+      return [];
+    }
+  }
+
+  async getLatestBodyMass(): Promise<BodyMassSample | null> {
     const mod = this.getModule();
     if (!mod) return null;
     try {
@@ -164,31 +268,13 @@ class HealthKitService implements IHealthService {
         'HKQuantityTypeIdentifierBodyMass',
         'kg',
       );
-      return sample?.quantity != null
-        ? Math.round(sample.quantity * 10) / 10
-        : null;
-    } catch {
-      return null;
-    }
-  }
-
-  async getTodayLongestWorkoutMinutes(): Promise<number | null> {
-    const mod = this.getModule();
-    if (!mod) return null;
-    try {
-      const workouts = await mod.queryWorkoutSamples({
-        filter: { startDate: this.startOfToday(), endDate: new Date() },
-      });
-      if (!workouts?.length) return null;
-      const longest = Math.max(
-        ...workouts.map(
-          (w: { duration?: { quantity?: number } | number }) =>
-            typeof w.duration === 'number'
-              ? w.duration
-              : (w.duration?.quantity ?? 0),
-        ),
-      );
-      return longest > 0 ? Math.round(longest / 60) : null;
+      if (sample?.quantity == null) return null;
+      return {
+        kg: Math.round(sample.quantity * 10) / 10,
+        dateISO: sample.endDate
+          ? new Date(sample.endDate).toISOString()
+          : new Date().toISOString(),
+      };
     } catch {
       return null;
     }
