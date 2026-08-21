@@ -7,6 +7,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useShallow } from 'zustand/react/shallow';
 
 import { Card, Kicker, OutlineButton } from '@/components/ui';
 import {
@@ -40,7 +41,7 @@ export function WeeklyCheckinCard() {
   const saveMetricCheckin = useAppStore((s) => s.saveMetricCheckin);
   const dismissCheckinCard = useAppStore((s) => s.dismissCheckinCard);
   // Only a Health sample from the last 7 days pre-fills (older = stale).
-  const prefill = useAppStore(selectWeightPrefillKg);
+  const prefill = useAppStore(useShallow(selectWeightPrefillKg));
   const prefillKg = prefill?.kg ?? null;
 
   const [weight, setWeight] = useState(

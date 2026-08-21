@@ -22,6 +22,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
+import { useShallow } from 'zustand/react/shallow';
 
 import { ScreenState } from '@/components/ScreenState';
 import { Card, Kicker, OutlineButton } from '@/components/ui';
@@ -215,7 +216,7 @@ export default function CheckinScreen() {
   const deferred = useAppStore((s) => s.deferred);
   const completeTask = useAppStore((s) => s.completeTask);
   const deferTask = useAppStore((s) => s.deferTask);
-  const workoutSuggestions = useAppStore(selectWorkoutSuggestions);
+  const workoutSuggestions = useAppStore(useShallow(selectWorkoutSuggestions));
   const startTimer = useStartTimer();
 
   const total = tasks.length;

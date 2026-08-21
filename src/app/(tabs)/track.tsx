@@ -17,7 +17,8 @@ import {
   View,
 } from 'react-native';
 
-import { NutritionSheet } from '@/components/NutritionSheet';
+import { MealBuilderSheet } from '@/components/MealBuilderSheet';
+import { QuickAddSheet } from '@/components/QuickAddSheet';
 import { ScreenState } from '@/components/ScreenState';
 import { TodaysHealthCard } from '@/components/TodaysHealthCard';
 import {
@@ -92,9 +93,13 @@ function MealsTab() {
   const meals = useAppStore((s) => s.meals);
   const logMeal = useAppStore((s) => s.logMeal);
   const day = useAppStore((s) => s.day);
-  const recent = selectRecentMeals(meals);
+  const savedMeals = useAppStore((s) => s.savedMeals);
+  const logSavedMeal = useAppStore((s) => s.logSavedMeal);
+  // People eat the same meals on repeat: the last 8 distinct, one tap each.
+  const recent = selectRecentMeals(meals).slice(0, 8);
   const [draft, setDraft] = useState('');
   const [nutritionMeal, setNutritionMeal] = useState<Meal | null>(null);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
 
   const log = (text: string) => {
     const t = text.trim();
@@ -165,7 +170,42 @@ function MealsTab() {
           }}
           style={{ minHeight: 42 }}
         />
+        <OutlineButton
+          label="Quick add"
+          small
+          tone="neutral"
+          onPress={() => setQuickAddOpen(true)}
+          style={{ minHeight: 42 }}
+        />
       </View>
+
+      {savedMeals.length > 0 && (
+        <View>
+          <Kicker color={colors.neutral500} style={{ marginBottom: 8 }}>
+            Saved meals — one tap
+          </Kicker>
+          <View style={styles.chipsWrap}>
+            {savedMeals.map((sm) => (
+              <Pressable
+                key={sm.id}
+                onPress={() => {
+                  logSavedMeal(sm.id);
+                  toast(`Logged — ${sm.nutrition.calories} cal`);
+                }}
+                style={({ hovered, pressed }: any) => [
+                  styles.mealChip,
+                  { borderColor: colors.accent800 },
+                  (hovered || pressed) && { borderColor: colors.accent500 },
+                ]}
+              >
+                <Text style={styles.mealChipText}>
+                  {sm.name} · {sm.nutrition.calories} cal
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      )}
 
       {recent.length > 0 && (
         <View>
@@ -233,9 +273,13 @@ function MealsTab() {
         )}
       </View>
 
-      <NutritionSheet
+      <MealBuilderSheet
         meal={nutritionMeal}
         onClose={() => setNutritionMeal(null)}
+      />
+      <QuickAddSheet
+        visible={quickAddOpen}
+        onClose={() => setQuickAddOpen(false)}
       />
     </View>
   );

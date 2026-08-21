@@ -98,16 +98,39 @@ export interface JournalEntry {
   text: string;
 }
 
-/** Optional nutrition enrichment for a logged meal. Never required. */
-export interface MealNutrition {
+/** One food in a multi-component meal ("Chicken, broiled — 6 oz"). */
+export interface MealComponent {
   fdcId: number;
-  foodName: string;
-  servingQty: number;
-  servingUnit: string;
+  description: string;
+  quantity: number;
+  unit: string;
+  /** Resolved grams for the whole component — the scaling ground truth. */
+  gramWeight: number;
+  kcal: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+}
+
+/**
+ * Optional nutrition enrichment for a logged meal. Never required.
+ * Totals are the sum of components (or direct entry via Quick Add).
+ */
+export interface MealNutrition {
   calories: number;
   protein: number;
   carbs: number;
   fat: number;
+  components?: MealComponent[];
+  /** Entered by hand — no search, no network. */
+  quickAdd?: boolean;
+}
+
+/** A built meal saved for one-tap re-logging. */
+export interface SavedMeal {
+  id: string;
+  name: string;
+  nutrition: MealNutrition;
 }
 
 export interface Meal {
@@ -115,20 +138,6 @@ export interface Meal {
   text: string;
   timestamp: number;
   nutrition?: MealNutrition | null;
-}
-
-/** One USDA search hit, normalized per 100g (or per branded serving). */
-export interface FoodSearchResult {
-  fdcId: number;
-  description: string;
-  brand: string | null;
-  /** Base portion the nutrient values refer to. */
-  servingQty: number;
-  servingUnit: string;
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
 }
 
 export interface DailyNutritionTotals {

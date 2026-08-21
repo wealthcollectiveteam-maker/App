@@ -23,6 +23,7 @@ import type {
   NotificationPrefs,
   PendingChanges,
   ReportReason,
+  SavedMeal,
   Scenario,
   ScenarioState,
   TaskDef,
@@ -121,8 +122,14 @@ interface AppState extends ScenarioState {
   healthAvailable: boolean;
   /** Health prompt dismissals: 'diet' | 'workout' -> local date dismissed. */
   healthPromptDismissed: Partial<Record<'diet' | 'workout', string>>;
+  /**
+   * Start times of Health workouts already used to confirm a task — one
+   * recorded activity vouches for at most one completion.
+   */
+  healthWorkoutsConsumed: string[];
   healthSimulated: boolean;
   metricCheckins: MetricCheckin[];
+  savedMeals: SavedMeal[];
   /** Display preference only — storage is ALWAYS kg/cm (see lib/units.ts). */
   unitPreference: UnitPreference;
   /** Week key when the check-in card was dismissed or saved. */
@@ -164,9 +171,15 @@ interface AppState extends ScenarioState {
   setNotificationPref: (key: keyof NotificationPrefs, value: boolean) => void;
   attachNutrition: (mealId: string, nutrition: MealNutrition) => void;
   removeNutrition: (mealId: string) => void;
+  saveMealTemplate: (name: string, nutrition: MealNutrition) => void;
+  removeSavedMeal: (id: string) => void;
+  /** One-tap log of a saved meal (name + attached nutrition). */
+  logSavedMeal: (id: string) => void;
   setHealthPref: (key: keyof HealthPrefs, value: boolean) => void;
   refreshHealth: () => Promise<void>;
   dismissHealthPrompt: (kind: 'diet' | 'workout') => void;
+  /** Mark a Health workout as used for a confirmed completion. */
+  consumeHealthWorkout: (startISO: string) => void;
   toggleHealthSimulation: () => void;
   saveMetricCheckin: (weightKg: number | null, mood: number | null) => void;
   dismissCheckinCard: () => void;
@@ -256,8 +269,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   healthReadings: EMPTY_READINGS,
   healthAvailable: false,
   healthPromptDismissed: {},
+  healthWorkoutsConsumed: [],
   healthSimulated: false,
   metricCheckins: [],
+  savedMeals: [],
   unitPreference: localeUnitPreference(),
   checkinHandledWeek: null,
   weeklyCheckinEnabled: true,
@@ -473,6 +488,26 @@ export const useAppStore = create<AppState>((set, get) => ({
   removeNutrition: (mealId) =>
     set({ meals: [...DataService.removeNutrition(mealId)] }),
 
+  saveMealTemplate: (name, nutrition) => {
+    DataService.saveMealTemplate(name, nutrition)
+      .then((savedMeals) => set({ savedMeals }))
+      .catch(() => {});
+  },
+
+  removeSavedMeal: (id) => {
+    DataService.removeSavedMeal(id)
+      .then((savedMeals) => set({ savedMeals }))
+      .catch(() => {});
+  },
+
+  logSavedMeal: (id) => {
+    const template = get().savedMeals.find((m) => m.id === id);
+    if (!template) return;
+    const meal = DataService.logMeal(template.name);
+    DataService.attachNutrition(meal.id, template.nutrition);
+    set({ meals: [...DataService.getMeals()] });
+  },
+
   setHealthPref: (key, value) => {
     set((s) => ({ healthPrefs: { ...s.healthPrefs, [key]: value } }));
     if (key === 'healthEnabled') {
@@ -524,10 +559,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       },
     })),
 
+  consumeHealthWorkout: (startISO) =>
+    set((s) => ({
+      healthWorkoutsConsumed: [...s.healthWorkoutsConsumed, startISO],
+    })),
+
   toggleHealthSimulation: () => {
     const next = !isHealthSimulated();
     setHealthSimulation(next);
-    set({ healthSimulated: next, healthPromptDismissed: {} });
+    set({
+      healthSimulated: next,
+      healthPromptDismissed: {},
+      healthWorkoutsConsumed: [],
+    });
     get().refreshHealth();
   },
 
@@ -574,6 +618,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
       if (Object.keys(updates).length) set(updates);
+      const savedMeals = await DataService.getSavedMeals();
+      if (savedMeals.length) set({ savedMeals });
     } catch {
       // persisted state is a convenience; never block startup on it
     }
@@ -702,6 +748,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       dayComplete: false,
       missedDay: false,
       healthPromptDismissed: {},
+      healthWorkoutsConsumed: [],
       ...taskConfigMirror(next.tier, next.day),
     });
   },
@@ -723,7 +770,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       healthPrefs: DEFAULT_HEALTH_PREFS,
       healthReadings: EMPTY_READINGS,
       healthPromptDismissed: {},
+      healthWorkoutsConsumed: [],
       metricCheckins: [],
+      savedMeals: [],
       unitPreference: localeUnitPreference(),
       checkinHandledWeek: null,
       weeklyCheckinEnabled: true,
@@ -803,6 +852,7 @@ export const selectPingsLeft = (s: {
 export const selectWorkoutSuggestions = (s: {
   healthPrefs: HealthPrefs;
   healthReadings: HealthReadings;
+  healthWorkoutsConsumed: string[];
   todayTasks: TaskDef[];
   tasksDone: Partial<Record<TaskKey, string>>;
 }): Partial<Record<TaskKey, HealthWorkout>> => {
@@ -814,7 +864,10 @@ export const selectWorkoutSuggestions = (s: {
   );
   if (pendingWorkoutTasks.length === 0) return {};
   const out: Partial<Record<TaskKey, HealthWorkout>> = {};
-  const unclaimed = [...s.healthReadings.workouts]; // already chronological
+  // Chronological, minus workouts already used to confirm a completion.
+  const unclaimed = s.healthReadings.workouts.filter(
+    (w) => !s.healthWorkoutsConsumed.includes(w.startISO),
+  );
   for (const task of pendingWorkoutTasks) {
     const required =
       task.target?.unit === 'minutes' ? task.target.value : Infinity;

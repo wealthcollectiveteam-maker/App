@@ -9,6 +9,7 @@ import {
 } from 'phosphor-react-native';
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useShallow } from 'zustand/react/shallow';
 
 import { FlairAvatar } from '@/components/FlairAvatar';
 import { HealthPromptCards } from '@/components/HealthPromptCard';
@@ -197,7 +198,7 @@ export default function HomeScreen() {
   const dayComplete = useAppStore((s) => s.dayComplete);
   const tasks = useAppStore(selectTasks);
   const doneCount = useAppStore(selectDoneCount);
-  const workoutSuggestions = useAppStore(selectWorkoutSuggestions);
+  const workoutSuggestions = useAppStore(useShallow(selectWorkoutSuggestions));
   const router = useRouter();
   const allDone = doneCount === tasks.length;
 

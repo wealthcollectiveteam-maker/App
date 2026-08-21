@@ -1,96 +1,37 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import type { FoodSearchResult } from '@/data/types';
+import {
+  normalizeFoodDetail,
+  normalizeSearchResults,
+  type FoodDetail,
+  type FoodSearchResult,
+  type RawFoodDetail,
+  type RawSearchFood,
+} from '@/lib/fdc';
 
 /**
- * Nutrition lookup contract. The shipped implementation uses USDA
- * FoodData Central (free, no request caps, commercial use permitted).
- * A paid provider (Nutritionix, Edamam) can replace it without touching UI.
+ * Nutrition lookup: USDA FoodData Central (free, no request caps,
+ * commercial use permitted). Dataset-aware — Survey (FNDDS) is what makes
+ * composite dishes like "chicken and rice" findable, and per-dataset
+ * portion math lives in lib/fdc.ts. A different provider can replace this
+ * behind the same interface without touching UI.
  */
 export interface INutritionService {
   searchFoods(query: string): Promise<FoodSearchResult[]>;
+  /** Full detail (per-100g + real portions), cached by fdcId. */
+  getFoodDetail(fdcId: number): Promise<FoodDetail>;
   clearCache(): Promise<void>;
 }
 
 const API_KEY = process.env.EXPO_PUBLIC_FDC_API_KEY || 'DEMO_KEY';
-const SEARCH_URL = 'https://api.nal.usda.gov/fdc/v1/foods/search';
-const CACHE_PREFIX = 'ranked.nutrition.food.';
-const QUERY_CACHE_PREFIX = 'ranked.nutrition.query.';
+const BASE = 'https://api.nal.usda.gov/fdc/v1';
+const DETAIL_CACHE_PREFIX = 'ranked.fdc.detail.';
+const QUERY_CACHE_PREFIX = 'ranked.fdc.query.';
 
-// USDA nutrient identifiers. The search endpoint reports legacy
-// `nutrientNumber` strings ("208" = Energy kcal) alongside modern
-// `nutrientId` values (1008 = Energy); match on either.
-const NUTRIENTS = {
-  calories: { numbers: ['208'], ids: [1008, 2047, 2048] },
-  protein: { numbers: ['203'], ids: [1003] },
-  carbs: { numbers: ['205'], ids: [1005] },
-  fat: { numbers: ['204'], ids: [1004] },
-} as const;
-
-interface FdcNutrient {
-  nutrientNumber?: string;
-  nutrientId?: number;
-  value?: number;
-  unitName?: string;
-}
-
-interface FdcFood {
-  fdcId: number;
-  description: string;
-  brandOwner?: string;
-  brandName?: string;
-  servingSize?: number;
-  servingSizeUnit?: string;
-  foodNutrients?: FdcNutrient[];
-}
-
-function pickNutrient(
-  nutrients: FdcNutrient[],
-  spec: { numbers: readonly string[]; ids: readonly number[] },
-): number {
-  const hit = nutrients.find(
-    (n) =>
-      (n.nutrientNumber && spec.numbers.includes(n.nutrientNumber)) ||
-      (n.nutrientId != null && spec.ids.includes(n.nutrientId)),
-  );
-  return hit?.value ?? 0;
-}
-
-function normalize(food: FdcFood): FoodSearchResult {
-  const nutrients = food.foodNutrients ?? [];
-  // Search-endpoint nutrient values are per 100g. Branded foods also carry
-  // a labeled serving size; surface it as the default portion when present.
-  const per100 = {
-    calories: pickNutrient(nutrients, NUTRIENTS.calories),
-    protein: pickNutrient(nutrients, NUTRIENTS.protein),
-    carbs: pickNutrient(nutrients, NUTRIENTS.carbs),
-    fat: pickNutrient(nutrients, NUTRIENTS.fat),
-  };
-  const hasBrandedServing =
-    food.servingSize != null &&
-    food.servingSizeUnit != null &&
-    /^(g|ml)$/i.test(food.servingSizeUnit);
-  const qty = hasBrandedServing ? food.servingSize! : 100;
-  const scale = qty / 100;
-
-  return {
-    fdcId: food.fdcId,
-    description: food.description,
-    brand: food.brandOwner || food.brandName || null,
-    servingQty: qty,
-    servingUnit: hasBrandedServing ? food.servingSizeUnit!.toLowerCase() : 'g',
-    calories: Math.round(per100.calories * scale),
-    protein: Math.round(per100.protein * scale * 10) / 10,
-    carbs: Math.round(per100.carbs * scale * 10) / 10,
-    fat: Math.round(per100.fat * scale * 10) / 10,
-  };
-}
+// Survey (FNDDS) carries real composite dishes; ranking happens in lib/fdc.
+const DATA_TYPES = ['Survey (FNDDS)', 'Foundation', 'SR Legacy', 'Branded'];
 
 class UsdaNutritionService implements INutritionService {
-  /**
-   * Search USDA. Results are cached per normalized query and each food is
-   * cached by fdcId, so repeat lookups cost no network call.
-   */
   async searchFoods(query: string): Promise<FoodSearchResult[]> {
     const q = query.trim().toLowerCase();
     if (!q) return [];
@@ -104,33 +45,51 @@ class UsdaNutritionService implements INutritionService {
       }
     }
 
-    const url =
-      `${SEARCH_URL}?api_key=${encodeURIComponent(API_KEY)}` +
-      `&query=${encodeURIComponent(q)}` +
-      '&pageSize=10&dataType=Foundation,SR%20Legacy,Branded';
-    const res = await fetch(url);
+    // POST with a JSON body: the GET endpoint's dataType list triggers
+    // nginx-level 400s for certain query strings regardless of encoding.
+    const res = await fetch(`${BASE}/foods/search?api_key=${encodeURIComponent(API_KEY)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q, pageSize: 20, dataType: DATA_TYPES }),
+    });
     if (!res.ok) throw new Error(`USDA lookup failed (${res.status})`);
-    const json = (await res.json()) as { foods?: FdcFood[] };
-    const results = (json.foods ?? []).map(normalize).filter((r) => r.calories > 0);
+    const json = (await res.json()) as { foods?: RawSearchFood[] };
+    const results = normalizeSearchResults(json.foods ?? []).slice(0, 12);
 
     await AsyncStorage.setItem(
       QUERY_CACHE_PREFIX + q,
       JSON.stringify(results),
     ).catch(() => {});
-    await Promise.all(
-      results.map((r) =>
-        AsyncStorage.setItem(CACHE_PREFIX + r.fdcId, JSON.stringify(r)).catch(
-          () => {},
-        ),
-      ),
-    );
     return results;
+  }
+
+  async getFoodDetail(fdcId: number): Promise<FoodDetail> {
+    const cacheKey = DETAIL_CACHE_PREFIX + fdcId;
+    const cached = await AsyncStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        return JSON.parse(cached) as FoodDetail;
+      } catch {
+        // fall through to network
+      }
+    }
+    const res = await fetch(
+      `${BASE}/food/${fdcId}?api_key=${encodeURIComponent(API_KEY)}`,
+    );
+    if (!res.ok) throw new Error(`USDA detail failed (${res.status})`);
+    const detail = normalizeFoodDetail((await res.json()) as RawFoodDetail);
+    await AsyncStorage.setItem(cacheKey, JSON.stringify(detail)).catch(() => {});
+    return detail;
   }
 
   async clearCache(): Promise<void> {
     const keys = await AsyncStorage.getAllKeys();
     const mine = keys.filter(
-      (k) => k.startsWith(CACHE_PREFIX) || k.startsWith(QUERY_CACHE_PREFIX),
+      (k) =>
+        k.startsWith(DETAIL_CACHE_PREFIX) ||
+        k.startsWith(QUERY_CACHE_PREFIX) ||
+        // legacy phase-5 cache keys
+        k.startsWith('ranked.nutrition.'),
     );
     if (mine.length) await AsyncStorage.multiRemove(mine);
   }

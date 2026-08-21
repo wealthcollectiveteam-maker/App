@@ -9,7 +9,6 @@ import type {
   CustomTask,
   DailyNutritionTotals,
   FinalResults,
-  FoodSearchResult,
   JournalEntry,
   Meal,
   MealNutrition,
@@ -17,6 +16,7 @@ import type {
   Milestone,
   PendingChanges,
   ReportReason,
+  SavedMeal,
   Scenario,
   ScenarioState,
   Squad,
@@ -26,6 +26,7 @@ import type {
   TaskTarget,
   Tier,
 } from '@/data/types';
+import type { FoodDetail, FoodSearchResult } from '@/lib/fdc';
 import { NutritionService } from '@/services/NutritionService';
 
 const TIMER_STORAGE_KEY = 'ranked.activeTimer.v1';
@@ -66,9 +67,14 @@ export interface IDataService {
   completeTimedTask(taskKey: TaskKey, elapsedSeconds: number): Promise<void>;
   // Nutrition — optional enrichment on meals; owner-read-only when synced.
   searchFoods(query: string): Promise<FoodSearchResult[]>;
+  getFoodDetail(fdcId: number): Promise<FoodDetail>;
   attachNutrition(mealId: string, nutrition: MealNutrition): Meal[];
   removeNutrition(mealId: string): Meal[];
   getDailyNutritionTotals(): DailyNutritionTotals | null;
+  // Saved meals: one-tap re-logging. Persisted locally.
+  getSavedMeals(): Promise<SavedMeal[]>;
+  saveMealTemplate(name: string, nutrition: MealNutrition): Promise<SavedMeal[]>;
+  removeSavedMeal(id: string): Promise<SavedMeal[]>;
   // Optional weekly metrics — private to the owner, never social.
   saveMetricCheckin(weightKg: number | null, mood: number | null): MetricCheckin;
   getMetricHistory(): MetricCheckin[];
@@ -271,8 +277,10 @@ class MockDataService implements IDataService {
     this.feeling = null;
     this.timedSessions = [];
     this.metricCheckins = [];
+    this.savedMeals = [];
     this.initTaskConfig(this.state.tier, this.state.day);
     AsyncStorage.removeItem(TIMER_STORAGE_KEY).catch(() => {});
+    AsyncStorage.removeItem(MockDataService.SAVED_MEALS_KEY).catch(() => {});
     NutritionService.clearCache().catch(() => {});
   }
 
@@ -329,6 +337,55 @@ class MockDataService implements IDataService {
 
   searchFoods(query: string): Promise<FoodSearchResult[]> {
     return NutritionService.searchFoods(query);
+  }
+
+  getFoodDetail(fdcId: number): Promise<FoodDetail> {
+    return NutritionService.getFoodDetail(fdcId);
+  }
+
+  // ---- Saved meals (persisted locally; sync lands with the backend) ----
+
+  private savedMeals: SavedMeal[] | null = null;
+  private static SAVED_MEALS_KEY = 'ranked.savedMeals.v1';
+
+  async getSavedMeals(): Promise<SavedMeal[]> {
+    if (this.savedMeals) return this.savedMeals;
+    try {
+      const raw = await AsyncStorage.getItem(MockDataService.SAVED_MEALS_KEY);
+      this.savedMeals = raw ? (JSON.parse(raw) as SavedMeal[]) : [];
+    } catch {
+      this.savedMeals = [];
+    }
+    return this.savedMeals;
+  }
+
+  async saveMealTemplate(
+    name: string,
+    nutrition: MealNutrition,
+  ): Promise<SavedMeal[]> {
+    const meals = await this.getSavedMeals();
+    // Replace an existing template of the same name rather than duplicating.
+    this.savedMeals = [
+      { id: nextId('sm'), name: name.trim(), nutrition },
+      ...meals.filter(
+        (m) => m.name.trim().toLowerCase() !== name.trim().toLowerCase(),
+      ),
+    ].slice(0, 20);
+    await AsyncStorage.setItem(
+      MockDataService.SAVED_MEALS_KEY,
+      JSON.stringify(this.savedMeals),
+    ).catch(() => {});
+    return this.savedMeals;
+  }
+
+  async removeSavedMeal(id: string): Promise<SavedMeal[]> {
+    const meals = await this.getSavedMeals();
+    this.savedMeals = meals.filter((m) => m.id !== id);
+    await AsyncStorage.setItem(
+      MockDataService.SAVED_MEALS_KEY,
+      JSON.stringify(this.savedMeals),
+    ).catch(() => {});
+    return this.savedMeals;
   }
 
   attachNutrition(mealId: string, nutrition: MealNutrition): Meal[] {

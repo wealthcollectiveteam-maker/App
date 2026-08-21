@@ -22,6 +22,7 @@ export function WorkoutSuggestion({
   workout: HealthWorkout;
 }) {
   const completeTask = useAppStore((s) => s.completeTask);
+  const consumeHealthWorkout = useAppStore((s) => s.consumeHealthWorkout);
   const time = new Date(workout.startISO).toLocaleTimeString(undefined, {
     hour: 'numeric',
     minute: '2-digit',
@@ -42,6 +43,8 @@ export function WorkoutSuggestion({
         small
         onPress={() => {
           completeTask(taskKey);
+          // One recorded activity vouches for one task, ever.
+          consumeHealthWorkout(workout.startISO);
           toast('+20 XP');
         }}
       />
