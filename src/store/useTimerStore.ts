@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 import type { ActiveTimer, TaskDef, TaskKey } from '@/data/types';
-import { DataService } from '@/services/DataService';
+import { DataService } from '@/services';
 import {
   cancelTimerNotifications,
   ensureNotificationPermission,

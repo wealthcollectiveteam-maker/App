@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { CHALLENGE } from '@/constants/challenge';
-import { buildTierTask, TASK_BASES, TIERS } from '@/constants/tiers';
+import { TASK_BASES, TIERS } from '@/constants/tiers';
 import { buildScenario } from '@/data/mock';
 import type {
   ActiveTimer,
@@ -25,92 +25,25 @@ import type {
   TaskKey,
   TaskTarget,
   Tier,
+  WorkoutLog,
+  WorkoutLogInput,
 } from '@/data/types';
 import type { FoodDetail, FoodSearchResult } from '@/lib/fdc';
+import type { IDataService } from '@/services/contract';
 import { NutritionService } from '@/services/NutritionService';
+import {
+  composeTaskSet,
+  DEFAULT_ACTIVITY_TYPES,
+  pendingTargetChanges,
+  tierStandards,
+} from '@/services/taskProjection';
 
 const TIMER_STORAGE_KEY = 'ranked.activeTimer.v1';
-
-/**
- * DataService contract. The app talks to this interface only; the shipped
- * implementation below is the mock-data service. A real backend implements
- * the same surface.
- */
-export interface IDataService {
-  loadScenario(scenario: Scenario): ScenarioState;
-  saveJournalEntry(day: number, text: string): JournalEntry;
-  getJournal(): JournalEntry[];
-  logMeal(text: string, at?: number): Meal;
-  getMeals(day?: number): Meal[];
-  getRecentMeals(): string[];
-  addMilestone(title: string): Milestone;
-  toggleMilestone(id: string, day: number): Milestone[];
-  getFinalResults(): FinalResults;
-  saveCompletionFeeling(feeling: string | null, text: string): void;
-  // Squad membership (solo mode is squad === null)
-  createSquad(name: string): Squad;
-  joinSquad(code: string): Squad;
-  leaveSquad(): void;
-  // UGC moderation + compliance
-  reportContent(feedItemId: string, reason: ReportReason): void;
-  blockUser(name: string): string[];
-  unblockUser(name: string): string[];
-  getBlockedUsers(): string[];
-  deleteAccount(): void;
-  // Workout timer — client-owned state; only the finished session syncs.
-  startTimer(timer: ActiveTimer): Promise<void>;
-  pauseTimer(timer: ActiveTimer): Promise<void>;
-  resumeTimer(timer: ActiveTimer): Promise<void>;
-  cancelTimer(): Promise<void>;
-  getActiveTimer(): Promise<ActiveTimer | null>;
-  /** Records real elapsed training seconds against the completed task. */
-  completeTimedTask(taskKey: TaskKey, elapsedSeconds: number): Promise<void>;
-  // Nutrition — optional enrichment on meals; owner-read-only when synced.
-  searchFoods(query: string): Promise<FoodSearchResult[]>;
-  getFoodDetail(fdcId: number): Promise<FoodDetail>;
-  attachNutrition(mealId: string, nutrition: MealNutrition): Meal[];
-  removeNutrition(mealId: string): Meal[];
-  getDailyNutritionTotals(): DailyNutritionTotals | null;
-  // Saved meals: one-tap re-logging. Persisted locally.
-  getSavedMeals(): Promise<SavedMeal[]>;
-  saveMealTemplate(name: string, nutrition: MealNutrition): Promise<SavedMeal[]>;
-  removeSavedMeal(id: string): Promise<SavedMeal[]>;
-  // Optional weekly metrics — private to the owner, never social.
-  saveMetricCheckin(weightKg: number | null, mood: number | null): MetricCheckin;
-  getMetricHistory(): MetricCheckin[];
-  // Editable daily tasks. Edits never affect today or the past: today's set
-  // is a day-start snapshot; every change takes effect at the next rollover.
-  initTaskConfig(tier: Tier, day: number): TaskDef[];
-  getTodayTasks(tier: Tier, day: number): TaskDef[];
-  getTomorrowTasks(currentTier: Tier, day: number): TaskDef[];
-  getDaySnapshot(day: number): TaskDef[] | null;
-  getCustomTasks(): CustomTask[];
-  addCustomTask(
-    input: { name: string; sub: string; proof: boolean; timerMinutes?: number },
-    day: number,
-  ): CustomTask;
-  updateCustomTask(
-    id: string,
-    patch: Partial<Pick<CustomTask, 'name' | 'sub' | 'proof' | 'timerMinutes'>>,
-  ): CustomTask[];
-  removeCustomTask(id: string, day: number): CustomTask[];
-  changeTier(tier: Tier | null): void;
-  getPendingChanges(currentTier: Tier, day: number): PendingChanges;
-  undoPendingChanges(day: number): void;
-  /** Applies pending changes and freezes the new day's snapshot. */
-  rolloverDay(currentTier: Tier, oldDay: number): { tier: Tier; day: number; todayTasks: TaskDef[] };
-  /**
-   * Set a tier task's target value (effective tomorrow like all edits).
-   * Passing the tier standard clears the override.
-   */
-  updateTaskTarget(taskKey: TaskKey, value: number, currentTier: Tier): void;
-  getTierStandards(tier: Tier): Partial<Record<TaskKey, TaskTarget>>;
-}
 
 let uid = 0;
 const nextId = (prefix: string) => `${prefix}-${Date.now()}-${uid++}`;
 
-class MockDataService implements IDataService {
+export class MockDataService implements IDataService {
   private state: ScenarioState = buildScenario('day12');
   private feeling: { feeling: string | null; text: string } | null = null;
   private blocked: string[] = [];
@@ -278,6 +211,7 @@ class MockDataService implements IDataService {
     this.timedSessions = [];
     this.metricCheckins = [];
     this.savedMeals = [];
+    this.workoutLogs = [];
     this.initTaskConfig(this.state.tier, this.state.day);
     AsyncStorage.removeItem(TIMER_STORAGE_KEY).catch(() => {});
     AsyncStorage.removeItem(MockDataService.SAVED_MEALS_KEY).catch(() => {});
@@ -456,35 +390,11 @@ class MockDataService implements IDataService {
   /** Copy taken at day start so UNDO can revert today's pending edits. */
   private overridesAtDayStart: Partial<Record<TaskKey, number>> = {};
 
-  private customToDef(c: CustomTask): TaskDef {
-    return {
-      key: `custom-${c.id}`,
-      label: c.name,
-      sub: c.sub,
-      proof: c.proof,
-      // One source of truth: a custom timer duration IS a minutes target.
-      target: c.timerMinutes ? { value: c.timerMinutes, unit: 'minutes' } : null,
-      tierStandard: null,
-      timerMinutes: c.timerMinutes,
-    };
-  }
-
-  /**
-   * The live task set for a given day: tier tasks (with target overrides
-   * resolved to values — snapshots store data, not references) + customs.
-   */
   private composeTaskSet(tier: Tier, day: number): TaskDef[] {
-    const tierTasks = TIERS[tier].taskKeys.map((key) =>
-      buildTierTask(tier, key, this.targetOverrides[key]),
-    );
-    const customs = this.customTasks
-      .filter(
-        (c) =>
-          c.activeFromDay <= day &&
-          (c.removedFromDay == null || c.removedFromDay > day),
-      )
-      .map((c) => this.customToDef(c));
-    return [...tierTasks, ...customs];
+    return composeTaskSet(tier, day, {
+      customTasks: this.customTasks,
+      targetOverrides: this.targetOverrides,
+    });
   }
 
   initTaskConfig(tier: Tier, day: number): TaskDef[] {
@@ -564,30 +474,12 @@ class MockDataService implements IDataService {
     this.pendingTier = tier;
   }
 
-  /** Target edits made today (they apply tomorrow). */
   private pendingTargetChanges(currentTier: Tier): TargetChange[] {
-    const keys = new Set([
-      ...Object.keys(this.targetOverrides),
-      ...Object.keys(this.overridesAtDayStart),
-    ]) as Set<BuiltinTaskKey>;
-    const changes: TargetChange[] = [];
-    for (const key of keys) {
-      const base = TASK_BASES[key];
-      if (!base?.unit) continue;
-      const standard = TIERS[currentTier].standards[key];
-      const from = this.overridesAtDayStart[key] ?? standard;
-      const to = this.targetOverrides[key] ?? standard;
-      if (from != null && to != null && from !== to) {
-        changes.push({
-          taskKey: key,
-          name: base.shortName,
-          fromValue: from,
-          toValue: to,
-          unit: base.unit,
-        });
-      }
-    }
-    return changes;
+    return pendingTargetChanges(
+      currentTier,
+      this.targetOverrides,
+      this.overridesAtDayStart,
+    );
   }
 
   getPendingChanges(currentTier: Tier, day: number): PendingChanges {
@@ -644,23 +536,34 @@ class MockDataService implements IDataService {
   }
 
   getTierStandards(tier: Tier): Partial<Record<TaskKey, TaskTarget>> {
-    const out: Partial<Record<TaskKey, TaskTarget>> = {};
-    for (const key of TIERS[tier].taskKeys) {
-      const base = TASK_BASES[key];
-      const value = TIERS[tier].standards[key];
-      if (base.unit && value != null) out[key] = { value, unit: base.unit };
+    return tierStandards(tier);
+  }
+
+  // ---- Workout log (owner-only; app-owned data only) ----
+
+  private workoutLogs: WorkoutLog[] = [];
+
+  saveWorkoutLog(input: WorkoutLogInput): WorkoutLog {
+    const log: WorkoutLog = { ...input, id: nextId('wl'), loggedAt: Date.now() };
+    this.workoutLogs = [log, ...this.workoutLogs];
+    return log;
+  }
+
+  getWorkoutLogs(): WorkoutLog[] {
+    return this.workoutLogs;
+  }
+
+  getActivityTypes(): string[] {
+    // Learned types first (most recently used), then the unused defaults.
+    const used: string[] = [];
+    for (const l of this.workoutLogs) {
+      if (!used.some((u) => u.toLowerCase() === l.activityType.toLowerCase())) {
+        used.push(l.activityType);
+      }
     }
-    return out;
+    const defaults = DEFAULT_ACTIVITY_TYPES.filter(
+      (d) => !used.some((u) => u.toLowerCase() === d.toLowerCase()),
+    );
+    return [...used, ...defaults];
   }
 }
-
-// The backend does not exist yet; EXPO_PUBLIC_USE_MOCK=false is accepted but
-// falls back to the mock with a warning rather than crashing.
-const USE_MOCK = (process.env.EXPO_PUBLIC_USE_MOCK ?? 'true') !== 'false';
-if (!USE_MOCK) {
-  console.warn(
-    'EXPO_PUBLIC_USE_MOCK=false requested, but no backend implementation exists yet — using mock DataService.',
-  );
-}
-
-export const DataService: IDataService = new MockDataService();

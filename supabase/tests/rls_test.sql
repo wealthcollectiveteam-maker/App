@@ -24,9 +24,10 @@ declare
   -- the sanctioned direct-write surface for `authenticated`
   ins_allow text[] := array['profiles','profile_private','journal_entries',
     'meals','metric_checkins','milestones','feed_items','content_reports',
-    'blocked_users'];
-  upd_allow text[] := array['profiles','profile_private','meals','milestones'];
-  del_allow text[] := array['blocked_users'];
+    'blocked_users','workout_logs'];
+  upd_allow text[] := array['profiles','profile_private','meals','milestones',
+    'workout_logs'];
+  del_allow text[] := array['blocked_users','workout_logs'];
 begin
   for t in select tablename from pg_tables where schemaname = 'public' loop
     qualified := format('public.%I', t.tablename);
@@ -128,6 +129,15 @@ insert into public.meals (owner, day, text, nutrition)
 insert into public.metric_checkins (owner, weight_kg, mood) values (auth.uid(), 82.5, 4);
 insert into public.milestones (owner, title) values (auth.uid(), 'Run a 5K');
 
+-- A workout log: user-authored type/effort/note, duration from our timer.
+insert into public.workout_logs
+  (owner, challenge_id, day, task_key, activity_type, duration_seconds, effort, notes)
+values (
+  auth.uid(),
+  (select id from public.challenges where owner = auth.uid()),
+  1, 'workout1', 'Push', 2820, 4, 'Bench PR 185.'
+);
+
 -- Freeze today's snapshot and complete one task through the RPC.
 select public.get_or_freeze_today();
 select public.complete_task('read');
@@ -166,6 +176,11 @@ begin
   select count(*) into n from public.milestones;
   if n <> 0 then raise exception 'FAIL: squadmate can read milestones'; end if;
 
+  -- Addendum DoD 4: a squadmate knows a workout task was completed, never
+  -- what it was, how long, how hard, or the note.
+  select count(*) into n from public.workout_logs;
+  if n <> 0 then raise exception 'FAIL: squadmate can read workout logs'; end if;
+
   select count(*) into n from public.challenge_days
     where challenge_id not in (select id from public.challenges where owner = auth.uid());
   if n <> 0 then raise exception 'FAIL: squadmate can read another member''s snapshots'; end if;
@@ -178,7 +193,21 @@ begin
     where challenge_id not in (select id from public.challenges where owner = auth.uid());
   if n <> 0 then raise exception 'FAIL: squadmate can read another member''s custom tasks'; end if;
 
-  raise notice 'PASS: squadmate sees name only — no journals, meals, metrics, why, milestones, snapshots, completions';
+  raise notice 'PASS: squadmate sees name only — no journals, meals, metrics, why, milestones, workout logs, snapshots, completions';
+end $$;
+
+-- A squadmate cannot forge a log onto someone else's row either.
+do $$
+begin
+  begin
+    insert into public.workout_logs
+      (owner, challenge_id, day, task_key, activity_type, duration_seconds)
+    values ('00000000-0000-0000-0000-00000000000a',
+            (select id from public.challenges limit 1), 1, 'workout1', 'Push', 100);
+    raise exception 'FAIL: wrote a workout log onto another user';
+  exception when insufficient_privilege or check_violation then
+    raise notice 'PASS: cannot write a workout log onto another user';
+  end;
 end $$;
 
 -- The sanctioned surface: counts via get_squad_status().

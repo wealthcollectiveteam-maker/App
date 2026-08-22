@@ -26,7 +26,7 @@ import {
   Kicker,
   OutlineButton,
 } from '@/components/ui';
-import { DataService } from '@/services/DataService';
+import { DataService } from '@/services';
 import { useAppStore } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
 import { colors, font, radius, space } from '@/theme/tokens';

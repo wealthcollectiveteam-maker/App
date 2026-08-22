@@ -133,6 +133,26 @@ export interface SavedMeal {
   nutrition: MealNutrition;
 }
 
+/**
+ * One completed workout, as recorded by the user. Every field is app-owned:
+ * duration comes from our own timer (or is typed on the swipe path), and
+ * type/effort/notes are user-authored. NO HealthKit value is ever stored
+ * here — see PRIVACY_NOTES.md.
+ */
+export interface WorkoutLog {
+  id: string;
+  day: number;
+  taskKey: TaskKey;
+  activityType: string;
+  durationSeconds: number;
+  /** Optional 1–5. */
+  effort: number | null;
+  notes: string | null;
+  loggedAt: number;
+}
+
+export type WorkoutLogInput = Omit<WorkoutLog, 'id' | 'loggedAt'>;
+
 export interface Meal {
   id: string;
   text: string;

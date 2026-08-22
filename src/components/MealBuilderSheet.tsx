@@ -20,7 +20,7 @@ import {
   type FoodPortion,
   type FoodSearchResult,
 } from '@/lib/fdc';
-import { DataService } from '@/services/DataService';
+import { DataService } from '@/services';
 import { useAppStore } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
 import { colors, font, radius } from '@/theme/tokens';

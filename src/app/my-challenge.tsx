@@ -29,7 +29,7 @@ import type {
   TaskDef,
   Tier,
 } from '@/data/types';
-import { DataService } from '@/services/DataService';
+import { DataService } from '@/services';
 import { selectTierLabel, useAppStore } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
 import { colors, font, radius, space } from '@/theme/tokens';

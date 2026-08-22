@@ -30,7 +30,7 @@ import type {
   TaskKey,
   Tier,
 } from '@/data/types';
-import { DataService } from '@/services/DataService';
+import { DataService } from '@/services';
 import {
   getHealthService,
   isHealthSimulated,
