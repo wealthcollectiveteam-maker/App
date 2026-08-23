@@ -211,8 +211,12 @@ export const useTimerStore = create<TimerState>((set, get) => {
         elapsedActiveSeconds(active),
         active.durationSeconds,
       );
-      // Same completion path as a swipe: XP, feed entry, streak effect.
-      useAppStore.getState().completeTask(active.taskKey);
+      // Same completion path as a swipe: XP, feed entry, streak effect —
+      // but local only. completeTimedTask() below is the backend write for
+      // this path because it carries the elapsed duration, and complete_task()
+      // ignores a second insert for the same task, so letting both fire would
+      // be a race the duration can lose.
+      useAppStore.getState().completeTask(active.taskKey, { sync: false });
       DataService.completeTimedTask(active.taskKey, elapsed).catch(() => {});
       cancelTimerNotifications().catch(() => {});
       playCompletionEffects();

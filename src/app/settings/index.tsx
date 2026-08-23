@@ -19,6 +19,7 @@ import { NotificationPermissionBanner } from '@/components/NotificationPermissio
 import { Card, Kicker, OutlineButton, SegmentedControl } from '@/components/ui';
 import type { HealthPrefs, NotificationPrefs } from '@/data/types';
 import { useAppStore } from '@/store/useAppStore';
+import { useSessionStore } from '@/store/useSessionStore';
 import { toast } from '@/store/useToastStore';
 import { colors, font, radius, space } from '@/theme/tokens';
 
@@ -54,6 +55,7 @@ export default function SettingsScreen() {
   const setWeeklyCheckinEnabled = useAppStore((s) => s.setWeeklyCheckinEnabled);
   const unitPreference = useAppStore((s) => s.unitPreference);
   const setUnitPreference = useAppStore((s) => s.setUnitPreference);
+  const signOut = useSessionStore((s) => s.signOut);
 
   const [name, setName] = useState(profileName);
   const [whyDraft, setWhyDraft] = useState(why);
@@ -337,11 +339,12 @@ export default function SettingsScreen() {
                     toast('Type DELETE to confirm');
                     return;
                   }
+                  // deleteAccount() wipes the rows and then ends the
+                  // session; the gate sends us to the sign-in screen.
                   deleteAccount();
                   setConfirmingDelete(false);
                   setDeleteText('');
-                  toast('Account deleted (mock)');
-                  router.back();
+                  toast('Account deleted');
                 }}
               />
             </View>
@@ -353,7 +356,14 @@ export default function SettingsScreen() {
             label="Sign out"
             small
             tone="neutral"
-            onPress={() => toast('Signed out (mock)')}
+            onPress={() => {
+              // Clears the service mirror and this device's copy of the
+              // account before ending the session: nothing of one account
+              // may be readable by the next one to sign in here.
+              signOut()
+                .then(() => toast('Signed out'))
+                .catch(() => toast('Signed out'));
+            }}
           />
         </View>
       </Card>

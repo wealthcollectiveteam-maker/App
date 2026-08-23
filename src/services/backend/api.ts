@@ -11,6 +11,7 @@ import type {
   Tier,
   WorkoutLog,
 } from '@/data/types';
+import { toBackendError } from '@/services/contract';
 
 import { getSupabase } from './supabaseClient';
 
@@ -31,6 +32,25 @@ function sb() {
   const client = getSupabase();
   if (!client) throw new Error('Backend not configured');
   return client;
+}
+
+/**
+ * Unwrap a Supabase read.
+ *
+ * Every read helper here used to destructure `.data` and drop `.error`, so a
+ * read that FAILED was indistinguishable from one that returned nothing: a
+ * raised `no challenge for user` came back as `null` and hydrate quietly
+ * degraded to "day 1, empty task list" with no signal anywhere. Reads now
+ * throw a typed BackendError, and the caller decides whether that is fatal
+ * (hydrate) or tolerable (the `.catch()` around getSquadStatus, where solo is
+ * a legitimate outcome).
+ */
+function unwrap<T>(
+  result: { data: T; error: unknown },
+  context: string,
+): T {
+  if (result.error) throw toBackendError(result.error, context);
+  return result.data;
 }
 
 export interface DaySnapshotRow {
@@ -65,14 +85,24 @@ export interface ChallengeConfig {
 export const BackendApi = {
   // ---- challenge / day snapshots (server-owned) ----
   createChallenge: async (baseTier: Tier, startDate: string, timezone: string) =>
-    (await sb().rpc('create_challenge', {
-      p_base_tier: baseTier,
-      p_start_date: startDate,
-      p_timezone: timezone,
-    })).data as string,
+    unwrap(
+      await sb().rpc('create_challenge', {
+        p_base_tier: baseTier,
+        p_start_date: startDate,
+        p_timezone: timezone,
+      }),
+      'create challenge',
+    ) as string,
 
+  /**
+   * Freezes (or returns) the server's snapshot for the server's current day.
+   * Raises `no challenge for user` when there is no challenge row yet — that
+   * now reaches the caller instead of collapsing into `null`.
+   */
   getOrFreezeToday: async () =>
-    (await sb().rpc('get_or_freeze_today')).data as DaySnapshotRow | null,
+    unwrap(await sb().rpc('get_or_freeze_today'), 'freeze today') as
+      | DaySnapshotRow
+      | null,
 
   completeTask: (taskKey: TaskKey, durationSeconds?: number) =>
     sb().rpc('complete_task', {
@@ -90,11 +120,14 @@ export const BackendApi = {
     challengeId: string,
     day: number,
   ): Promise<Partial<Record<TaskKey, string>>> => {
-    const { data } = await sb()
-      .from('task_completions')
-      .select('task_key, completed_at')
-      .eq('challenge_id', challengeId)
-      .eq('day', day);
+    const data = unwrap(
+      await sb()
+        .from('task_completions')
+        .select('task_key, completed_at')
+        .eq('challenge_id', challengeId)
+        .eq('day', day),
+      'load completions',
+    );
     const out: Partial<Record<TaskKey, string>> = {};
     for (const row of data ?? []) {
       out[row.task_key as TaskKey] = new Date(row.completed_at).toLocaleTimeString(
@@ -114,32 +147,42 @@ export const BackendApi = {
     challengeId: string,
     currentDay: number,
   ): Promise<ChallengeConfig> => {
-    const [challenge, customs, overrides, tiers] = await Promise.all([
-      sb().from('challenges').select('base_tier, flame').eq('id', challengeId).single(),
-      sb().from('custom_tasks').select('*').eq('challenge_id', challengeId),
-      sb().from('target_overrides').select('*').eq('challenge_id', challengeId),
-      sb()
-        .from('tier_history')
-        .select('tier, from_day')
-        .eq('challenge_id', challengeId)
-        .order('from_day', { ascending: false }),
-    ]);
+    const [challengeResult, customsResult, overridesResult, tiersResult] =
+      await Promise.all([
+        sb()
+          .from('challenges')
+          .select('base_tier, flame')
+          .eq('id', challengeId)
+          .single(),
+        sb().from('custom_tasks').select('*').eq('challenge_id', challengeId),
+        sb().from('target_overrides').select('*').eq('challenge_id', challengeId),
+        sb()
+          .from('tier_history')
+          .select('tier, from_day')
+          .eq('challenge_id', challengeId)
+          .order('from_day', { ascending: false }),
+      ]);
+
+    const challenge = unwrap(challengeResult, 'load challenge');
+    const customs = unwrap(customsResult, 'load custom tasks');
+    const overrides = unwrap(overridesResult, 'load target overrides');
+    const tiers = unwrap(tiersResult, 'load tier history');
 
     const targetOverrides: Partial<Record<TaskKey, number>> = {};
-    for (const row of overrides.data ?? []) {
+    for (const row of overrides ?? []) {
       targetOverrides[row.task_key as TaskKey] = row.value;
     }
 
     // tier_history keys the effective day as from_day; a row in the future is
     // a pending change, the newest past row is what today runs on.
-    const rows = (tiers.data ?? []) as { tier: string; from_day: number }[];
+    const rows = (tiers ?? []) as { tier: string; from_day: number }[];
     const pending = rows.find((t) => t.from_day > currentDay);
     const active = rows.find((t) => t.from_day <= currentDay);
 
     return {
-      tier: (active?.tier ?? challenge.data?.base_tier ?? 'hard') as Tier,
-      flame: challenge.data?.flame ?? 0,
-      customTasks: (customs.data ?? []).map(
+      tier: (active?.tier ?? challenge?.base_tier ?? 'hard') as Tier,
+      flame: challenge?.flame ?? 0,
+      customTasks: (customs ?? []).map(
         (c: {
           id: string;
           name: string;
@@ -202,10 +245,10 @@ export const BackendApi = {
 
   // ---- squad ----
   createSquad: async (name: string) =>
-    (await sb().rpc('create_squad', { p_name: name })).data as string,
+    unwrap(await sb().rpc('create_squad', { p_name: name }), 'create squad') as string,
 
   joinSquad: async (code: string) =>
-    (await sb().rpc('join_squad', { p_code: code })).data as string,
+    unwrap(await sb().rpc('join_squad', { p_code: code }), 'join squad') as string,
 
   leaveSquad: () => sb().rpc('leave_squad'),
 
@@ -216,15 +259,15 @@ export const BackendApi = {
    * can read. Solo users get an empty array — there is no squad row.
    */
   getSquadStatus: async (): Promise<SquadStatusRow[]> => {
-    const [status, squads] = await Promise.all([
+    const [statusResult, squadsResult] = await Promise.all([
       sb().rpc('get_squad_status'),
       sb().from('squads').select('id, name, invite_code').limit(1),
     ]);
-    const rows = (status.data ?? []) as Omit<
+    const rows = (unwrap(statusResult, 'load squad status') ?? []) as Omit<
       SquadStatusRow,
       'squad_id' | 'squad_name' | 'invite_code'
     >[];
-    const squad = squads.data?.[0];
+    const squad = unwrap(squadsResult, 'load squad')?.[0];
     if (!squad || rows.length === 0) return [];
     return rows.map((r) => ({
       ...r,
@@ -245,12 +288,15 @@ export const BackendApi = {
   ) => sb().from('feed_items').insert({ squad_id: squadId, author: authorId, kind, text }),
 
   listFeed: async (squadId: string): Promise<FeedItem[]> => {
-    const { data } = await sb()
-      .from('feed_items')
-      .select('id, author, kind, text, created_at, profiles(name)')
-      .eq('squad_id', squadId)
-      .order('created_at', { ascending: false })
-      .limit(50);
+    const data = unwrap(
+      await sb()
+        .from('feed_items')
+        .select('id, author, kind, text, created_at, profiles(name)')
+        .eq('squad_id', squadId)
+        .order('created_at', { ascending: false })
+        .limit(50),
+      'load squad feed',
+    );
     return (data ?? []).map((row): FeedItem => {
       // PostgREST returns embedded relations as arrays.
       const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
@@ -266,17 +312,20 @@ export const BackendApi = {
 
   // ---- profile ----
   getProfile: async (userId: string) =>
-    (
+    unwrap(
       await sb()
         .from('profiles')
         .select('name, xp, unit_preference')
         .eq('id', userId)
-        .maybeSingle()
-    ).data as { name: string; xp: number; unit_preference: string } | null,
+        .maybeSingle(),
+      'load profile',
+    ) as { name: string; xp: number; unit_preference: string } | null,
 
   getProfilePrivate: async (userId: string) =>
-    (await sb().from('profile_private').select('*').eq('id', userId).maybeSingle())
-      .data as Record<string, unknown> | null,
+    unwrap(
+      await sb().from('profile_private').select('*').eq('id', userId).maybeSingle(),
+      'load private profile',
+    ) as Record<string, unknown> | null,
 
   upsertProfile: (userId: string, name: string) =>
     sb().from('profiles').upsert({ id: userId, name }),
@@ -303,11 +352,14 @@ export const BackendApi = {
     sb().from('journal_entries').insert({ owner: ownerId, day, text }),
 
   listJournal: async (ownerId: string): Promise<JournalEntry[]> => {
-    const { data } = await sb()
-      .from('journal_entries')
-      .select('*')
-      .eq('owner', ownerId)
-      .order('created_at', { ascending: false });
+    const data = unwrap(
+      await sb()
+        .from('journal_entries')
+        .select('*')
+        .eq('owner', ownerId)
+        .order('created_at', { ascending: false }),
+      'load journal',
+    );
     return (data ?? []).map(
       (r: { id: string; day: number; text: string; created_at: string }) => ({
         id: r.id,
@@ -318,19 +370,33 @@ export const BackendApi = {
     );
   },
 
+  /**
+   * Returns the id Postgres assigned. The caller holds an optimistic row
+   * under a client-minted id the database has never seen; without the id
+   * coming back, a later UPDATE keyed on it matches zero rows and returns
+   * NO error — the write is lost in silence.
+   */
   logMeal: (
     ownerId: string,
     day: number,
     text: string,
     nutrition: MealNutrition | null,
-  ) => sb().from('meals').insert({ owner: ownerId, day, text, nutrition }),
+  ) =>
+    sb()
+      .from('meals')
+      .insert({ owner: ownerId, day, text, nutrition })
+      .select('id')
+      .single(),
 
   listMeals: async (ownerId: string): Promise<Meal[]> => {
-    const { data } = await sb()
-      .from('meals')
-      .select('*')
-      .eq('owner', ownerId)
-      .order('created_at', { ascending: false });
+    const data = unwrap(
+      await sb()
+        .from('meals')
+        .select('*')
+        .eq('owner', ownerId)
+        .order('created_at', { ascending: false }),
+      'load meals',
+    );
     return (data ?? []).map(
       (r: {
         id: string;
@@ -353,11 +419,14 @@ export const BackendApi = {
     sb().from('metric_checkins').insert({ owner: ownerId, weight_kg: weightKg, mood }),
 
   listMetricCheckins: async (ownerId: string): Promise<MetricCheckin[]> => {
-    const { data } = await sb()
-      .from('metric_checkins')
-      .select('*')
-      .eq('owner', ownerId)
-      .order('created_at', { ascending: false });
+    const data = unwrap(
+      await sb()
+        .from('metric_checkins')
+        .select('*')
+        .eq('owner', ownerId)
+        .order('created_at', { ascending: false }),
+      'load check-ins',
+    );
     return (data ?? []).map(
       (r: {
         id: string;
@@ -373,11 +442,15 @@ export const BackendApi = {
     );
   },
 
+  /** Returns the assigned id — see logMeal. */
   addMilestone: (ownerId: string, title: string) =>
-    sb().from('milestones').insert({ owner: ownerId, title }),
+    sb().from('milestones').insert({ owner: ownerId, title }).select('id').single(),
 
   listMilestones: async (ownerId: string): Promise<Milestone[]> => {
-    const { data } = await sb().from('milestones').select('*').eq('owner', ownerId);
+    const data = unwrap(
+      await sb().from('milestones').select('*').eq('owner', ownerId),
+      'load milestones',
+    );
     return (data ?? []).map(
       (r: { id: string; title: string; done: boolean; hit_on_day: number | null }) => ({
         id: r.id,
@@ -419,11 +492,14 @@ export const BackendApi = {
     }),
 
   listWorkoutLogs: async (ownerId: string): Promise<WorkoutLog[]> => {
-    const { data } = await sb()
-      .from('workout_logs')
-      .select('*')
-      .eq('owner', ownerId)
-      .order('logged_at', { ascending: false });
+    const data = unwrap(
+      await sb()
+        .from('workout_logs')
+        .select('*')
+        .eq('owner', ownerId)
+        .order('logged_at', { ascending: false }),
+      'load workout logs',
+    );
     return (data ?? []).map(
       (r: {
         id: string;
@@ -467,10 +543,13 @@ export const BackendApi = {
   listBlockedUsers: async (
     blockerId: string,
   ): Promise<{ id: string; name: string }[]> => {
-    const { data } = await sb()
-      .from('blocked_users')
-      .select('blocked, profiles!blocked_users_blocked_fkey(name)')
-      .eq('blocker', blockerId);
+    const data = unwrap(
+      await sb()
+        .from('blocked_users')
+        .select('blocked, profiles!blocked_users_blocked_fkey(name)')
+        .eq('blocker', blockerId),
+      'load blocked users',
+    );
     return (data ?? []).map((r) => {
       const profile = Array.isArray(r.profiles) ? r.profiles[0] : r.profiles;
       return { id: r.blocked as string, name: profile?.name ?? 'Blocked user' };

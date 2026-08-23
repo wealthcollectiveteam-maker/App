@@ -48,12 +48,37 @@ export class MockDataService implements IDataService {
   private feeling: { feeling: string | null; text: string } | null = null;
   private blocked: string[] = [];
   private reports: { feedItemId: string; reason: ReportReason }[] = [];
+  private pings: { toName: string; message: string; at: number }[] = [];
 
   loadScenario(scenario: Scenario): ScenarioState {
     this.state = buildScenario(scenario);
     this.blocked = [];
     this.initTaskConfig(this.state.tier, this.state.day);
     return this.state;
+  }
+
+  // ---- Completion / seal / ping ----
+  // The mock has no server to validate against, so it simply mirrors what
+  // the store already shows. The point of these living on the interface at
+  // all is that the Supabase implementation routes them through the RPCs
+  // that DO validate.
+
+  completeTask(taskKey: TaskKey, at: string): void {
+    this.state.tasksDone = { ...this.state.tasksDone, [taskKey]: at };
+  }
+
+  uncompleteTask(taskKey: TaskKey): void {
+    const next = { ...this.state.tasksDone };
+    delete next[taskKey];
+    this.state.tasksDone = next;
+  }
+
+  sealDay(): void {
+    this.state.dayComplete = true;
+  }
+
+  sendPing(toName: string, message: string): void {
+    this.pings.push({ toName, message, at: Date.now() });
   }
 
   saveJournalEntry(day: number, text: string): JournalEntry {
@@ -203,10 +228,17 @@ export class MockDataService implements IDataService {
     return this.blocked;
   }
 
+  updateProfile(_name: string, why: string): void {
+    // No profiles table to write to; the mock's own copy of "why" is all
+    // there is, and the store holds the name.
+    this.state.why = why;
+  }
+
   deleteAccount(): void {
     this.state = buildScenario('day1');
     this.blocked = [];
     this.reports = [];
+    this.pings = [];
     this.feeling = null;
     this.timedSessions = [];
     this.metricCheckins = [];

@@ -38,6 +38,26 @@ import type { FoodDetail, FoodSearchResult } from '@/lib/fdc';
  */
 export interface IDataService {
   loadScenario(scenario: Scenario): ScenarioState;
+  /**
+   * Task completion. The server validates the key against ITS frozen
+   * snapshot for ITS current day, so a modified client cannot complete a
+   * task today does not require. `at` is the display clock label the mirror
+   * carries until the next hydrate — the authoritative timestamp is the
+   * server's.
+   */
+  completeTask(taskKey: TaskKey, at: string): void;
+  uncompleteTask(taskKey: TaskKey): void;
+  /**
+   * Seals the server's current day. The server re-counts completions against
+   * its own snapshot and recomputes flame — a client cannot seal an
+   * incomplete day.
+   */
+  sealDay(): void;
+  /**
+   * Ping a squadmate by display name. The daily quota is enforced by the
+   * server; the client's own count is a courtesy pre-check, never authority.
+   */
+  sendPing(toName: string, message: string): void;
   saveJournalEntry(day: number, text: string): JournalEntry;
   getJournal(): JournalEntry[];
   logMeal(text: string, at?: number): Meal;
@@ -47,6 +67,12 @@ export interface IDataService {
   toggleMilestone(id: string, day: number): Milestone[];
   getFinalResults(): FinalResults;
   saveCompletionFeeling(feeling: string | null, text: string): void;
+  /**
+   * Display name + "why I started". The name is the squad-visible surface
+   * (`profiles`); "why" is owner-only. A name kept in the store alone is a
+   * name nobody else can see.
+   */
+  updateProfile(name: string, why: string): void;
   // Squad membership (solo mode is squad === null)
   createSquad(name: string): Squad;
   joinSquad(code: string): Squad;
@@ -127,4 +153,65 @@ export class BackendError extends Error {
     super(message);
     this.name = 'BackendError';
   }
+}
+
+/**
+ * Postgres / PostgREST codes worth classifying precisely. Everything else
+ * falls through to the message heuristics in toBackendError().
+ */
+const ERROR_CODES: Record<string, BackendErrorKind> = {
+  '42501': 'auth', // insufficient_privilege — a missing GRANT or an RLS refusal
+  '28000': 'auth', // invalid_authorization_specification
+  PGRST301: 'auth', // JWT expired / not verifiable
+  '23505': 'conflict', // unique_violation
+  '23503': 'conflict', // foreign_key_violation
+  '23514': 'conflict', // check_violation
+};
+
+/** Readable text out of any of the shapes an error reaches us in. */
+function messageOf(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object') {
+    // Supabase returns PostgrestError as a PLAIN OBJECT, not an Error, so
+    // String(error) would read "[object Object]" and lose the whole reason.
+    const e = error as { message?: unknown; details?: unknown; hint?: unknown };
+    const parts = [e.message, e.details, e.hint].filter(
+      (part): part is string => typeof part === 'string' && part.length > 0,
+    );
+    if (parts.length) return parts.join(' — ');
+  }
+  return String(error ?? 'unknown error');
+}
+
+/**
+ * Normalise anything thrown or returned as `.error` into a typed
+ * BackendError. Shared by the read layer (api.ts) and the write layer
+ * (SupabaseDataService) so a failure is described the same way whichever
+ * side it came from.
+ */
+export function toBackendError(error: unknown, context?: string): BackendError {
+  // Already typed (e.g. requireUser()) — never re-classify and lose the kind.
+  if (error instanceof BackendError) return error;
+
+  const detail = messageOf(error);
+  const message = context ? `${context}: ${detail}` : detail;
+  const code =
+    error &&
+    typeof error === 'object' &&
+    typeof (error as { code?: unknown }).code === 'string'
+      ? (error as { code: string }).code
+      : null;
+  const byCode = code ? ERROR_CODES[code] : undefined;
+  if (byCode) return new BackendError(byCode, message);
+
+  if (/jwt|token|not authenticated|not signed in|session/i.test(detail)) {
+    return new BackendError('auth', message);
+  }
+  if (/network|fetch|timeout|offline/i.test(detail)) {
+    return new BackendError('network', message);
+  }
+  if (/duplicate|conflict|immutable|already/i.test(detail)) {
+    return new BackendError('conflict', message);
+  }
+  return new BackendError('unknown', message);
 }

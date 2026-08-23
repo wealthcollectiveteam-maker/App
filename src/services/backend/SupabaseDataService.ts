@@ -31,8 +31,13 @@ import type {
 } from '@/data/types';
 import type { FoodDetail, FoodSearchResult } from '@/lib/fdc';
 import { api, type SquadStatusRow } from '@/services/backend/api';
+import { AuthService } from '@/services/backend/AuthService';
 import { getSupabase } from '@/services/backend/supabaseClient';
-import { BackendError, type IDataService } from '@/services/contract';
+import {
+  BackendError,
+  toBackendError,
+  type IDataService,
+} from '@/services/contract';
 import { NutritionService } from '@/services/NutritionService';
 import {
   composeTaskSet,
@@ -56,19 +61,28 @@ const initials = (name: string) =>
     .slice(0, 2)
     .toUpperCase() || 'YO';
 
-function classify(error: unknown): BackendError {
-  const message =
-    error instanceof Error ? error.message : String(error ?? 'unknown error');
-  if (/jwt|token|not authenticated|session/i.test(message)) {
-    return new BackendError('auth', message);
-  }
-  if (/network|fetch|timeout|offline/i.test(message)) {
-    return new BackendError('network', message);
-  }
-  if (/duplicate|conflict|immutable|already/i.test(message)) {
-    return new BackendError('conflict', message);
-  }
-  return new BackendError('unknown', message);
+/** A mirror holding nobody: the pre-hydrate and post-sign-out state. */
+function emptyState(): ScenarioState {
+  return {
+    tier: 'hard',
+    day: 1,
+    flame: 0,
+    bestFlame: 0,
+    perfectDays: 0,
+    xp: 0,
+    missedDay: false,
+    dayComplete: false,
+    tasksDone: {},
+    proofs: {},
+    why: '',
+    journal: [],
+    meals: [],
+    milestones: [],
+    squad: null,
+    feed: [],
+    leaderboardWeek: [],
+    leaderboardAllTime: [],
+  };
 }
 
 /**
@@ -99,26 +113,7 @@ function classify(error: unknown): BackendError {
 export class SupabaseDataService implements IDataService {
   private userId: string | null = null;
   private challengeId: string | null = null;
-  private state: ScenarioState = {
-    tier: 'hard',
-    day: 1,
-    flame: 0,
-    bestFlame: 0,
-    perfectDays: 0,
-    xp: 0,
-    missedDay: false,
-    dayComplete: false,
-    tasksDone: {},
-    proofs: {},
-    why: '',
-    journal: [],
-    meals: [],
-    milestones: [],
-    squad: null,
-    feed: [],
-    leaderboardWeek: [],
-    leaderboardAllTime: [],
-  };
+  private state: ScenarioState = emptyState();
 
   private metricCheckins: MetricCheckin[] = [];
   private workoutLogs: WorkoutLog[] = [];
@@ -135,16 +130,33 @@ export class SupabaseDataService implements IDataService {
   onError: ((error: BackendError) => void) | null = null;
 
   private fail(error: unknown): void {
-    const backendError = classify(error);
+    const backendError = toBackendError(error);
     this.onError?.(backendError);
   }
 
-  /** Fire a write, roll the mirror back if the server rejects it. */
+  /**
+   * Fire a write, roll the mirror back if the server rejects it.
+   *
+   * `run()` is invoked inside the try — it can throw SYNCHRONOUSLY (
+   * requireUser() and requireChallenge() both do, and sb() throws when the
+   * backend is unconfigured). Before, that exception escaped past the
+   * promise chain entirely: no rollback, no fail(), and an uncaught throw in
+   * whatever UI handler called the setter. Every failure now takes the same
+   * road out — rollback, then a typed BackendError to onError.
+   */
   private write(
     run: () => PromiseLike<{ error: unknown } | void>,
     rollback: () => void,
   ): void {
-    Promise.resolve(run())
+    let pending: PromiseLike<{ error: unknown } | void> | void;
+    try {
+      pending = run();
+    } catch (error) {
+      rollback();
+      this.fail(error);
+      return;
+    }
+    Promise.resolve(pending)
       .then((result) => {
         const error = result && 'error' in result ? result.error : null;
         if (error) {
@@ -156,6 +168,83 @@ export class SupabaseDataService implements IDataService {
         rollback();
         this.fail(error);
       });
+  }
+
+  /**
+   * Client-minted id -> the id the server actually assigned.
+   *
+   * An optimistic row enters the mirror under a local id (`ml-…`, `m-…`,
+   * `ct-…`) that the database has never seen. Sending that id back in an
+   * UPDATE matches zero rows and — the dangerous part — returns NO error, so
+   * nothing rolls back and the UI keeps showing a change the server never
+   * received. Quick Add hit this every time: it logs a meal and attaches
+   * nutrition in the same tick, so the nutrition went to an id that did not
+   * exist yet.
+   *
+   * Entries are never removed: the store copies mirror arrays by value, so a
+   * screen can still be holding the local id long after the mirror row was
+   * re-keyed. The stored promise never rejects — it resolves to null on
+   * failure — so an unawaited entry can't raise an unhandled rejection.
+   */
+  private serverIds = new Map<string, Promise<string | null>>();
+
+  /** The id to send the server, waiting if the insert is still in flight. */
+  private async resolveId(id: string): Promise<string> {
+    const pending = this.serverIds.get(id);
+    if (!pending) return id;
+    return (await pending) ?? id;
+  }
+
+  /**
+   * An optimistic INSERT whose server id is needed later. Same rollback
+   * contract as write(), plus: the local id is registered synchronously
+   * BEFORE returning, so a follow-up write issued in the same tick already
+   * finds the in-flight resolution and queues behind it.
+   */
+  private insertRow(
+    localIdValue: string,
+    run: () => PromiseLike<{ data: unknown; error: unknown }>,
+    adopt: (serverId: string) => void,
+    rollback: () => void,
+  ): void {
+    let pending: PromiseLike<{ data: unknown; error: unknown }>;
+    try {
+      pending = run();
+    } catch (error) {
+      rollback();
+      this.fail(error);
+      return;
+    }
+    const resolution = Promise.resolve(pending).then(
+      ({ data, error }) => {
+        if (error) {
+          rollback();
+          this.fail(error);
+          return null;
+        }
+        // RPCs return the uuid directly; table inserts return { id }.
+        const serverId =
+          typeof data === 'string'
+            ? data
+            : ((data as { id?: string } | null)?.id ?? null);
+        if (!serverId) {
+          // The row WAS written — we just cannot address it until the next
+          // hydrate. Rolling back here would delete a row that exists.
+          this.fail(
+            new BackendError('unknown', 'server accepted the row but returned no id'),
+          );
+          return null;
+        }
+        adopt(serverId);
+        return serverId;
+      },
+      (error: unknown) => {
+        rollback();
+        this.fail(error);
+        return null;
+      },
+    );
+    this.serverIds.set(localIdValue, resolution);
   }
 
   // ===================== session bootstrap (not IDataService) =============
@@ -225,6 +314,33 @@ export class SupabaseDataService implements IDataService {
     }
 
     this.savedMeals = await this.readSavedMeals();
+  }
+
+  /**
+   * Sign-out: forget the user completely.
+   *
+   * The mirror answers every read in the app, so leaving it populated after
+   * a sign-out would show the previous account's day, streak, journal and
+   * meals to whoever signs in next on this device. The two AsyncStorage keys
+   * this service owns hold the same kind of data (a running timer, saved
+   * meals) and go with it.
+   */
+  reset(): void {
+    this.userId = null;
+    this.challengeId = null;
+    this.squadId = null;
+    this.state = emptyState();
+    this.metricCheckins = [];
+    this.workoutLogs = [];
+    this.savedMeals = [];
+    this.blocked = [];
+    this.customTasks = [];
+    this.daySnapshots = {};
+    this.targetOverrides = {};
+    this.overridesAtDayStart = {};
+    this.pendingTier = null;
+    this.serverIds.clear();
+    AsyncStorage.multiRemove([TIMER_STORAGE_KEY, SAVED_MEALS_KEY]).catch(() => {});
   }
 
   /** Realtime + refresh entry point: recompute squad-derived view state. */
@@ -312,6 +428,66 @@ export class SupabaseDataService implements IDataService {
     // Scenario switching is a mock-only dev affordance. On the real backend
     // the signed-in user's hydrated state IS the scenario.
     return this.state;
+  }
+
+  // ===================== completion / seal / ping ========================
+  // All four go through the same optimistic path as every other write:
+  // mutate the mirror, fire the RPC, roll back if the server refuses. The
+  // SERVER decides what "today" is and which keys today's frozen snapshot
+  // allows — complete_task() rejects a key that isn't in it, and seal_day()
+  // re-counts completions itself rather than trusting a client's tally.
+
+  completeTask(taskKey: TaskKey, at: string): void {
+    const previous = { ...this.state.tasksDone };
+    this.state.tasksDone = { ...previous, [taskKey]: at };
+    this.write(
+      () => api.completeTask(taskKey),
+      () => {
+        this.state.tasksDone = previous;
+      },
+    );
+  }
+
+  uncompleteTask(taskKey: TaskKey): void {
+    const previous = { ...this.state.tasksDone };
+    const next = { ...previous };
+    delete next[taskKey];
+    this.state.tasksDone = next;
+    this.write(
+      () => api.uncompleteTask(taskKey),
+      () => {
+        this.state.tasksDone = previous;
+      },
+    );
+  }
+
+  sealDay(): void {
+    const previous = this.state.dayComplete;
+    this.state.dayComplete = true;
+    this.write(
+      () => api.sealDay(),
+      () => {
+        this.state.dayComplete = previous;
+      },
+    );
+  }
+
+  /**
+   * The UI pings by display name; `pings` keys by user id, so the squad
+   * roster resolves one to the other — the same bridge blockUser() uses.
+   * The daily quota is the server's to enforce (send_ping raises when it is
+   * spent); a rejection surfaces through onError like any other write.
+   */
+  sendPing(toName: string, message: string): void {
+    const id = this.resolveMemberId(toName);
+    if (!id) {
+      this.fail(new BackendError('unknown', `No squadmate named ${toName}`));
+      return;
+    }
+    this.write(
+      () => api.sendPing(id, message),
+      () => {},
+    );
   }
 
   getJournal(): JournalEntry[] {
@@ -426,9 +602,15 @@ export class SupabaseDataService implements IDataService {
     };
     const previous = this.state.meals;
     this.state.meals = [meal, ...previous];
-    this.write(
+    this.insertRow(
+      meal.id,
       () =>
         api.logMeal(this.requireUser(), this.state.day, text, meal.nutrition ?? null),
+      (serverId) => {
+        this.state.meals = this.state.meals.map((m) =>
+          m.id === meal.id ? { ...m, id: serverId } : m,
+        );
+      },
       () => {
         this.state.meals = previous;
       },
@@ -445,7 +627,7 @@ export class SupabaseDataService implements IDataService {
     // report: a meal's components are always read and written with the meal,
     // never queried independently, so they stay one owner-only column.
     this.write(
-      () => api.setMealNutrition(mealId, nutrition),
+      () => this.resolveId(mealId).then((id) => api.setMealNutrition(id, nutrition)),
       () => {
         this.state.meals = previous;
       },
@@ -459,7 +641,7 @@ export class SupabaseDataService implements IDataService {
       m.id === mealId ? { ...m, nutrition: null } : m,
     );
     this.write(
-      () => api.setMealNutrition(mealId, null),
+      () => this.resolveId(mealId).then((id) => api.setMealNutrition(id, null)),
       () => {
         this.state.meals = previous;
       },
@@ -471,8 +653,14 @@ export class SupabaseDataService implements IDataService {
     const milestone: Milestone = { id: localId('m'), title, done: false };
     const previous = this.state.milestones;
     this.state.milestones = [...previous, milestone];
-    this.write(
+    this.insertRow(
+      milestone.id,
       () => api.addMilestone(this.requireUser(), title),
+      (serverId) => {
+        this.state.milestones = this.state.milestones.map((m) =>
+          m.id === milestone.id ? { ...m, id: serverId } : m,
+        );
+      },
       () => {
         this.state.milestones = previous;
       },
@@ -489,7 +677,10 @@ export class SupabaseDataService implements IDataService {
         : m,
     );
     this.write(
-      () => api.setMilestoneDone(id, !target?.done, day),
+      () =>
+        this.resolveId(id).then((serverId) =>
+          api.setMilestoneDone(serverId, !target?.done, day),
+        ),
       () => {
         this.state.milestones = previous;
       },
@@ -543,6 +734,27 @@ export class SupabaseDataService implements IDataService {
     this.write(
       () => api.saveCompletionFeeling(this.requireUser(), feeling, text),
       () => {},
+    );
+  }
+
+  /**
+   * Display name + "why I started". The name lives on `profiles`, which is
+   * the squad-visible surface — a name changed only in the store is a name
+   * no squadmate ever sees. "Why" stays on profile_private (owner-only RLS).
+   */
+  updateProfile(name: string, why: string): void {
+    const previous = this.state.why;
+    this.state.why = why;
+    const trimmed = name.trim() || 'You';
+    this.write(
+      () => api.upsertProfile(this.requireUser(), trimmed),
+      () => {},
+    );
+    this.write(
+      () => api.setWhy(this.requireUser(), why),
+      () => {
+        this.state.why = previous;
+      },
     );
   }
 
@@ -685,8 +897,27 @@ export class SupabaseDataService implements IDataService {
     AsyncStorage.multiRemove([TIMER_STORAGE_KEY, SAVED_MEALS_KEY]).catch(() => {});
     NutritionService.clearCache().catch(() => {});
     if (!userId) return;
-    // Cascades from auth.users; the RPC also signs the session out.
-    Promise.resolve(api.deleteAccount()).catch((error: unknown) => this.fail(error));
+    // Cascades from challenges/auth.users clear the rest.
+    // Same sync-throw hazard as write(): api.deleteAccount() is not an async
+    // function, so sb() throwing would escape a bare .catch() entirely.
+    //
+    // D5: delete_account() deletes ROWS — it cannot delete the auth.users
+    // record (that needs the service role), and it does not end the session.
+    // Without this sign-out the user is left holding a valid JWT for a
+    // profile that no longer exists: every subsequent RPC either fails or,
+    // worse, silently recreates state for a deleted account. Sign out only
+    // AFTER the RPC returns — the RPC needs that JWT to run.
+    this.write(
+      () =>
+        Promise.resolve(api.deleteAccount()).then(async (result) => {
+          if (!result.error) {
+            this.reset();
+            await AuthService.signOut();
+          }
+          return result;
+        }),
+      () => {},
+    );
   }
 
   // ===================== timer (device-local) ============================
@@ -730,8 +961,22 @@ export class SupabaseDataService implements IDataService {
    */
   async completeTimedTask(taskKey: TaskKey, elapsedSeconds: number): Promise<void> {
     await AsyncStorage.removeItem(TIMER_STORAGE_KEY);
+    const previous = { ...this.state.tasksDone };
+    // Same clock format hydrate() reads back out of task_completions.
+    const at = new Date().toLocaleTimeString(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    this.state.tasksDone = { ...previous, [taskKey]: at };
     const { error } = await api.completeTask(taskKey, Math.round(elapsedSeconds));
-    if (error) throw classify(error);
+    if (error) {
+      this.state.tasksDone = previous;
+      // The timer's caller swallows this rejection, so without fail() a
+      // refused completion would be silent on the one path that carries the
+      // duration.
+      this.fail(error);
+      throw toBackendError(error);
+    }
   }
 
   // ===================== nutrition (external API) ========================
@@ -829,8 +1074,17 @@ export class SupabaseDataService implements IDataService {
     };
     const previous = this.customTasks;
     this.customTasks = [...previous, task];
-    this.write(
+    // add_custom_task() returns the uuid it assigned; without adopting it,
+    // the very next edit or removal of this task addressed an id the server
+    // does not have and came back "custom task not found for this user".
+    this.insertRow(
+      task.id,
       () => api.addCustomTask(input),
+      (serverId) => {
+        this.customTasks = this.customTasks.map((c) =>
+          c.id === task.id ? { ...c, id: serverId } : c,
+        );
+      },
       () => {
         this.customTasks = previous;
       },
@@ -849,12 +1103,14 @@ export class SupabaseDataService implements IDataService {
     const updated = this.customTasks.find((c) => c.id === id);
     this.write(
       () =>
-        api.updateCustomTask(id, {
-          name: updated?.name ?? '',
-          sub: updated?.sub ?? '',
-          proof: !!updated?.proof,
-          timerMinutes: updated?.timerMinutes,
-        }),
+        this.resolveId(id).then((serverId) =>
+          api.updateCustomTask(serverId, {
+            name: updated?.name ?? '',
+            sub: updated?.sub ?? '',
+            proof: !!updated?.proof,
+            timerMinutes: updated?.timerMinutes,
+          }),
+        ),
       () => {
         this.customTasks = previous;
       },
@@ -871,7 +1127,7 @@ export class SupabaseDataService implements IDataService {
         ? previous.filter((c) => c.id !== id)
         : previous.map((c) => (c.id === id ? { ...c, removedFromDay: day + 1 } : c));
     this.write(
-      () => api.removeCustomTask(id),
+      () => this.resolveId(id).then((serverId) => api.removeCustomTask(serverId)),
       () => {
         this.customTasks = previous;
       },
@@ -932,7 +1188,10 @@ export class SupabaseDataService implements IDataService {
     };
     // Undo is several server operations; any failure restores everything.
     this.write(
-      () => api.undoPendingChanges(reinstated.map((c) => c.id), this.overridesAtDayStart),
+      () =>
+        Promise.all(reinstated.map((c) => this.resolveId(c.id))).then((ids) =>
+          api.undoPendingChanges(ids, this.overridesAtDayStart),
+        ),
       rollback,
     );
   }
@@ -1001,28 +1260,4 @@ export class SupabaseDataService implements IDataService {
     return this.state;
   }
 
-  /** Optimistic task toggle used by the store's completeTask path. */
-  completeTaskOptimistic(taskKey: TaskKey, at: string): void {
-    const previous = { ...this.state.tasksDone };
-    this.state.tasksDone = { ...previous, [taskKey]: at };
-    this.write(
-      () => api.completeTask(taskKey),
-      () => {
-        this.state.tasksDone = previous;
-      },
-    );
-  }
-
-  uncompleteTaskOptimistic(taskKey: TaskKey): void {
-    const previous = { ...this.state.tasksDone };
-    const next = { ...previous };
-    delete next[taskKey];
-    this.state.tasksDone = next;
-    this.write(
-      () => api.uncompleteTask(taskKey),
-      () => {
-        this.state.tasksDone = previous;
-      },
-    );
-  }
 }

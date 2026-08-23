@@ -1,0 +1,50 @@
+Do not re-audit. You have the audit in context. Fix the write path only — no auth
+work in this session, that's next.
+
+Work in this order, typecheck after each, and tell me if any fix reveals something
+the audit missed.
+
+1. D3 — task completion never reaches the backend. This is the whole app.
+   useAppStore.completeTask / uncompleteTask (useAppStore.ts:344-370) mutate local
+   state only. Bridge them to the existing complete_task / uncomplete_task RPCs
+   through IDataService. Add the completion method to the interface — it has none.
+   Do the same for sealDay (api.sealDay unused) and sendPing (api.sendPing unused).
+   Route through the existing optimistic path with rollback, not a parallel one.
+
+2. D1 — write() lets a synchronous throw escape the rollback path.
+   SupabaseDataService.ts:143 evaluates run() before Promise.resolve, so
+   requireUser() / requireChallenge() throw synchronously out of write() with no
+   rollback and no fail(). Wrap so every throw — sync or async — goes through the
+   same rollback and surfaces as a typed BackendError.
+
+3. D7 — api.ts swallows every read error. Every read helper destructures .data and
+   drops .error. A failed get_or_freeze_today returns null and hydrate silently
+   degrades to day 1 with an empty task list. Propagate read errors as BackendError.
+   Fix this early — it's what makes everything else diagnosable.
+
+4. Wire the onError hook. BackendError is thrown but onError is never assigned, so a
+   rejected optimistic write rolls the mirror back silently and the UI keeps showing
+   the pre-rollback value with no toast. Assign it and surface failures in the
+   existing error UI.
+
+5. D2 — optimistic local ids are sent to the server. localId() mints ml-…, m-…, ct-…
+   but the server inserts a uuid and nothing reconciles. attachNutrition matches 0
+   rows and returns no error, so Quick-Add nutrition is silently lost server-side
+   while the UI shows it attached. toggleMilestone is the same silent no-op.
+   Reconcile server ids back into the mirror on insert. Silent data loss is worse
+   than a visible failure.
+
+6. Silent mock fallback — treat as launch-critical. Missing credentials currently
+   fall back to MockDataService with only a console.warn. A TestFlight build with a
+   bad .env looks completely normal and quietly runs on fake data. Make it visible:
+   isLiveBackend is exported but nothing consumes it — surface a persistent banner
+   when the app is running on mock. Also fix .env.example, which ships
+   EXPO_PUBLIC_USE_MOCK=true and contradicts its own comment.
+
+7. D8 — one-line fix. 0002's re-grant list predates workout_logs, so re-running 0002
+   after 0004 strips it. Add workout_logs to 0002's allow-list.
+
+Do not touch: auth (next session), D4, D5, D6, D9, the UI redesign.
+
+After: npx tsc --noEmit, npx expo lint, then a short report — what changed, files
+touched, and anything you could not verify without a device or live project.

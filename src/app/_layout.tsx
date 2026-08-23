@@ -4,36 +4,101 @@ import {
   Inter_600SemiBold,
   useFonts,
 } from '@expo-google-fonts/inter';
-import { Stack, useRouter } from 'expo-router';
+import * as Linking from 'expo-linking';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { AppState, View } from 'react-native';
+import { AppState, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { MockModeBanner } from '@/components/MockModeBanner';
+import {
+  SessionErrorScreen,
+  SessionLoadingScreen,
+} from '@/components/SessionGate';
 import { TimerConflictSheet } from '@/components/TimerConflictSheet';
 import { ToastHost } from '@/components/ToastHost';
+import { completeAuthFromUrl } from '@/services/backend/authLink';
 import {
   handleColdLaunchNotification,
   initNotificationHandling,
 } from '@/services/timerEffects';
 import { useAppStore } from '@/store/useAppStore';
+import { useSessionStore } from '@/store/useSessionStore';
 import { remainingSeconds, useTimerStore } from '@/store/useTimerStore';
+import { toast } from '@/store/useToastStore';
 import { colors } from '@/theme/tokens';
 
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const router = useRouter();
+  const segments = useSegments();
+  const route = segments.join('/');
   const [loaded] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
     Inter_600SemiBold,
   });
 
+  const status = useSessionStore((s) => s.status);
+  const booted = useSessionStore((s) => s.booted);
+
+  const inAuthRoute = segments[0] === 'auth';
+  const needsAuth = status === 'signedOut' || status === 'setup';
+  // "Settled" = the route on screen matches what the session allows. Until
+  // it does, the gate overlay covers the navigator, so nobody ever sees a
+  // frame of empty tabs before the redirect lands.
+  const settled = status === 'error' || (needsAuth ? inAuthRoute : !inAuthRoute);
+  // Anything but a decided session, on the route that session allows.
+  const gating = !booted || status === 'loading' || !settled;
+
+  // Session gate. Resolving a stored session is the FIRST thing that
+  // happens: hydrate(userId) has to run before the tabs read the mirror,
+  // otherwise every screen renders an empty day 1 for a real account.
   useEffect(() => {
-    if (loaded) SplashScreen.hideAsync();
+    useSessionStore.getState().bootstrap().catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!loaded || !booted) return; // never navigate before the Stack mounts
+    if (needsAuth && !inAuthRoute) router.replace('/auth');
+    else if (status === 'signedIn' && inAuthRoute) router.replace('/');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, booted, status, needsAuth, inAuthRoute, route]);
+
+  // The splash goes as soon as the fonts are there. It must NOT wait on the
+  // session: a request that hangs rather than fails would hold a frozen
+  // splash screen with nothing to look at. The gate overlay covers the rest.
+  useEffect(() => {
+    if (loaded) SplashScreen.hideAsync().catch(() => {});
   }, [loaded]);
+
+  // The emailed sign-in link, cold launch and warm. Every other deep link
+  // (a timer notification, an invite) returns null here and passes through.
+  useEffect(() => {
+    let cancelled = false;
+    const handle = (url: string | null) => {
+      if (!url) return;
+      completeAuthFromUrl(url)
+        .then((result) => {
+          if (cancelled || !result) return;
+          if (!result.ok || !result.userId) {
+            toast(result.error ?? 'That sign-in link has expired.');
+            return;
+          }
+          return useSessionStore.getState().completeSignIn(result.userId);
+        })
+        .catch(() => {});
+    };
+    Linking.getInitialURL().then(handle).catch(() => {});
+    const sub = Linking.addEventListener('url', ({ url }) => handle(url));
+    return () => {
+      cancelled = true;
+      sub.remove();
+    };
+  }, []);
 
   // Notification handler + tap-to-deep-link, registered ONCE at app root
   // (not lazily on first timer use).
@@ -81,6 +146,9 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <View style={{ flex: 1, backgroundColor: colors.bg }}>
         <StatusBar style="light" />
+        {/* In flow, above the navigator: a build silently running on mock
+            data is indistinguishable from a working one until data is lost. */}
+        <MockModeBanner />
         <Stack
           screenOptions={{
             headerShown: false,
@@ -88,6 +156,7 @@ export default function RootLayout() {
           }}
         >
           <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="auth" options={{ gestureEnabled: false }} />
           <Stack.Screen
             name="celebration"
             options={{ presentation: 'transparentModal', animation: 'fade' }}
@@ -101,6 +170,13 @@ export default function RootLayout() {
             options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
           />
         </Stack>
+        {/* Over the navigator, never instead of it: unmounting the Stack
+            would leave expo-router with nothing to navigate. */}
+        {(gating || status === 'error') && (
+          <View style={StyleSheet.absoluteFill}>
+            {status === 'error' ? <SessionErrorScreen /> : <SessionLoadingScreen />}
+          </View>
+        )}
         <ToastHost />
         <TimerConflictSheet />
       </View>

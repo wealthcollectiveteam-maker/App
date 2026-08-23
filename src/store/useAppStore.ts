@@ -153,7 +153,13 @@ interface AppState extends ScenarioState {
   loadScenario: (scenario: Scenario) => void;
   setTier: (tier: Tier) => void;
   applyMissedDay: () => void;
-  completeTask: (key: TaskKey) => void;
+  /**
+   * `sync: false` completes locally only, for the one caller that owns the
+   * backend write itself — the timer, whose completeTimedTask() carries the
+   * elapsed duration. complete_task() is `on conflict do nothing`, so a
+   * second, duration-less call racing it would silently drop the duration.
+   */
+  completeTask: (key: TaskKey, options?: { sync?: boolean }) => void;
   uncompleteTask: (key: TaskKey) => void;
   deferTask: (key: TaskKey) => void;
   attachProof: (key: TaskKey) => void;
@@ -190,6 +196,16 @@ interface AppState extends ScenarioState {
   setUnitPreference: (pref: UnitPreference) => void;
   /** Load persisted preference + check-ins (call once at app start). */
   hydratePersisted: () => Promise<void>;
+  /**
+   * Adopt the backend mirror after a sign-in or a cold launch that restored
+   * a session. DataService has already hydrated; this copies that state in.
+   */
+  adoptSession: (profile: { name?: string | null }) => void;
+  /**
+   * Back to signed-out defaults. Local only — the caller owns ending the
+   * Supabase session and clearing the service mirror first.
+   */
+  resetSession: () => void;
   /** Returns false when the 4-custom-task cap is hit. */
   addCustomTask: (input: {
     name: string;
@@ -341,10 +357,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  completeTask: (key) => {
+  completeTask: (key, options) => {
     const { tasksDone, feed, todayTasks } = get();
     if (tasksDone[key]) return;
     const label = todayTasks.find((t) => t.key === key)?.label ?? key;
+    const at = formatClock();
     const item: FeedItem = {
       id: `f-local-${++feedId}`,
       kind: 'complete',
@@ -353,11 +370,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       timestamp: Date.now(),
     };
     set((s) => ({
-      tasksDone: { ...s.tasksDone, [key]: formatClock() },
+      tasksDone: { ...s.tasksDone, [key]: at },
       deferred: s.deferred.filter((k) => k !== key),
       xp: s.xp + XP.task,
       feed: [item, ...feed],
     }));
+    // The server validates the key against ITS frozen snapshot for ITS
+    // current day; a rejection rolls the service mirror back and reaches the
+    // user as a toast.
+    if (options?.sync !== false) DataService.completeTask(key, at);
   },
 
   uncompleteTask: (key) => {
@@ -368,6 +389,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       delete next[key];
       return { tasksDone: next, xp: Math.max(0, s.xp - XP.task) };
     });
+    DataService.uncompleteTask(key);
   },
 
   deferTask: (key) =>
@@ -411,6 +433,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       missedDay: false,
       feed: [item, ...s.feed],
     });
+    // seal_day() re-counts completions against the server's own snapshot —
+    // it will refuse a day the server does not consider finished.
+    DataService.sealDay();
   },
 
   saveJournal: (text) => {
@@ -460,6 +485,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       feed: [item, ...s.feed],
       pingsUsed: { date: today, count: used + 1 },
     });
+    // The local count above is a courtesy pre-check; send_ping() enforces the
+    // real quota and rejects a recipient outside the squad.
+    DataService.sendPing(toName, text);
     return true;
   },
 
@@ -477,8 +505,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   blockUser: (name) => set({ blockedUsers: DataService.blockUser(name) }),
   unblockUser: (name) => set({ blockedUsers: DataService.unblockUser(name) }),
 
-  updateProfile: (name, why) =>
-    set({ profileName: name.trim() || 'You', why: why.trim() || get().why }),
+  updateProfile: (name, why) => {
+    const trimmedName = name.trim() || 'You';
+    const trimmedWhy = why.trim() || get().why;
+    set({ profileName: trimmedName, why: trimmedWhy });
+    // The name is the squad-visible surface: kept only here, no squadmate
+    // would ever see it, and it would not survive a reinstall either.
+    DataService.updateProfile(trimmedName, trimmedWhy);
+  },
 
   setNotificationPref: (key, value) =>
     set((s) => ({
@@ -626,6 +660,48 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch {
       // persisted state is a convenience; never block startup on it
     }
+  },
+
+  adoptSession: ({ name }) => {
+    const st = DataService.loadScenario('day1');
+    set({
+      deferred: [],
+      finishFeeling: null,
+      finishFeelingText: '',
+      pingsUsed: { date: localDateKey(), count: 0 },
+      screenState: 'ready',
+      blockedUsers: DataService.getBlockedUsers(),
+      profileName: name?.trim() || 'You',
+      ...st,
+      ...taskConfigMirror(st.tier, st.day),
+    });
+  },
+
+  resetSession: () => {
+    const st = DataService.loadScenario('day1');
+    // Weight and mood are private data with no owner once signed out; the
+    // unit preference is a display setting and stays.
+    AsyncStorage.removeItem(CHECKINS_KEY).catch(() => {});
+    set({
+      scenario: 'day1',
+      deferred: [],
+      finishFeeling: null,
+      finishFeelingText: '',
+      profileName: 'You',
+      notificationPrefs: DEFAULT_PREFS,
+      blockedUsers: [],
+      pingsUsed: { date: localDateKey(), count: 0 },
+      screenState: 'ready',
+      healthPrefs: DEFAULT_HEALTH_PREFS,
+      healthReadings: EMPTY_READINGS,
+      healthPromptDismissed: {},
+      healthWorkoutsConsumed: [],
+      metricCheckins: [],
+      savedMeals: [],
+      checkinHandledWeek: null,
+      ...st,
+      ...taskConfigMirror(st.tier, st.day),
+    });
   },
 
   addCustomTask: (input) => {
