@@ -41,9 +41,10 @@ function sb() {
  * read that FAILED was indistinguishable from one that returned nothing: a
  * raised `no challenge for user` came back as `null` and hydrate quietly
  * degraded to "day 1, empty task list" with no signal anywhere. Reads now
- * throw a typed BackendError, and the caller decides whether that is fatal
- * (hydrate) or tolerable (the `.catch()` around getSquadStatus, where solo is
- * a legitimate outcome).
+ * throw a typed BackendError, and the caller decides whether that is fatal.
+ * hydrate() makes that call per read: the challenge and today's snapshot are
+ * essential, while a journal or a squad roster that fails costs one surface
+ * and is reported, not fatal.
  */
 function unwrap<T>(
   result: { data: T; error: unknown },
@@ -51,6 +52,34 @@ function unwrap<T>(
 ): T {
   if (result.error) throw toBackendError(result.error, context);
   return result.data;
+}
+
+/**
+ * Display names for a set of user ids.
+ *
+ * NOT a PostgREST embed. Every user-identifying column in this schema —
+ * feed_items.author, blocked_users.blocked, squad_members.user_id, pings —
+ * has its foreign key against `auth.users`, never `public.profiles`. That
+ * FK exists (blocked_users_blocked_fkey and friends), but it points into the
+ * auth schema, which PostgREST does not expose, so there is no relationship
+ * it can traverse to reach profiles and no hint that makes one appear. The
+ * names come from a second, explicit read instead.
+ *
+ * RLS still decides what is readable: profiles_select allows yourself and
+ * current squadmates only. An id that resolves to nothing is not an error —
+ * it is someone you blocked and then stopped sharing a squad with — so the
+ * caller supplies its own fallback label.
+ */
+async function namesByUserId(ids: string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return new Map();
+  const data = unwrap(
+    await sb().from('profiles').select('id, name').in('id', unique),
+    'load names',
+  );
+  return new Map(
+    ((data ?? []) as { id: string; name: string }[]).map((r) => [r.id, r.name]),
+  );
 }
 
 export interface DaySnapshotRow {
@@ -291,23 +320,29 @@ export const BackendApi = {
     const data = unwrap(
       await sb()
         .from('feed_items')
-        .select('id, author, kind, text, created_at, profiles(name)')
+        .select('id, author, kind, text, created_at')
         .eq('squad_id', squadId)
         .order('created_at', { ascending: false })
         .limit(50),
       'load squad feed',
     );
-    return (data ?? []).map((row): FeedItem => {
-      // PostgREST returns embedded relations as arrays.
-      const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
-      return {
-        id: row.id,
-        kind: row.kind as FeedItem['kind'],
-        who: profile?.name ?? 'Squadmate',
-        text: row.text,
-        timestamp: Date.parse(row.created_at),
-      };
-    });
+    const rows = (data ?? []) as {
+      id: string;
+      author: string;
+      kind: string;
+      text: string;
+      created_at: string;
+    }[];
+    // feed_items.author references auth.users, so the author's name cannot
+    // be embedded — see namesByUserId.
+    const names = await namesByUserId(rows.map((r) => r.author));
+    return rows.map((row): FeedItem => ({
+      id: row.id,
+      kind: row.kind as FeedItem['kind'],
+      who: names.get(row.author) ?? 'Squadmate',
+      text: row.text,
+      timestamp: Date.parse(row.created_at),
+    }));
   },
 
   // ---- profile ----
@@ -544,16 +579,17 @@ export const BackendApi = {
     blockerId: string,
   ): Promise<{ id: string; name: string }[]> => {
     const data = unwrap(
-      await sb()
-        .from('blocked_users')
-        .select('blocked, profiles!blocked_users_blocked_fkey(name)')
-        .eq('blocker', blockerId),
+      await sb().from('blocked_users').select('blocked').eq('blocker', blockerId),
       'load blocked users',
     );
-    return (data ?? []).map((r) => {
-      const profile = Array.isArray(r.profiles) ? r.profiles[0] : r.profiles;
-      return { id: r.blocked as string, name: profile?.name ?? 'Blocked user' };
-    });
+    const ids = ((data ?? []) as { blocked: string }[]).map((r) => r.blocked);
+    // blocked_users.blocked references auth.users — see namesByUserId. The
+    // old embed named blocked_users_blocked_fkey, which does exist, but
+    // points at auth.users, so PostgREST could not reach profiles through
+    // it: "Could not find a relationship between 'blocked_users' and
+    // 'profiles' in the schema cache".
+    const names = await namesByUserId(ids);
+    return ids.map((id) => ({ id, name: names.get(id) ?? 'Blocked user' }));
   },
 };
 

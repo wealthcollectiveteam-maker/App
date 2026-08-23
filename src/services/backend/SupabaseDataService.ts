@@ -253,44 +253,55 @@ export class SupabaseDataService implements IDataService {
    * Loads everything the app renders for the signed-in user. Called once
    * after sign-in and on cold launch with a restored session, BEFORE the
    * first render reads the mirror — hence no empty-state flash.
+   *
+   * TWO CLASSES OF READ, and the difference is the whole point:
+   *
+   * ESSENTIAL — the challenge, today's frozen snapshot, its completions and
+   * its config. Without these there is no day to show, and the caller's
+   * session error screen with Retry is the honest answer. These throw.
+   *
+   * OPTIONAL — journal, meals, milestones, check-ins, workout logs, squad
+   * roster, feed, blocked list, saved meals. Each is one surface. A failure
+   * leaves that surface as it was and is collected into a single quiet
+   * notice at the end; it never stops the rest of the app from loading. On
+   * day 12 of a real challenge, one flaky read must not read as "your
+   * challenge is gone" — which is exactly what the blocked-users read did.
    */
   async hydrate(userId: string): Promise<void> {
     this.userId = userId;
+    const failed: string[] = [];
 
-    const [profile, priv, day, squadStatus] = await Promise.all([
-      api.getProfile(userId),
-      api.getProfilePrivate(userId),
-      api.getOrFreezeToday(),
-      api.getSquadStatus().catch(() => null),
+    // Started first so they run alongside the essential reads. optional()
+    // attaches its catch synchronously, so an essential failure below can
+    // never leave one of these as an unhandled rejection.
+    const personal = Promise.all([
+      this.optional('profile', api.getProfile(userId), failed),
+      this.optional('your why', api.getProfilePrivate(userId), failed),
+      this.optional('squad', api.getSquadStatus(), failed),
+      this.optional('journal', api.listJournal(userId), failed),
+      this.optional('meals', api.listMeals(userId), failed),
+      this.optional('milestones', api.listMilestones(userId), failed),
+      this.optional('check-ins', api.listMetricCheckins(userId), failed),
+      this.optional('workouts', api.listWorkoutLogs(userId), failed),
+      this.optional('blocked list', api.listBlockedUsers(userId), failed),
     ]);
 
+    // ---- ESSENTIAL ----
+    const day = await api.getOrFreezeToday();
     this.challengeId = day?.challenge_id ?? null;
     this.state.day = day?.day ?? 1;
     this.daySnapshots = day ? { [day.day]: day.task_snapshot } : {};
     this.state.dayComplete = !!day?.sealed_at;
-    this.state.xp = profile?.xp ?? 0;
-    this.state.why = typeof priv?.why === 'string' ? priv.why : '';
 
-    const [journal, meals, milestones, metrics, logs, completions, config] =
-      await Promise.all([
-        api.listJournal(userId),
-        api.listMeals(userId),
-        api.listMilestones(userId),
-        api.listMetricCheckins(userId),
-        api.listWorkoutLogs(userId),
-        this.challengeId
-          ? api.listTodayCompletions(this.challengeId, this.state.day)
-          : Promise.resolve({} as Partial<Record<TaskKey, string>>),
-        this.challengeId
-          ? api.getChallengeConfig(this.challengeId, this.state.day)
-          : null,
-      ]);
+    const [completions, config] = await Promise.all([
+      this.challengeId
+        ? api.listTodayCompletions(this.challengeId, this.state.day)
+        : Promise.resolve({} as Partial<Record<TaskKey, string>>),
+      this.challengeId
+        ? api.getChallengeConfig(this.challengeId, this.state.day)
+        : Promise.resolve(null),
+    ]);
 
-    this.state.journal = journal;
-    this.state.meals = meals;
-    this.state.milestones = milestones;
-    this.metricCheckins = metrics;
-    this.workoutLogs = logs;
     this.state.tasksDone = completions;
     this.state.tier = config?.tier ?? 'hard';
     this.state.flame = config?.flame ?? 0;
@@ -298,12 +309,36 @@ export class SupabaseDataService implements IDataService {
     this.targetOverrides = config?.targetOverrides ?? {};
     this.overridesAtDayStart = { ...this.targetOverrides };
     this.pendingTier = config?.pendingTier ?? null;
-    this.blocked = await api.listBlockedUsers(userId);
 
-    if (squadStatus?.length) {
+    // ---- OPTIONAL ----
+    // Each assignment is guarded: a read that failed leaves the mirror's
+    // existing value alone rather than overwriting real data with empty.
+    // (profile and profile_private also answer null when the row simply
+    // does not exist yet; both cases want the same "change nothing".)
+    const [profile, priv, squadStatus, journal, meals, milestones, metrics, logs, blocked] =
+      await personal;
+
+    if (profile) this.state.xp = profile.xp;
+    if (priv) this.state.why = typeof priv.why === 'string' ? priv.why : '';
+    if (journal) this.state.journal = journal;
+    if (meals) this.state.meals = meals;
+    if (milestones) this.state.milestones = milestones;
+    if (metrics) this.metricCheckins = metrics;
+    if (logs) this.workoutLogs = logs;
+    if (blocked) this.blocked = blocked;
+
+    if (squadStatus === null) {
+      // The roster did not load. That is not the same as having no squad,
+      // so nothing here is cleared — the squad tab keeps its empty state.
+    } else if (squadStatus.length) {
       this.squadId = squadStatus[0].squad_id;
       this.applySquadStatus(squadStatus);
-      this.state.feed = this.squadId ? await api.listFeed(this.squadId) : [];
+      const feed = await this.optional(
+        'squad feed',
+        api.listFeed(squadStatus[0].squad_id),
+        failed,
+      );
+      if (feed) this.state.feed = feed;
     } else {
       // Solo is a first-class state, not a degraded one.
       this.squadId = null;
@@ -313,7 +348,49 @@ export class SupabaseDataService implements IDataService {
       this.state.leaderboardAllTime = [];
     }
 
-    this.savedMeals = await this.readSavedMeals();
+    const savedMeals = await this.optional(
+      'saved meals',
+      this.readSavedMeals(),
+      failed,
+    );
+    if (savedMeals) this.savedMeals = savedMeals;
+
+    this.reportDegraded(failed);
+  }
+
+  /**
+   * An optional read. Failure costs one surface, not the session.
+   *
+   * NOT silence — that is the D7 bug, where a failed read was
+   * indistinguishable from an empty one. The reason goes to the console in
+   * full, and the label joins a single user-facing notice.
+   */
+  private async optional<T>(
+    label: string,
+    read: Promise<T>,
+    failed: string[],
+  ): Promise<T | null> {
+    try {
+      return await read;
+    } catch (error) {
+      console.warn(`[hydrate:optional] ${label}: ${toBackendError(error).message}`);
+      failed.push(label);
+      return null;
+    }
+  }
+
+  /** One quiet line for everything that did not load, or nothing at all. */
+  private reportDegraded(failed: string[]): void {
+    if (failed.length === 0) return;
+    const detail = `Couldn’t load: ${failed.join(', ')}`;
+    // Over ~70 characters the toast layer replaces the text with a generic
+    // line, so a long list gets its own short one instead.
+    this.onError?.(
+      new BackendError(
+        'network',
+        detail.length <= 70 ? detail : 'Some of your data didn’t load.',
+      ),
+    );
   }
 
   /**
