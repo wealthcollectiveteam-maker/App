@@ -91,6 +91,17 @@ export async function createFirstChallenge(tier: Tier): Promise<void> {
 }
 
 /**
+ * "Why I started", written to profile_private (owner-only RLS — no squadmate
+ * can ever read it). Optional: an empty answer writes nothing rather than
+ * storing a blank row.
+ */
+export async function saveWhy(userId: string, why: string): Promise<void> {
+  const text = why.trim();
+  if (!text) return;
+  await must(api.setWhy(userId, text), 'save why');
+}
+
+/**
  * The `profiles` row. Squadmates read the name from it and get_squad_status()
  * inner-joins it, so a member with no profile row is invisible in their own
  * squad. Returns the name now in force.

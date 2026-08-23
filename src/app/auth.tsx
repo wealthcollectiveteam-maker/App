@@ -24,12 +24,16 @@ import { colors, font, radius, space } from '@/theme/tokens';
  *
  *   email → a 6-digit code is emailed (Supabase signInWithOtp)
  *   code  → verified; a returning user is done here
- *   setup → a NEW account picks a name and a tier, and gets its challenge
+ *   setup → a NEW account gives a name, picks a tier, writes its why —
+ *           and only then gets a challenge
  *
- * The setup step is not decoration: without a `challenges` row every RPC
- * raises "no challenge for user", so an account that skipped it cannot use
- * the app at all. A session restored mid-setup lands straight back here
- * (session status 'setup') rather than on a broken day 1.
+ * Setup is not decoration. Without a `challenges` row every RPC raises
+ * "no challenge for user", so an account that skipped it cannot use the app;
+ * and the tier it would have defaulted to decides the task set and the
+ * missed-day penalty from day 1, which no later edit can undo. A session
+ * restored mid-setup lands straight back here (session status 'setup')
+ * rather than on a broken day 1 — the server is asked every time, so this
+ * screen is reached by the typed code and the emailed link alike.
  */
 
 type Step = 'email' | 'code' | 'setup';
@@ -55,7 +59,11 @@ export default function AuthScreen() {
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
-  const [tier, setTier] = useState<Tier>('hard');
+  // Deliberately null, not 'hard'. A defaulted tier is a challenge nobody
+  // chose: it fixes the task set and the missed-day penalty, and edits only
+  // ever take effect tomorrow, so a wrong day 1 cannot be taken back.
+  const [tier, setTier] = useState<Tier | null>(null);
+  const [why, setWhy] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -105,10 +113,18 @@ export default function AuthScreen() {
   };
 
   const startChallenge = async () => {
+    if (!name.trim()) {
+      setError('Enter a display name — it is what your squad sees.');
+      return;
+    }
+    if (!tier) {
+      setError('Pick a tier. It sets your daily tasks and what a missed day costs.');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      await finishSetup(name, tier);
+      await finishSetup(name, tier, why);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start your challenge.');
     } finally {
@@ -137,7 +153,7 @@ export default function AuthScreen() {
             ? 'We email a 6-digit code. No password to forget.'
             : step === 'code'
               ? `Enter the code we sent to ${email.trim()}.`
-              : 'Your name is what your squad sees. Everything else stays private.'}
+              : 'Your name is what your squad sees. Your tier and your why are yours.'}
         </Text>
 
         {step === 'email' && (
@@ -225,19 +241,38 @@ export default function AuthScreen() {
             <Text style={[styles.label, { marginTop: 16 }]}>Tier</Text>
             <SegmentedControl
               segments={TIER_ORDER.map((t) => TIERS[t].label)}
-              value={TIERS[tier].label}
-              onChange={(label) =>
-                setTier(TIER_ORDER.find((t) => TIERS[t].label === label) ?? 'hard')
-              }
+              /* No segment is active until one is picked — the control must
+                 not answer this question on the user's behalf. */
+              value={tier ? TIERS[tier].label : ''}
+              onChange={(label) => {
+                const picked = TIER_ORDER.find((t) => TIERS[t].label === label);
+                if (picked) setTier(picked);
+              }}
               style={{ marginTop: 6 }}
             />
-            <Text style={styles.hint}>{tierSummary(tier)}</Text>
+            <Text style={styles.hint}>
+              {tier
+                ? tierSummary(tier)
+                : 'Pick one. It sets your daily tasks and what a missed day costs.'}
+            </Text>
+            <Text style={[styles.label, { marginTop: 16 }]}>Why you started</Text>
+            <TextInput
+              value={why}
+              onChangeText={setWhy}
+              multiline
+              placeholder="Optional. Only you ever see this."
+              placeholderTextColor={colors.neutral600}
+              style={[styles.input, { minHeight: 68 }]}
+              editable={!busy}
+              maxLength={280}
+            />
             <Text style={styles.hint}>
               Day 1 starts today. Tasks and tier stay editable in My Challenge —
               edits always take effect tomorrow.
             </Text>
             <OutlineButton
               label={busy ? 'Starting…' : 'Start day 1'}
+              tone={tier && name.trim() ? 'accent' : 'neutral'}
               onPress={busy ? undefined : startChallenge}
               style={styles.action}
             />

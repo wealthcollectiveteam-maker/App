@@ -19,7 +19,6 @@ import {
 } from '@/components/SessionGate';
 import { TimerConflictSheet } from '@/components/TimerConflictSheet';
 import { ToastHost } from '@/components/ToastHost';
-import { completeAuthFromUrl } from '@/services/backend/authLink';
 import {
   handleColdLaunchNotification,
   initNotificationHandling,
@@ -27,7 +26,6 @@ import {
 import { useAppStore } from '@/store/useAppStore';
 import { useSessionStore } from '@/store/useSessionStore';
 import { remainingSeconds, useTimerStore } from '@/store/useTimerStore';
-import { toast } from '@/store/useToastStore';
 import { colors } from '@/theme/tokens';
 
 SplashScreen.preventAutoHideAsync();
@@ -75,29 +73,15 @@ export default function RootLayout() {
     if (loaded) SplashScreen.hideAsync().catch(() => {});
   }, [loaded]);
 
-  // The emailed sign-in link, cold launch and warm. Every other deep link
-  // (a timer notification, an invite) returns null here and passes through.
+  // The emailed sign-in link arriving at a RUNNING app. The cold-launch
+  // URL is bootstrap()'s job, not this listener's: read here as well, it
+  // would race the stored session instead of settling it. Either way the
+  // session store is the only thing that acts on a link.
   useEffect(() => {
-    let cancelled = false;
-    const handle = (url: string | null) => {
-      if (!url) return;
-      completeAuthFromUrl(url)
-        .then((result) => {
-          if (cancelled || !result) return;
-          if (!result.ok || !result.userId) {
-            toast(result.error ?? 'That sign-in link has expired.');
-            return;
-          }
-          return useSessionStore.getState().completeSignIn(result.userId);
-        })
-        .catch(() => {});
-    };
-    Linking.getInitialURL().then(handle).catch(() => {});
-    const sub = Linking.addEventListener('url', ({ url }) => handle(url));
-    return () => {
-      cancelled = true;
-      sub.remove();
-    };
+    const sub = Linking.addEventListener('url', ({ url }) => {
+      useSessionStore.getState().handleAuthUrl(url).catch(() => {});
+    });
+    return () => sub.remove();
   }, []);
 
   // Notification handler + tap-to-deep-link, registered ONCE at app root
