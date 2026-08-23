@@ -155,6 +155,12 @@ export type WorkoutLogInput = Omit<WorkoutLog, 'id' | 'loggedAt'>;
 
 export interface Meal {
   id: string;
+  /**
+   * Challenge day this meal belongs to. The backend stores meals for the
+   * whole challenge, so without this the "today" list and the daily
+   * nutrition totals would accumulate every meal ever logged.
+   */
+  day: number;
   text: string;
   timestamp: number;
   nutrition?: MealNutrition | null;
@@ -196,6 +202,11 @@ export interface SquadMember {
   initials: string;
   level: number;
   doneToday: number;
+  /**
+   * How many tasks THIS member's day holds. Squadmates run their own tiers,
+   * so the viewer's own task count is not a stand-in for it.
+   */
+  tasksToday: number;
   isSelf: boolean;
 }
 

@@ -1,0 +1,43 @@
+Read CLAUDE.md first.
+
+Device test, real backend, brand new account. Auth and hydrate both succeed. The
+Check-in screen then crashes:
+
+  ERROR [TypeError: Cannot read property 'split' of undefined]
+  Call Stack
+    tasks.map$argument_0 (src/app/(tabs)/checkin.tsx)
+    map (<native>)
+    CheckinScreen (src/app/(tabs)/checkin.tsx)
+
+Find the .split() inside that map and the field it reads. Then answer the real
+question before fixing: why is that field undefined on a live task but present on a
+mock one?
+
+This is the first time server-shaped tasks have ever rendered. The screens were built
+entirely against MockDataService. Expect a shape mismatch, not a typo.
+
+1. Compare the task object the real getTodayTasks / getDaySnapshot returns against
+   what MockDataService returns, field by field. List every field the mock provides
+   that the backend does not, and every field whose type differs.
+2. Fix the mismatch at the source where possible — if the backend genuinely should
+   return that field, return it. If the field is presentational only, derive it in
+   taskProjection so both implementations produce identical shapes.
+3. Only fall back to a defensive guard in the component when neither of those is
+   right, and say which case each fix is.
+
+Then the wider sweep, because this will not be the only one:
+
+Every screen consuming task, squad, feed, meal, journal or milestone objects was
+written against mock shapes and most have never seen live data. Audit the consumers
+of each against what the Supabase implementation actually returns. Report every
+mismatch you find, whether or not it has crashed yet — a screen I have not opened yet
+is not a screen that works.
+
+contract.ts exists to prevent exactly this drift and clearly is not catching it. Say
+why: are these fields untyped, typed as optional and then used as required, or is the
+mock simply richer than the interface promises? If the interface is too loose to catch
+shape drift, tighten it and let tsc find the rest.
+
+After: npx tsc --noEmit, npx expo lint, then a short report — the specific crash and
+its cause, every other mismatch found, which fixes were at the source vs defensive,
+and what tightening contract.ts caught.

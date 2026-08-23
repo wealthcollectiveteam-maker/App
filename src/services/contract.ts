@@ -2,8 +2,10 @@ import type {
   ActiveTimer,
   CustomTask,
   DailyNutritionTotals,
+  FeedItem,
   FinalResults,
   JournalEntry,
+  LeaderRow,
   Meal,
   MealNutrition,
   MetricCheckin,
@@ -35,6 +37,19 @@ import type { FoodDetail, FoodSearchResult } from '@/lib/fdc';
  * async would have rewritten every call site in the store for no user-visible
  * gain — and the mirror is what makes optimistic toggling and "no flash of
  * empty state" on relaunch possible in the first place.
+ *
+ * WHAT THIS CONTRACT CANNOT CATCH — read before adding a method.
+ * It types the app's DOMAIN shapes, and both implementations are checked
+ * against it. What it cannot see is the network boundary, where server JSON
+ * is ASSERTED into a domain type: `unwrap(...) as DaySnapshotRow` is a
+ * promise tsc has no way to verify. That is how a frozen task snapshot —
+ * which carries no label and no sub-line, because those are presentation —
+ * reached the UI typed as TaskDef and crashed on `task.label.split`.
+ *
+ * So: server row shapes are declared separately from domain shapes
+ * (SnapshotTask in taskProjection.ts, SquadStatusRow in api.ts) and are
+ * converted by an explicit mapper. Assert the WIRE shape, never the domain
+ * one, and let the mapper be the thing tsc checks.
  */
 export interface IDataService {
   loadScenario(scenario: Scenario): ScenarioState;
@@ -74,9 +89,32 @@ export interface IDataService {
    */
   updateProfile(name: string, why: string): void;
   // Squad membership (solo mode is squad === null)
+  /**
+   * Returns a PROVISIONAL squad immediately — the server mints the invite
+   * code, so the local return value cannot contain it. The real row arrives
+   * later and reaches the UI through onRemoteChange + getSquadState().
+   */
   createSquad(name: string): Squad;
   joinSquad(code: string): Squad;
   leaveSquad(): void;
+  /**
+   * Squad-derived view state, straight from the service. Used to re-read
+   * after the server has reconciled something the client could not predict.
+   */
+  getSquadState(): {
+    squad: Squad | null;
+    feed: FeedItem[];
+    leaderboardWeek: LeaderRow[];
+    leaderboardAllTime: LeaderRow[];
+  };
+  /**
+   * Fires when the server changed mirror state no local write predicted —
+   * an invite code being minted, a joined squad's roster arriving. Returns
+   * an unsubscribe. Without this the store keeps whatever the optimistic
+   * write guessed, forever: the invite code stayed a placeholder that could
+   * be neither read out nor copied.
+   */
+  onRemoteChange(listener: () => void): () => void;
   // UGC moderation + compliance
   reportContent(feedItemId: string, reason: ReportReason): void;
   blockUser(name: string): string[];

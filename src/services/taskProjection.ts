@@ -1,4 +1,4 @@
-import { buildTierTask, TASK_BASES, TIERS } from '@/constants/tiers';
+import { buildTierTask, TASK_BASES, taskLabel, TIERS } from '@/constants/tiers';
 import type {
   BuiltinTaskKey,
   CustomTask,
@@ -20,6 +20,77 @@ import type {
 export interface TaskConfigInputs {
   customTasks: CustomTask[];
   targetOverrides: Partial<Record<TaskKey, number>>;
+}
+
+/**
+ * A task as the SERVER's frozen snapshot stores it (compose_task_set).
+ *
+ * Data only: what the task IS. It deliberately carries no label, no
+ * sub-line and no timer length, because those are presentation — a stored
+ * label would freeze today's wording into the database and go stale the
+ * moment the copy or the design changes.
+ */
+export interface SnapshotTask {
+  key: TaskKey;
+  /** tier_standards.short_name, or a custom task's name. */
+  shortName: string;
+  proof: boolean;
+  target: TaskTarget | null;
+  tierStandard: TaskTarget | null;
+}
+
+/**
+ * Snapshot row -> TaskDef: the one place the server's shape becomes the
+ * app's shape.
+ *
+ * Every screen was written against MockDataService, whose tasks arrive from
+ * buildTierTask() complete with label, sub, timerMinutes and timerUserSet.
+ * The snapshot has none of them, so handing a raw snapshot to the UI is a
+ * crash (`t.label.split`) and, quieter, a timed task that never offers a
+ * timer. Deriving them here — from the same TASK_BASES the mock uses — is
+ * what makes the two implementations produce identical TaskDefs.
+ *
+ * `customs` supplies a custom task's sub-line, which the snapshot does not
+ * store; it is matched by the `custom-<id>` key.
+ */
+export function taskFromSnapshot(
+  raw: SnapshotTask,
+  customs: CustomTask[] = [],
+): TaskDef {
+  const target = raw.target ?? null;
+  const base = TASK_BASES[raw.key as BuiltinTaskKey] as
+    | (typeof TASK_BASES)[BuiltinTaskKey]
+    | undefined;
+
+  if (base) {
+    return {
+      key: raw.key,
+      label: taskLabel(raw.key as BuiltinTaskKey, raw.shortName, target?.value ?? null),
+      sub: base.sub,
+      proof: raw.proof,
+      target,
+      tierStandard: raw.tierStandard ?? null,
+      timerMinutes:
+        target?.unit === 'minutes'
+          ? target.value
+          : base.timerUserSet
+            ? 10
+            : undefined,
+      timerUserSet: base.timerUserSet,
+    };
+  }
+
+  // custom-<uuid>. The name is in the snapshot; the sub-line is not.
+  const custom = customs.find((c) => `custom-${c.id}` === raw.key);
+  return {
+    key: raw.key,
+    label: custom?.name ?? raw.shortName,
+    sub: custom?.sub ?? '',
+    proof: raw.proof,
+    target,
+    tierStandard: null,
+    timerMinutes: target?.unit === 'minutes' ? target.value : undefined,
+  };
 }
 
 export function customToDef(c: CustomTask): TaskDef {

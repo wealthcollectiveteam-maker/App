@@ -30,6 +30,7 @@ import type {
   WorkoutLogInput,
 } from '@/data/types';
 import type { FoodDetail, FoodSearchResult } from '@/lib/fdc';
+import { normalizeInviteCode } from '@/lib/inviteCode';
 import { api, type SquadStatusRow } from '@/services/backend/api';
 import { AuthService } from '@/services/backend/AuthService';
 import { getSupabase } from '@/services/backend/supabaseClient';
@@ -43,6 +44,7 @@ import {
   composeTaskSet,
   DEFAULT_ACTIVITY_TYPES,
   pendingTargetChanges,
+  taskFromSnapshot,
   tierStandards,
 } from '@/services/taskProjection';
 
@@ -128,6 +130,40 @@ export class SupabaseDataService implements IDataService {
 
   /** Surfaced to the UI so a rejected optimistic write is never silent. */
   onError: ((error: BackendError) => void) | null = null;
+
+  /**
+   * Listeners for state the SERVER decided and no local write could guess —
+   * chiefly the invite code, which create_squad() mints. The optimistic
+   * squad returned to the store is a placeholder; without a way to say "the
+   * real one has landed", the store shows the placeholder for ever.
+   */
+  private remoteListeners = new Set<() => void>();
+
+  onRemoteChange(listener: () => void): () => void {
+    this.remoteListeners.add(listener);
+    return () => {
+      this.remoteListeners.delete(listener);
+    };
+  }
+
+  private emitRemoteChange(): void {
+    for (const listener of this.remoteListeners) {
+      try {
+        listener();
+      } catch {
+        // A bad listener must never break a server reconciliation.
+      }
+    }
+  }
+
+  getSquadState() {
+    return {
+      squad: this.state.squad,
+      feed: this.state.feed,
+      leaderboardWeek: this.state.leaderboardWeek,
+      leaderboardAllTime: this.state.leaderboardAllTime,
+    };
+  }
 
   private fail(error: unknown): void {
     const backendError = toBackendError(error);
@@ -290,7 +326,6 @@ export class SupabaseDataService implements IDataService {
     const day = await api.getOrFreezeToday();
     this.challengeId = day?.challenge_id ?? null;
     this.state.day = day?.day ?? 1;
-    this.daySnapshots = day ? { [day.day]: day.task_snapshot } : {};
     this.state.dayComplete = !!day?.sealed_at;
 
     const [completions, config] = await Promise.all([
@@ -305,10 +340,19 @@ export class SupabaseDataService implements IDataService {
     this.state.tasksDone = completions;
     this.state.tier = config?.tier ?? 'hard';
     this.state.flame = config?.flame ?? 0;
+    this.state.bestFlame = config?.bestFlame ?? 0;
+    this.state.perfectDays = config?.perfectDays ?? 0;
     this.customTasks = config?.customTasks ?? [];
     this.targetOverrides = config?.targetOverrides ?? {};
     this.overridesAtDayStart = { ...this.targetOverrides };
     this.pendingTier = config?.pendingTier ?? null;
+
+    // The snapshot is data; the UI needs a TaskDef. Mapped after the config
+    // lands because a custom task's sub-line lives on custom_tasks, not in
+    // the frozen snapshot.
+    this.daySnapshots = day
+      ? { [day.day]: day.task_snapshot.map((t) => taskFromSnapshot(t, this.customTasks)) }
+      : {};
 
     // ---- OPTIONAL ----
     // Each assignment is guarded: a read that failed leaves the mirror's
@@ -335,7 +379,7 @@ export class SupabaseDataService implements IDataService {
       this.applySquadStatus(squadStatus);
       const feed = await this.optional(
         'squad feed',
-        api.listFeed(squadStatus[0].squad_id),
+        api.listFeed(squadStatus[0].squad_id, userId),
         failed,
       );
       if (feed) this.state.feed = feed;
@@ -420,6 +464,24 @@ export class SupabaseDataService implements IDataService {
     AsyncStorage.multiRemove([TIMER_STORAGE_KEY, SAVED_MEALS_KEY]).catch(() => {});
   }
 
+  /**
+   * When the roster RPC comes back empty but the squad exists — it
+   * inner-joins profiles, so one missing profile row empties it — take at
+   * least the name and the invite code from the squad row itself. Anything
+   * rather than leaving the user holding a squad with no code to share.
+   */
+  private async fillSquadFromRow(): Promise<void> {
+    const row = await api.getMySquad();
+    if (!row) return;
+    this.squadId = row.id;
+    this.state.squad = {
+      name: row.name,
+      code: row.invite_code,
+      streak: this.state.squad?.streak ?? 0,
+      members: this.state.squad?.members ?? [],
+    };
+  }
+
   /** Realtime + refresh entry point: recompute squad-derived view state. */
   private applySquadStatus(rows: SquadStatusRow[]): void {
     const first = rows[0];
@@ -429,6 +491,9 @@ export class SupabaseDataService implements IDataService {
       initials: initials(r.name),
       level: Math.floor(r.xp / XP.perLevel) + 1,
       doneToday: r.done_today,
+      // Per member, from get_squad_status — a squadmate on Soft has four
+      // tasks whatever tier the viewer runs.
+      tasksToday: r.tasks_today,
       isSelf: r.user_id === this.userId,
     }));
     this.state.squad = {
@@ -466,7 +531,7 @@ export class SupabaseDataService implements IDataService {
         .getSquadStatus()
         .then((rows) => {
           if (rows?.length) this.applySquadStatus(rows);
-          return api.listFeed(squadId);
+          return api.listFeed(squadId, this.userId);
         })
         .then((feed) => {
           if (feed) this.state.feed = feed;
@@ -571,8 +636,14 @@ export class SupabaseDataService implements IDataService {
     return this.state.journal;
   }
 
-  getMeals(): Meal[] {
-    return this.state.meals;
+  /**
+   * TODAY's log by default. The mirror holds every meal of the challenge —
+   * getRecentMeals() needs the history — but the Track screen and the daily
+   * totals mean today, and against the mock (whose whole dataset is one
+   * day) the difference never showed.
+   */
+  getMeals(day: number = this.state.day): Meal[] {
+    return this.state.meals.filter((m) => m.day === day);
   }
 
   getRecentMeals(): string[] {
@@ -627,7 +698,7 @@ export class SupabaseDataService implements IDataService {
   }
 
   getDailyNutritionTotals(): DailyNutritionTotals | null {
-    const withNutrition = this.state.meals.filter((m) => m.nutrition);
+    const withNutrition = this.getMeals().filter((m) => m.nutrition);
     if (withNutrition.length === 0) return null;
     const totals = withNutrition.reduce(
       (acc, m) => ({
@@ -673,6 +744,7 @@ export class SupabaseDataService implements IDataService {
     );
     const meal: Meal = {
       id: localId('ml'),
+      day: this.state.day,
       text,
       timestamp: at,
       nutrition: carried?.nutrition ? { ...carried.nutrition } : null,
@@ -709,7 +781,7 @@ export class SupabaseDataService implements IDataService {
         this.state.meals = previous;
       },
     );
-    return this.state.meals;
+    return this.getMeals();
   }
 
   removeNutrition(mealId: string): Meal[] {
@@ -723,7 +795,7 @@ export class SupabaseDataService implements IDataService {
         this.state.meals = previous;
       },
     );
-    return this.state.meals;
+    return this.getMeals();
   }
 
   addMilestone(title: string): Milestone {
@@ -842,7 +914,11 @@ export class SupabaseDataService implements IDataService {
     // optimistically: show the user's own row immediately, then reconcile.
     const provisional: Squad = {
       name,
-      code: '······',
+      // Empty, not dots: the code does not exist yet. A placeholder that
+      // LOOKS like a code is what shipped — it rendered as six dots and
+      // copied six dots to the clipboard, because the store never heard
+      // that the real one had arrived.
+      code: '',
       streak: 0,
       members: [
         {
@@ -851,6 +927,7 @@ export class SupabaseDataService implements IDataService {
           initials: 'YO',
           level: Math.floor(this.state.xp / XP.perLevel) + 1,
           doneToday: 0,
+          tasksToday: this.daySnapshots[this.state.day]?.length ?? 0,
           isSelf: true,
         },
       ],
@@ -863,36 +940,45 @@ export class SupabaseDataService implements IDataService {
         if (rows?.length) {
           this.squadId = rows[0].squad_id;
           this.applySquadStatus(rows);
+          return undefined;
         }
+        return this.fillSquadFromRow();
       })
       .catch((error) => {
         this.state.squad = null;
         this.fail(error);
-      });
+      })
+      // Either way the store must re-read: the real code and roster on
+      // success, the collapse back to solo on failure.
+      .finally(() => this.emitRemoteChange());
     return provisional;
   }
 
   joinSquad(code: string): Squad {
     const provisional: Squad = {
       name: 'Joining…',
-      code: code.toUpperCase(),
+      code: normalizeInviteCode(code),
       streak: 0,
       members: [],
     };
     this.state.squad = provisional;
     api
-      .joinSquad(code.trim().toUpperCase())
+      .joinSquad(normalizeInviteCode(code))
       .then(() => api.getSquadStatus())
       .then((rows) => {
         if (rows?.length) {
           this.squadId = rows[0].squad_id;
           this.applySquadStatus(rows);
+          return undefined;
         }
+        return this.fillSquadFromRow();
       })
       .catch((error) => {
         this.state.squad = null;
         this.fail(error);
-      });
+      })
+      // "Joining…" with an empty roster is a placeholder too.
+      .finally(() => this.emitRemoteChange());
     return provisional;
   }
 
@@ -1285,7 +1371,9 @@ export class SupabaseDataService implements IDataService {
       .then((day) => {
         if (!day) return;
         this.state.day = day.day;
-        this.daySnapshots[day.day] = day.task_snapshot;
+        this.daySnapshots[day.day] = day.task_snapshot.map((t) =>
+          taskFromSnapshot(t, this.customTasks),
+        );
         this.overridesAtDayStart = { ...this.targetOverrides };
         this.pendingTier = null;
       })

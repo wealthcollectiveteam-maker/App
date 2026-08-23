@@ -17,6 +17,9 @@ import { Platform } from 'react-native';
  *   timer-halfway   — scheduled at the halfway point
  *   timer-5min      — scheduled at T-5:00
  *   timer-complete  — scheduled at the target time
+ * The first three all name the task and carry "ends at <clock>": the
+ * countdown in the body is frozen at the moment it was scheduled, so the
+ * wall-clock time is the part still worth reading an hour later.
  * All cancelled on pause/cancel, reposted on resume against the recomputed
  * target. Tapping any of them deep-links to the timer screen.
  */
@@ -117,6 +120,16 @@ function countdownLabel(seconds: number): string {
 }
 
 /**
+ * The task's NAME, without the target that a TaskDef label carries.
+ * "Workout 1 — 45 min" is the label; "Workout 1" is what belongs in a
+ * notification title, which already spends its width on the state and the
+ * end time. A custom task ("Cold plunge") has no suffix and passes through.
+ */
+function taskName(label: string): string {
+  return label.split(' — ')[0];
+}
+
+/**
  * Post the running notification and schedule halfway / 5-min / completion.
  * ALWAYS clears its own ids first (cancel pending + dismiss delivered), so
  * every lifecycle transition is a serialized clear-then-post — a
@@ -132,13 +145,17 @@ export async function postTimerNotifications(
   if (remainingMs <= 0) return;
   await cancelTimerNotifications();
   try {
-    // Visible immediately on the Lock Screen: absolute end time — the
-    // information a glance actually needs, since iOS won't live-count.
+    // Every one of these carries the absolute end time, because a
+    // notification cannot count down: on a locked phone the clock time is
+    // the only number that stays true while it sits there.
+    const endsAt = `ends at ${clockLabel(targetAtMs)}`;
+    const name = taskName(taskLabel);
+
     await mod.scheduleNotificationAsync({
       identifier: 'timer-running',
       content: {
-        title: `${taskLabel} — timer running`,
-        body: `${countdownLabel(remainingMs / 1000)} · ends at ${clockLabel(targetAtMs)}`,
+        title: `${name} — timer running`,
+        body: `${countdownLabel(remainingMs / 1000)} · ${endsAt}`,
         sound: false,
         data: { url: '/timer' },
       },
@@ -150,8 +167,8 @@ export async function postTimerNotifications(
       await mod.scheduleNotificationAsync({
         identifier: 'timer-halfway',
         content: {
-          title: taskLabel,
-          body: `${countdownLabel(remainingMs / 2000)} left`,
+          title: `${name} — halfway`,
+          body: `${countdownLabel(remainingMs / 2000)} left · ${endsAt}`,
           sound: false,
           data: { url: '/timer' },
         },
@@ -166,8 +183,8 @@ export async function postTimerNotifications(
       await mod.scheduleNotificationAsync({
         identifier: 'timer-5min',
         content: {
-          title: taskLabel,
-          body: '5:00 left',
+          title: `${name} — 5 minutes left`,
+          body: `5:00 left · ${endsAt}`,
           sound: false,
           data: { url: '/timer' },
         },
@@ -182,7 +199,7 @@ export async function postTimerNotifications(
       identifier: 'timer-complete',
       content: {
         title: 'Time.',
-        body: `${taskLabel} — done. Locked in.`,
+        body: `${name} — done. Locked in.`,
         sound: true,
         data: { url: '/timer' },
       },

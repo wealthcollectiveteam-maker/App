@@ -83,19 +83,22 @@ export function targetText(target: TaskTarget): string {
   }
 }
 
-/** Render a builtin task's display label from its target value. */
-export function renderTaskLabel(
+/**
+ * Render a builtin task's display label from its short name and target.
+ *
+ * Split out from renderTaskLabel because the SERVER's frozen snapshot
+ * carries the short name (tier_standards.short_name) but not the tier, and
+ * both sources must produce the identical string — the label is derived
+ * presentation, never stored.
+ */
+export function taskLabel(
   key: BuiltinTaskKey,
-  tier: Tier,
+  shortName: string,
   value: number | null,
 ): string {
   switch (key) {
-    case 'workout1': {
-      const name = TIERS[tier].taskKeys.includes('workout2')
-        ? 'Workout 1'
-        : 'Workout';
-      return `${name} — ${value} min`;
-    }
+    case 'workout1':
+      return `${shortName} — ${value} min`;
     case 'workout2':
       // Descriptive label by design; its minutes drive the timer + editor.
       return 'Workout 2 — outdoors';
@@ -108,6 +111,20 @@ export function renderTaskLabel(
     case 'photo':
       return 'Progress photo';
   }
+}
+
+/** The same label, for a tier task built locally. */
+export function renderTaskLabel(
+  key: BuiltinTaskKey,
+  tier: Tier,
+  value: number | null,
+): string {
+  // The only name that varies by tier: a single-workout tier drops the "1".
+  const shortName =
+    key === 'workout1' && !TIERS[tier].taskKeys.includes('workout2')
+      ? 'Workout'
+      : TASK_BASES[key].shortName;
+  return taskLabel(key, shortName, value);
 }
 
 export interface TierDef {

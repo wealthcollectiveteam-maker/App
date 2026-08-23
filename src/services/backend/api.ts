@@ -1,17 +1,18 @@
 import type {
   CustomTask,
   FeedItem,
+  FeedKind,
   JournalEntry,
   Meal,
   MealNutrition,
   MetricCheckin,
   Milestone,
-  TaskDef,
   TaskKey,
   Tier,
   WorkoutLog,
 } from '@/data/types';
 import { toBackendError } from '@/services/contract';
+import type { SnapshotTask } from '@/services/taskProjection';
 
 import { getSupabase } from './supabaseClient';
 
@@ -86,7 +87,13 @@ export interface DaySnapshotRow {
   id: string;
   challenge_id: string;
   day: number;
-  task_snapshot: TaskDef[];
+  /**
+   * SnapshotTask, NOT TaskDef. compose_task_set() stores data only — no
+   * label, no sub, no timer length. Typing it as TaskDef (which it was) is
+   * what let a snapshot reach the UI unmapped: tsc had been told the server
+   * already spoke the app's shape. taskFromSnapshot() is the only bridge.
+   */
+  task_snapshot: SnapshotTask[];
   sealed_at: string | null;
 }
 
@@ -106,9 +113,32 @@ export interface SquadStatusRow {
 export interface ChallengeConfig {
   tier: Tier;
   flame: number;
+  /** Longest streak so far — challenges.best_flame. Drives the badges. */
+  bestFlame: number;
+  /** Days sealed complete. The other half of the You screen's stats. */
+  perfectDays: number;
   customTasks: CustomTask[];
   targetOverrides: Partial<Record<TaskKey, number>>;
   pendingTier: Tier | null;
+}
+
+/**
+ * feed_items.kind -> FeedKind. The check constraint allows
+ * complete/proof/change/ping; the app has no 'ping', only the two
+ * directions of one. Anything unrecognised becomes 'change', the neutral
+ * kind, rather than a value no renderer has a case for.
+ */
+function toFeedKind(kind: string, mine: boolean): FeedKind {
+  switch (kind) {
+    case 'complete':
+    case 'proof':
+    case 'change':
+      return kind;
+    case 'ping':
+      return mine ? 'ping-out' : 'ping-in';
+    default:
+      return 'change';
+  }
 }
 
 export const BackendApi = {
@@ -176,11 +206,16 @@ export const BackendApi = {
     challengeId: string,
     currentDay: number,
   ): Promise<ChallengeConfig> => {
-    const [challengeResult, customsResult, overridesResult, tiersResult] =
-      await Promise.all([
+    const [
+      challengeResult,
+      customsResult,
+      overridesResult,
+      tiersResult,
+      sealedResult,
+    ] = await Promise.all([
         sb()
           .from('challenges')
-          .select('base_tier, flame')
+          .select('base_tier, flame, best_flame')
           .eq('id', challengeId)
           .single(),
         sb().from('custom_tasks').select('*').eq('challenge_id', challengeId),
@@ -190,12 +225,22 @@ export const BackendApi = {
           .select('tier, from_day')
           .eq('challenge_id', challengeId)
           .order('from_day', { ascending: false }),
+        // Perfect days = days this challenge sealed complete. Counted, not
+        // fetched: the rows themselves are never needed.
+        sb()
+          .from('challenge_days')
+          .select('id', { count: 'exact', head: true })
+          .eq('challenge_id', challengeId)
+          .not('sealed_at', 'is', null),
       ]);
 
     const challenge = unwrap(challengeResult, 'load challenge');
     const customs = unwrap(customsResult, 'load custom tasks');
     const overrides = unwrap(overridesResult, 'load target overrides');
     const tiers = unwrap(tiersResult, 'load tier history');
+    if (sealedResult.error) {
+      throw toBackendError(sealedResult.error, 'count sealed days');
+    }
 
     const targetOverrides: Partial<Record<TaskKey, number>> = {};
     for (const row of overrides ?? []) {
@@ -211,6 +256,8 @@ export const BackendApi = {
     return {
       tier: (active?.tier ?? challenge?.base_tier ?? 'hard') as Tier,
       flame: challenge?.flame ?? 0,
+      bestFlame: challenge?.best_flame ?? 0,
+      perfectDays: sealedResult.count ?? 0,
       customTasks: (customs ?? []).map(
         (c: {
           id: string;
@@ -306,6 +353,24 @@ export const BackendApi = {
     }));
   },
 
+  /**
+   * The signed-in user's squad row. getSquadStatus() needs BOTH the roster
+   * RPC and this row and returns [] if either is empty — but the invite
+   * code lives here alone, and a squad you cannot read the code for is a
+   * squad nobody can join.
+   */
+  getMySquad: async (): Promise<{
+    id: string;
+    name: string;
+    invite_code: string;
+  } | null> => {
+    const data = unwrap(
+      await sb().from('squads').select('id, name, invite_code').limit(1),
+      'load squad',
+    );
+    return data?.[0] ?? null;
+  },
+
   sendPing: (toUserId: string, message: string) =>
     sb().rpc('send_ping', { p_to: toUserId, p_message: message }),
 
@@ -316,7 +381,18 @@ export const BackendApi = {
     text: string,
   ) => sb().from('feed_items').insert({ squad_id: squadId, author: authorId, kind, text }),
 
-  listFeed: async (squadId: string): Promise<FeedItem[]> => {
+  /**
+   * The squad feed.
+   *
+   * `viewerId` is not decoration: feed_items.kind stores 'ping' for both
+   * ends of a ping, while the app's FeedKind splits it into 'ping-in' and
+   * 'ping-out' — that split is what the inbound styling and the bell icon
+   * key off. Reading the column straight through (as `row.kind as
+   * FeedItem['kind']` did) hands the UI a kind it has no case for, so a
+   * ping you RECEIVED renders as one you sent. The viewer is also who
+   * decides whether an author reads as "You".
+   */
+  listFeed: async (squadId: string, viewerId: string | null): Promise<FeedItem[]> => {
     const data = unwrap(
       await sb()
         .from('feed_items')
@@ -336,13 +412,16 @@ export const BackendApi = {
     // feed_items.author references auth.users, so the author's name cannot
     // be embedded — see namesByUserId.
     const names = await namesByUserId(rows.map((r) => r.author));
-    return rows.map((row): FeedItem => ({
-      id: row.id,
-      kind: row.kind as FeedItem['kind'],
-      who: names.get(row.author) ?? 'Squadmate',
-      text: row.text,
-      timestamp: Date.parse(row.created_at),
-    }));
+    return rows.map((row): FeedItem => {
+      const mine = viewerId != null && row.author === viewerId;
+      return {
+        id: row.id,
+        kind: toFeedKind(row.kind, mine),
+        who: mine ? 'You' : (names.get(row.author) ?? 'Squadmate'),
+        text: row.text,
+        timestamp: Date.parse(row.created_at),
+      };
+    });
   },
 
   // ---- profile ----
@@ -435,11 +514,15 @@ export const BackendApi = {
     return (data ?? []).map(
       (r: {
         id: string;
+        day: number;
         text: string;
         nutrition: MealNutrition | null;
         created_at: string;
       }) => ({
         id: r.id,
+        // meals holds the WHOLE challenge; the day is what makes "today's
+        // log" and the daily totals mean today.
+        day: r.day,
         text: r.text,
         nutrition: r.nutrition,
         timestamp: Date.parse(r.created_at),

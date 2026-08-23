@@ -29,6 +29,7 @@ import type {
   WorkoutLogInput,
 } from '@/data/types';
 import type { FoodDetail, FoodSearchResult } from '@/lib/fdc';
+import { normalizeInviteCode } from '@/lib/inviteCode';
 import type { IDataService } from '@/services/contract';
 import { NutritionService } from '@/services/NutritionService';
 import {
@@ -106,6 +107,7 @@ export class MockDataService implements IDataService {
     );
     const meal: Meal = {
       id: nextId('ml'),
+      day: this.state.day,
       text,
       timestamp: at,
       nutrition: previous?.nutrition ? { ...previous.nutrition } : null,
@@ -114,8 +116,9 @@ export class MockDataService implements IDataService {
     return meal;
   }
 
-  getMeals(): Meal[] {
-    return this.state.meals;
+  /** TODAY's log by default — the same contract the backend now honours. */
+  getMeals(day: number = this.state.day): Meal[] {
+    return this.state.meals.filter((m) => m.day === day);
   }
 
   /** Unique meal texts, most recent first. */
@@ -181,6 +184,7 @@ export class MockDataService implements IDataService {
           initials: 'YO',
           level: 1,
           doneToday: 0,
+          tasksToday: this.daySnapshots[this.state.day]?.length ?? 0,
           isSelf: true,
         },
       ],
@@ -193,17 +197,31 @@ export class MockDataService implements IDataService {
     // Mock: any code joins the demo squad.
     const squad: Squad = {
       name: 'Group 1',
-      code: code.toUpperCase(),
+      code: normalizeInviteCode(code),
       streak: 9,
       members: [
-        { id: 'you', name: 'You', initials: 'YO', level: 1, doneToday: 0, isSelf: true },
-        { id: 'maya', name: 'Maya', initials: 'MA', level: 4, doneToday: 1, isSelf: false },
-        { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, doneToday: 0, isSelf: false },
-        { id: 'sam', name: 'Sam', initials: 'SA', level: 2, doneToday: 0, isSelf: false },
+        { id: 'you', name: 'You', initials: 'YO', level: 1, doneToday: 0, tasksToday: 6, isSelf: true },
+        { id: 'maya', name: 'Maya', initials: 'MA', level: 4, doneToday: 1, tasksToday: 6, isSelf: false },
+        { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, doneToday: 0, tasksToday: 5, isSelf: false },
+        { id: 'sam', name: 'Sam', initials: 'SA', level: 2, doneToday: 0, tasksToday: 4, isSelf: false },
       ],
     };
     this.state.squad = squad;
     return squad;
+  }
+
+  getSquadState() {
+    return {
+      squad: this.state.squad,
+      feed: this.state.feed,
+      leaderboardWeek: this.state.leaderboardWeek,
+      leaderboardAllTime: this.state.leaderboardAllTime,
+    };
+  }
+
+  /** No server, so nothing ever arrives late. */
+  onRemoteChange(_listener: () => void): () => void {
+    return () => {};
   }
 
   leaveSquad(): void {
@@ -358,18 +376,18 @@ export class MockDataService implements IDataService {
     this.state.meals = this.state.meals.map((m) =>
       m.id === mealId ? { ...m, nutrition } : m,
     );
-    return this.state.meals;
+    return this.getMeals();
   }
 
   removeNutrition(mealId: string): Meal[] {
     this.state.meals = this.state.meals.map((m) =>
       m.id === mealId ? { ...m, nutrition: null } : m,
     );
-    return this.state.meals;
+    return this.getMeals();
   }
 
   getDailyNutritionTotals(): DailyNutritionTotals | null {
-    const withNutrition = this.state.meals.filter((m) => m.nutrition);
+    const withNutrition = this.getMeals().filter((m) => m.nutrition);
     if (withNutrition.length === 0) return null;
     const totals = withNutrition.reduce(
       (acc, m) => ({

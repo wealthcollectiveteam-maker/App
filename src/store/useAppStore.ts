@@ -336,7 +336,8 @@ export const useAppStore = create<AppState>((set, get) => ({
             ...s.squad,
             members: s.squad.members.map((m) => ({
               ...m,
-              doneToday: Math.min(m.doneToday, count),
+              // Each member against their own task count, not the viewer's.
+              doneToday: Math.min(m.doneToday, m.isSelf ? count : m.tasksToday),
             })),
           }
         : null,
@@ -673,6 +674,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       blockedUsers: DataService.getBlockedUsers(),
       profileName: name?.trim() || 'You',
       ...st,
+      // AFTER the spread: st.meals is the whole challenge's log (the backend
+      // mirror keeps it for the "recent meals" chips), and every screen that
+      // reads `meals` means today.
+      meals: DataService.getMeals(),
       ...taskConfigMirror(st.tier, st.day),
     });
   },
@@ -868,6 +873,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     DataService.saveCompletionFeeling(finishFeeling, finishFeelingText);
   },
 }));
+
+/**
+ * Server-decided squad state, pulled back in when it lands.
+ *
+ * createSquad/joinSquad return a PROVISIONAL squad — the invite code is
+ * minted by create_squad(), so no local write can know it. Without this
+ * subscription the store kept the placeholder for the rest of the session:
+ * the Squad screen showed a code that was not a code, and Copy put it on
+ * the clipboard. Subscribed once, for the life of the app; the mock has
+ * nothing to reconcile and never fires.
+ */
+DataService.onRemoteChange(() => {
+  useAppStore.setState(DataService.getSquadState());
+});
 
 // ---- Derived selectors ----
 

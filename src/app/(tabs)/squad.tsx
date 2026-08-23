@@ -9,6 +9,7 @@ import {
 } from 'phosphor-react-native';
 import React, { useState } from 'react';
 import {
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -29,6 +30,7 @@ import {
 import { PINGS } from '@/constants/challenge';
 import { PING_QUIPS } from '@/data/mock';
 import type { FeedItem, ReportReason, SquadMember } from '@/data/types';
+import { normalizeInviteCode } from '@/lib/inviteCode';
 import {
   relativeTime,
   selectPingsLeft,
@@ -238,7 +240,10 @@ function SoloState() {
           label="Create a squad"
           onPress={() => {
             createSquad('Group 1');
-            toast('Squad created — invite code K7X2FD');
+            // The server mints the code; it appears in the header a moment
+            // later. Naming one here would be inventing it — the old toast
+            // read out the mock's code on every real build.
+            toast('Squad created — your invite code is on the way');
           }}
           style={{ marginTop: 18, alignSelf: 'stretch' }}
         />
@@ -250,20 +255,26 @@ function SoloState() {
         <View style={styles.sendRow}>
           <TextInput
             value={code}
-            onChangeText={setCode}
+            onChangeText={(v) => setCode(normalizeInviteCode(v))}
             placeholder="Enter invite code"
             autoCapitalize="characters"
+            autoCorrect={false}
+            autoComplete="off"
             placeholderTextColor={colors.neutral600}
-            style={styles.input}
+            style={[styles.input, styles.codeInput]}
           />
           <OutlineButton
             label="Join"
             small
             onPress={() => {
-              const c = code.trim();
+              // Normalised on the way in as well as on the way out: this
+              // arrives pasted out of a text message, in any case, with
+              // whatever whitespace came with it.
+              const c = normalizeInviteCode(code);
               if (!c) return;
               joinSquad(c);
-              toast('Joined Group 1');
+              // Which squad it is comes back from the server.
+              toast('Joining squad…');
               setCode('');
             }}
             style={{ minHeight: 42 }}
@@ -282,10 +293,22 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
   const pingsLeft = useAppStore(selectPingsLeft);
   const [moderating, setModerating] = useState<FeedItem | null>(null);
 
+  // Copies the value from STATE. Nothing here reads the rendered view, and
+  // the code is plain Text, not an input — a secure/managed field is how a
+  // copy control ends up putting something other than the code on the
+  // clipboard.
   const copyCode = async () => {
-    if (!squad) return;
-    await Clipboard.setStringAsync(squad.code);
-    toast('Invite code copied');
+    const value = squad?.code ?? '';
+    if (!value) {
+      toast('The invite code hasn’t arrived yet — one moment');
+      return;
+    }
+    try {
+      await Clipboard.setStringAsync(value);
+      toast(`Invite code ${value} copied`);
+    } catch {
+      toast('Could not copy — the code is above, tap and hold to select');
+    }
   };
 
   if (!squad) return <SoloState />;
@@ -297,16 +320,37 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
     <View style={{ gap: 14 }}>
       <Card>
         <View style={styles.squadHeader}>
-          <View>
-            <Text style={styles.squadName}>{squad.name}</Text>
+          {/* Flexible so a long squad name can never squeeze the code out
+              of the row — the code is the one thing here that must stay
+              fully readable. */}
+          <View style={{ flex: 1, paddingRight: 12 }}>
+            <Text style={styles.squadName} numberOfLines={2}>
+              {squad.name}
+            </Text>
             <Text style={styles.squadStreak}>
               {squad.streak}-day squad streak
             </Text>
           </View>
-          <Pressable onPress={copyCode} style={{ alignItems: 'flex-end' }}>
+          <View style={{ alignItems: 'flex-end' }}>
             <Kicker color={colors.neutral500}>Invite code</Kicker>
-            <Text style={styles.inviteCode}>{squad.code}</Text>
-          </Pressable>
+            {squad.code ? (
+              <>
+                {/* Plain selectable Text: readable aloud, and long-press
+                    still works if the clipboard is unavailable. */}
+                <Text style={styles.inviteCode} selectable>
+                  {squad.code}
+                </Text>
+                <OutlineButton
+                  label="Copy"
+                  small
+                  onPress={copyCode}
+                  style={{ marginTop: 6 }}
+                />
+              </>
+            ) : (
+              <Text style={styles.inviteCodePending}>Getting code…</Text>
+            )}
+          </View>
         </View>
       </Card>
 
@@ -322,13 +366,18 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
             {pingsLeft} of {PINGS.maxPerDay} pings left today
           </Text>
         </View>
-        {squad.members.map((m) => (
+        {squad.members.map((m) => {
+          // Squadmates run their own tiers, so their denominator is theirs,
+          // not the viewer's. Your own row stays on your live task list —
+          // it updates the moment a task is added, without a squad refresh.
+          const total = m.isSelf ? taskCount : m.tasksToday || taskCount;
+          return (
           <View key={m.id} style={styles.memberRow}>
             <FlairAvatar initials={m.initials} level={m.level} size={36} />
             <View style={{ flex: 1 }}>
               <Text style={styles.memberName}>{m.name}</Text>
               <Text style={styles.memberMeta}>
-                {Math.min(m.doneToday, taskCount)} of {taskCount} today
+                {Math.min(m.doneToday, total)} of {total} today
               </Text>
             </View>
             {!m.isSelf &&
@@ -340,7 +389,8 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
                 <OutlineButton label="Ping" small onPress={() => onPing(m)} />
               ))}
           </View>
-        ))}
+          );
+        })}
         {outOfPings && (
           <Text style={styles.outOfPings}>
             Out of pings — resets at midnight
@@ -484,11 +534,23 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   inviteCode: {
-    fontFamily: font.medium,
-    fontSize: 14,
-    letterSpacing: 2,
+    // Monospace on purpose: this gets read out loud, and 0/O and 1/I have
+    // to be tellable apart.
+    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+    fontSize: 26,
+    letterSpacing: 3,
     color: colors.accent300,
     marginTop: 3,
+  },
+  inviteCodePending: {
+    fontFamily: font.regular,
+    fontSize: 13,
+    color: colors.neutral500,
+    marginTop: 6,
+  },
+  codeInput: {
+    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+    letterSpacing: 2,
   },
   membersHeader: {
     flexDirection: 'row',
