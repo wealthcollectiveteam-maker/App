@@ -85,8 +85,15 @@ const GENERIC: Record<BackendErrorKind, string> = {
  * reached (4)" — so a short message is shown as-is; anything longer is a
  * Postgres/PostgREST internal and gets the generic line. The full detail
  * always goes to the console regardless.
+ *
+ * A NETWORK failure is the exception to that: its message is fetch's, not
+ * ours. "Network request failed" is 22 characters, so it passed the length
+ * test and became the line the user read for every offline write — accurate
+ * and useless, where what they need to know is that the thing they just
+ * tapped is not saved.
  */
 function describeBackendError(error: BackendError): string {
+  if (error.kind === 'network') return GENERIC.network;
   const detail = error.message.trim();
   return detail.length > 0 && detail.length <= 70 ? detail : GENERIC[error.kind];
 }

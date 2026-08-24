@@ -51,6 +51,25 @@ import type { FoodDetail, FoodSearchResult } from '@/lib/fdc';
  * converted by an explicit mapper. Assert the WIRE shape, never the domain
  * one, and let the mapper be the thing tsc checks.
  */
+/**
+ * Which optimistic write the server refused, so the store can put back
+ * exactly what it changed for it.
+ *
+ * Named rather than generic because the store's optimistic update is not
+ * only the row — completing a task also adds XP, sealing a day also
+ * increments the streak — and only the caller knows what to undo. `other`
+ * covers writes whose visible state the store mirrors straight from the
+ * service (blocked list, task config), which it re-reads wholesale.
+ */
+export type RejectedWrite =
+  | { op: 'complete'; taskKey: TaskKey }
+  | { op: 'uncomplete'; taskKey: TaskKey }
+  | { op: 'seal' }
+  | { op: 'journal' }
+  | { op: 'milestone' }
+  | { op: 'meal' }
+  | { op: 'other' };
+
 export interface IDataService {
   loadScenario(scenario: Scenario): ScenarioState;
   /**
@@ -115,6 +134,21 @@ export interface IDataService {
    * be neither read out nor copied.
    */
   onRemoteChange(listener: () => void): () => void;
+  /**
+   * Fires when the server REFUSED a write and the mirror was rolled back.
+   *
+   * The mirror rolling back is not enough on its own: the screen reads the
+   * Zustand store, not the mirror, and the store applied its own optimistic
+   * update before the call. Without this the checkbox stayed ticked, the XP
+   * stayed added and the streak stayed incremented for a write the server
+   * never accepted — a toast was the only evidence, and it disappeared. The
+   * one place this matters most is a task completed with no signal: the user
+   * has to know it did not save while they are still standing there.
+   *
+   * Returns an unsubscribe. The mock never refuses anything, so it never
+   * fires there.
+   */
+  onWriteRejected(listener: (write: RejectedWrite) => void): () => void;
   // UGC moderation + compliance
   reportContent(feedItemId: string, reason: ReportReason): void;
   blockUser(name: string): string[];

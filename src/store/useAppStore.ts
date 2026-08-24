@@ -103,6 +103,29 @@ let feedId = 0;
 
 export type ScreenStateKind = 'ready' | 'loading' | 'error';
 
+/**
+ * What the screen showed just before an optimistic write, held until the
+ * server has had its say.
+ *
+ * The service rolls its own mirror back when a write is refused, but the
+ * screen does not read the mirror — it reads this store, which had already
+ * ticked the checkbox, added the XP and incremented the streak. Offline, that
+ * left a user looking at a task marked done, a streak that had grown, and a
+ * toast that faded: everything on screen said it saved, and on the next
+ * launch none of it was there. Someone finishing their last task in a
+ * basement gym has to be told NOW.
+ *
+ * Keyed per write, so two tasks ticked in the same second unwind
+ * independently. An entry is written immediately before its own write every
+ * time, so a leftover from a call that succeeded is always overwritten before
+ * it could be applied to a later one.
+ */
+const rollbacks = new Map<string, Partial<AppState>>();
+
+function rememberForRollback(key: string, before: Partial<AppState>): void {
+  rollbacks.set(key, before);
+}
+
 interface AppState extends ScenarioState {
   scenario: Scenario;
   deferred: TaskKey[];
@@ -359,7 +382,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   completeTask: (key, options) => {
-    const { tasksDone, feed, todayTasks } = get();
+    const s0 = get();
+    const { tasksDone, feed, todayTasks } = s0;
     if (tasksDone[key]) return;
     const label = todayTasks.find((t) => t.key === key)?.label ?? key;
     const at = formatClock();
@@ -370,6 +394,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       text: `checked off ${label}.`,
       timestamp: Date.now(),
     };
+    // Recorded BEFORE the optimistic update, whatever `sync` says: the timer
+    // path passes sync:false and does its own backend write, and that write
+    // can be refused exactly like this one.
+    rememberForRollback(`complete:${key}`, {
+      tasksDone: s0.tasksDone,
+      deferred: s0.deferred,
+      xp: s0.xp,
+      feed: s0.feed,
+    });
     set((s) => ({
       tasksDone: { ...s.tasksDone, [key]: at },
       deferred: s.deferred.filter((k) => k !== key),
@@ -377,14 +410,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       feed: [item, ...feed],
     }));
     // The server validates the key against ITS frozen snapshot for ITS
-    // current day; a rejection rolls the service mirror back and reaches the
-    // user as a toast.
+    // current day. A rejection rolls the service mirror back, reaches the
+    // user as a toast, and unwinds the tick above through onWriteRejected.
     if (options?.sync !== false) DataService.completeTask(key, at);
   },
 
   uncompleteTask: (key) => {
-    const { tasksDone } = get();
-    if (!tasksDone[key]) return;
+    const s0 = get();
+    if (!s0.tasksDone[key]) return;
+    rememberForRollback(`uncomplete:${key}`, {
+      tasksDone: s0.tasksDone,
+      xp: s0.xp,
+    });
     set((s) => {
       const next = { ...s.tasksDone };
       delete next[key];
@@ -425,6 +462,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       text: `locked in Day ${s.day} — ${count} of ${count}.`,
       timestamp: Date.now(),
     };
+    // A sealed day is the single most expensive thing to get wrong on
+    // screen: it is the streak. Every field the seal touches is captured so
+    // a refusal puts back the exact numbers, not an approximation of them.
+    rememberForRollback('seal', {
+      dayComplete: s.dayComplete,
+      xp: s.xp,
+      flame: s.flame,
+      bestFlame: s.bestFlame,
+      perfectDays: s.perfectDays,
+      missedDay: s.missedDay,
+      feed: s.feed,
+    });
     set({
       dayComplete: true,
       xp: s.xp + XP.dayComplete,
@@ -440,7 +489,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   saveJournal: (text) => {
-    const entry = DataService.saveJournalEntry(get().day, text);
+    const s0 = get();
+    rememberForRollback('journal', { journal: s0.journal, xp: s0.xp });
+    const entry = DataService.saveJournalEntry(s0.day, text);
     set((s) => ({
       journal: [entry, ...s.journal],
       xp: s.xp + XP.journal,
@@ -449,12 +500,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   logMeal: (text) => {
+    rememberForRollback('meal', { meals: get().meals });
     const meal = DataService.logMeal(text);
     set((s) => ({ meals: [meal, ...s.meals] }));
     return meal;
   },
 
   addMilestone: (title) => {
+    rememberForRollback('milestone', { milestones: get().milestones });
     const milestone = DataService.addMilestone(title);
     set((s) => ({ milestones: [...s.milestones, milestone] }));
     return milestone;
@@ -463,6 +516,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   toggleMilestone: (id) => {
     const s = get();
     const target = s.milestones.find((m) => m.id === id);
+    rememberForRollback('milestone', { milestones: s.milestones, xp: s.xp });
     const milestones = DataService.toggleMilestone(id, s.day);
     set({
       milestones,
@@ -520,11 +574,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       notificationPrefs: { ...s.notificationPrefs, [key]: value },
     })),
 
-  attachNutrition: (mealId, nutrition) =>
-    set({ meals: [...DataService.attachNutrition(mealId, nutrition)] }),
+  attachNutrition: (mealId, nutrition) => {
+    rememberForRollback('meal', { meals: get().meals });
+    set({ meals: [...DataService.attachNutrition(mealId, nutrition)] });
+  },
 
-  removeNutrition: (mealId) =>
-    set({ meals: [...DataService.removeNutrition(mealId)] }),
+  removeNutrition: (mealId) => {
+    rememberForRollback('meal', { meals: get().meals });
+    set({ meals: [...DataService.removeNutrition(mealId)] });
+  },
 
   saveMealTemplate: (name, nutrition) => {
     DataService.saveMealTemplate(name, nutrition)
@@ -541,6 +599,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   logSavedMeal: (id) => {
     const template = get().savedMeals.find((m) => m.id === id);
     if (!template) return;
+    rememberForRollback('meal', { meals: get().meals });
     const meal = DataService.logMeal(template.name);
     DataService.attachNutrition(meal.id, template.nutrition);
     set({ meals: [...DataService.getMeals()] });
@@ -886,6 +945,39 @@ export const useAppStore = create<AppState>((set, get) => ({
  */
 DataService.onRemoteChange(() => {
   useAppStore.setState(DataService.getSquadState());
+});
+
+/**
+ * A write the server refused — put the SCREEN back, not just the mirror.
+ *
+ * The toast is not enough on its own. It says "Offline — that change didn't
+ * save" while the task it refers to is still sitting there with a tick beside
+ * it, and the two together read as a glitch rather than a fact. Undoing the
+ * optimistic update is what makes the toast true.
+ *
+ * Subscribed once, for the life of the app. The mock never refuses anything,
+ * so this never fires against it.
+ */
+DataService.onWriteRejected((write) => {
+  const key =
+    write.op === 'complete' || write.op === 'uncomplete'
+      ? `${write.op}:${write.taskKey}`
+      : write.op;
+  const before = rollbacks.get(key);
+  if (before) {
+    rollbacks.delete(key);
+    useAppStore.setState(before);
+    return;
+  }
+  // `other` — and any write whose snapshot has already been consumed. The
+  // state involved is mirrored from the service rather than composed here,
+  // so re-reading it IS the rollback.
+  const s = useAppStore.getState();
+  useAppStore.setState({
+    blockedUsers: DataService.getBlockedUsers(),
+    meals: DataService.getMeals(),
+    ...taskConfigMirror(s.tier, s.day),
+  });
 });
 
 // ---- Derived selectors ----

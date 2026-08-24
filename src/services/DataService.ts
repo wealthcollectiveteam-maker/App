@@ -29,7 +29,7 @@ import type {
 } from '@/data/types';
 import type { FoodDetail, FoodSearchResult } from '@/lib/fdc';
 import { normalizeInviteCode } from '@/lib/inviteCode';
-import type { IDataService } from '@/services/contract';
+import type { IDataService, RejectedWrite } from '@/services/contract';
 import { NutritionService } from '@/services/NutritionService';
 import {
   composeTaskSet,
@@ -226,6 +226,11 @@ export class MockDataService implements IDataService {
 
   /** No server, so nothing ever arrives late. */
   onRemoteChange(_listener: () => void): () => void {
+    return () => {};
+  }
+
+  /** No server, so nothing is ever refused. */
+  onWriteRejected(_listener: (write: RejectedWrite) => void): () => void {
     return () => {};
   }
 

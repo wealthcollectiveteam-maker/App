@@ -37,6 +37,7 @@ import {
   BackendError,
   toBackendError,
   type IDataService,
+  type RejectedWrite,
 } from '@/services/contract';
 import { NutritionService } from '@/services/NutritionService';
 import {
@@ -155,6 +156,31 @@ export class SupabaseDataService implements IDataService {
     }
   }
 
+  /**
+   * Listeners for a REFUSED write. Separate from remoteListeners on purpose:
+   * a reconciliation replaces squad-derived view state wholesale, which would
+   * also wipe the store's optimistic local feed rows. A rejection needs to
+   * touch only what that one write changed.
+   */
+  private rejectionListeners = new Set<(write: RejectedWrite) => void>();
+
+  onWriteRejected(listener: (write: RejectedWrite) => void): () => void {
+    this.rejectionListeners.add(listener);
+    return () => {
+      this.rejectionListeners.delete(listener);
+    };
+  }
+
+  private emitRejected(write: RejectedWrite): void {
+    for (const listener of this.rejectionListeners) {
+      try {
+        listener(write);
+      } catch {
+        // A bad listener must never swallow the rollback itself.
+      }
+    }
+  }
+
   getSquadState() {
     return {
       squad: this.state.squad,
@@ -178,31 +204,36 @@ export class SupabaseDataService implements IDataService {
    * promise chain entirely: no rollback, no fail(), and an uncaught throw in
    * whatever UI handler called the setter. Every failure now takes the same
    * road out — rollback, then a typed BackendError to onError.
+   *
+   * `op` names the write for the store's own rollback. It defaults to
+   * `other` — the store re-reads the mirror wholesale for those — and the
+   * writes with hand-rolled optimistic state (a ticked task, an added XP
+   * total, an incremented streak) pass their own.
    */
   private write(
     run: () => PromiseLike<{ error: unknown } | void>,
     rollback: () => void,
+    op: RejectedWrite = { op: 'other' },
   ): void {
+    const undo = (error: unknown) => {
+      rollback();
+      this.fail(error);
+      // AFTER the mirror is consistent again: the listener reads it.
+      this.emitRejected(op);
+    };
     let pending: PromiseLike<{ error: unknown } | void> | void;
     try {
       pending = run();
     } catch (error) {
-      rollback();
-      this.fail(error);
+      undo(error);
       return;
     }
     Promise.resolve(pending)
       .then((result) => {
         const error = result && 'error' in result ? result.error : null;
-        if (error) {
-          rollback();
-          this.fail(error);
-        }
+        if (error) undo(error);
       })
-      .catch((error) => {
-        rollback();
-        this.fail(error);
-      });
+      .catch(undo);
   }
 
   /**
@@ -241,20 +272,24 @@ export class SupabaseDataService implements IDataService {
     run: () => PromiseLike<{ data: unknown; error: unknown }>,
     adopt: (serverId: string) => void,
     rollback: () => void,
+    op: RejectedWrite = { op: 'other' },
   ): void {
+    const undo = (error: unknown) => {
+      rollback();
+      this.fail(error);
+      this.emitRejected(op);
+    };
     let pending: PromiseLike<{ data: unknown; error: unknown }>;
     try {
       pending = run();
     } catch (error) {
-      rollback();
-      this.fail(error);
+      undo(error);
       return;
     }
     const resolution = Promise.resolve(pending).then(
       ({ data, error }) => {
         if (error) {
-          rollback();
-          this.fail(error);
+          undo(error);
           return null;
         }
         // RPCs return the uuid directly; table inserts return { id }.
@@ -274,8 +309,7 @@ export class SupabaseDataService implements IDataService {
         return serverId;
       },
       (error: unknown) => {
-        rollback();
-        this.fail(error);
+        undo(error);
         return null;
       },
     );
@@ -590,6 +624,7 @@ export class SupabaseDataService implements IDataService {
       () => {
         this.state.tasksDone = previous;
       },
+      { op: 'complete', taskKey },
     );
   }
 
@@ -603,6 +638,7 @@ export class SupabaseDataService implements IDataService {
       () => {
         this.state.tasksDone = previous;
       },
+      { op: 'uncomplete', taskKey },
     );
   }
 
@@ -614,6 +650,7 @@ export class SupabaseDataService implements IDataService {
       () => {
         this.state.dayComplete = previous;
       },
+      { op: 'seal' },
     );
   }
 
@@ -744,6 +781,7 @@ export class SupabaseDataService implements IDataService {
       () => {
         this.state.journal = previous;
       },
+      { op: 'journal' },
     );
     return entry;
   }
@@ -773,6 +811,7 @@ export class SupabaseDataService implements IDataService {
       () => {
         this.state.meals = previous;
       },
+      { op: 'meal' },
     );
     return meal;
   }
@@ -790,6 +829,7 @@ export class SupabaseDataService implements IDataService {
       () => {
         this.state.meals = previous;
       },
+      { op: 'meal' },
     );
     return this.getMeals();
   }
@@ -804,6 +844,7 @@ export class SupabaseDataService implements IDataService {
       () => {
         this.state.meals = previous;
       },
+      { op: 'meal' },
     );
     return this.getMeals();
   }
@@ -823,6 +864,7 @@ export class SupabaseDataService implements IDataService {
       () => {
         this.state.milestones = previous;
       },
+      { op: 'milestone' },
     );
     return milestone;
   }
@@ -843,6 +885,7 @@ export class SupabaseDataService implements IDataService {
       () => {
         this.state.milestones = previous;
       },
+      { op: 'milestone' },
     );
     return this.state.milestones;
   }
@@ -1146,8 +1189,10 @@ export class SupabaseDataService implements IDataService {
       this.state.tasksDone = previous;
       // The timer's caller swallows this rejection, so without fail() a
       // refused completion would be silent on the one path that carries the
-      // duration.
+      // duration. The store ticked the task off before the timer screen even
+      // dismissed, so it has to hear about the refusal too.
       this.fail(error);
+      this.emitRejected({ op: 'complete', taskKey });
       throw toBackendError(error);
     }
   }
