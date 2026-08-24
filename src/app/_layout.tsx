@@ -20,9 +20,11 @@ import { MockModeBanner } from '@/components/MockModeBanner';
 import {
   SessionErrorScreen,
   SessionLoadingScreen,
+  UnconfiguredBuildScreen,
 } from '@/components/SessionGate';
 import { TimerConflictSheet } from '@/components/TimerConflictSheet';
 import { ToastHost } from '@/components/ToastHost';
+import { configurationError } from '@/services';
 import {
   handleColdLaunchNotification,
   initNotificationHandling,
@@ -66,6 +68,7 @@ export default function RootLayout() {
   // happens: hydrate(userId) has to run before the tabs read the mirror,
   // otherwise every screen renders an empty day 1 for a real account.
   useEffect(() => {
+    if (configurationError) return; // nothing to sign in to — see below
     useSessionStore.getState().bootstrap().catch(() => {});
   }, []);
 
@@ -135,6 +138,20 @@ export default function RootLayout() {
   }, []);
 
   if (!loaded) return null;
+
+  // A production build with no backend credentials never opens onto the app.
+  // Mounting the navigator at all would put a fully interactive challenge on
+  // screen with nothing behind it — see services/index.ts.
+  if (configurationError) {
+    return (
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <View style={{ flex: 1, backgroundColor: colors.bg }}>
+          <StatusBar style="light" />
+          <UnconfiguredBuildScreen />
+        </View>
+      </GestureHandlerRootView>
+    );
+  }
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

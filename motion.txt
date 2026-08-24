@@ -1,0 +1,112 @@
+Read CLAUDE.md first.
+
+Motion and haptics. The redesign is in. This pass makes the app feel like something
+rather than a form.
+
+The rule that governs everything here: **every animation and every haptic must
+correspond to a state change the user caused.** Nothing fires on scroll, on render, on
+mount of a screen the user simply navigated to, or on data arriving. Feedback that
+happens for no reason is worse than no feedback — it reads as a glitch.
+
+Build the systems first, then apply them. Do not scatter one-off Haptics calls or
+inline Animated values across screens.
+
+============================================================
+PART 1 — A haptic vocabulary, defined once
+============================================================
+
+Create `src/lib/haptics.ts` as the only place expo-haptics is imported. Everything else
+calls named intents, never raw styles. A named vocabulary is what stops this becoming
+a phone that buzzes constantly.
+
+  tap()        — Selection. Chips, segmented controls, tier cards, tab switches.
+  press()      — Impact Light. Any button press.
+  complete()   — Impact Medium. A task completes, by swipe, timer, or check.
+  triumph()    — Notification Success. Day sealed, squad joined, badge earned. Rare.
+  refuse()     — Notification Warning. An action the app declines — start day 1 with
+                 no tier, ping with none left, out-of-range input.
+  fail()       — Notification Error. A write that failed. Rare, and honest.
+
+Rules:
+- One haptic per gesture. If a swipe completes a task **and** seals the day, fire
+  `triumph()` only — never two in sequence.
+- A Settings toggle disables all of it. Persist it. Some people hate this.
+- Never on a repeating timer, never on a list re-render.
+
+============================================================
+PART 2 — Motion primitives
+============================================================
+
+Reanimated, on the UI thread. No JS-driven opacity or layout animation.
+
+Define a shared timing vocabulary in the theme — durations and easings named by intent,
+not by number, so the app moves consistently:
+
+  instant  ~120ms  — press feedback
+  quick    ~220ms  — most state changes
+  settle   ~380ms  — things arriving or leaving
+  moment   ~700ms  — celebration beats only
+
+**Respect Reduce Motion.** Read `AccessibilityInfo.isReduceMotionEnabled` once at app
+start and subscribe to changes. When on, every animation below becomes an instant state
+change — not a slower one, an instant one. Haptics stay.
+
+============================================================
+PART 3 — Apply it
+============================================================
+
+**Buttons** — press scales to ~0.97 over `instant` and releases with a small spring.
+`press()` on press-in, not on release. That timing is what makes a button feel
+physical.
+
+**Task completion** — the highest-value moment in the app, and it happens six times a
+day. On complete: `complete()`, the checkbox fills from the centre, the label strikes
+through over `quick`, the row settles to textMid, and **the SegmentBar's next segment
+fills** with a spring. The segment filling is the part that makes progress feel real —
+get it right.
+
+**Swipe deck** — already has gesture handling; keep it. Add: the card's exit carries
+into the next card rising slightly from beneath rather than appearing. `complete()` on
+a right-swipe commit, `tap()` on a left-swipe defer.
+
+**The Wall** — cells fade and scale in on a stagger when Track first mounts, ~8ms
+apart, left to right. Once only per app session, not on every tab visit. Today's cell
+holds a slow, low-amplitude pulse on its outline — it should read as alive, not as
+blinking.
+
+**Day number** — when the day advances, the number counts up rather than cutting.
+`settle`. Once, on genuine day change.
+
+**Timer** — the ring drains continuously and smoothly, driven from wall-clock time, not
+from a per-frame counter. At T-10 seconds the numerals shift to accent. On completion:
+`triumph()`, the ring completes, and the screen holds for a `moment` before returning.
+
+**Screen transitions** — tabs switch instantly, no animation; animating tab content is
+the fastest way to make an app feel slow. Pushed screens (timer, My Challenge,
+Settings) slide from the right over `settle`. Modal sheets (ping, dev, capture) rise
+with a spring and dim the ground behind them.
+
+**Day complete** — the one place to spend real motion. `triumph()`, the ground shifts
+to the celebration treatment, the day number scales briefly, and the seal message
+arrives over a `moment`. This fires once a day at most. Make it worth waiting for.
+
+**Empty states** — fade in over `quick` rather than appearing. An empty list that
+snaps into existence reads as an error.
+
+**Pull to refresh** on Squad and Track: `tap()` at the threshold, not on release.
+
+============================================================
+CONSTRAINTS
+============================================================
+
+Do not change data flow, service calls, or the snapshot model. Do not add an animation
+library — Reanimated and expo-haptics are already here. Do not animate anything on
+first paint of the app; a cold launch should show content, not choreography.
+
+Performance: nothing here may drop the swipe deck below 60fps on device. If an
+animation competes with the gesture, the gesture wins.
+
+After: npx tsc --noEmit, npx expo lint, and a short report — the haptic vocabulary as
+built, every place motion was added, what Reduce Motion turns off, and anything you
+could not verify without a device. Haptics cannot be tested off-device at all; say so
+plainly rather than implying they work.

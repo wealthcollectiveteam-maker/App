@@ -19,11 +19,18 @@ import { colors, font } from '@/theme/tokens';
  * IN FLOW above the navigator rather than floating over it, so it can never
  * cover a header or a back button, and it is deliberately not dismissible:
  * the condition it reports does not change while the app is running.
+ *
+ * DEV BUILDS ONLY. A production build can no longer reach mock data at all —
+ * EXPO_PUBLIC_USE_MOCK is ignored there and missing credentials raise
+ * `configurationError`, which blocks the app outright (see services/index.ts).
+ * The `__DEV__` guard makes that structural rather than incidental: this
+ * banner cannot render in a shipped binary even if the selection logic is
+ * changed later.
  */
 export function MockModeBanner() {
   const insets = useSafeAreaInsets();
 
-  if (isLiveBackend) return null;
+  if (!__DEV__ || isLiveBackend) return null;
 
   return (
     <View style={[styles.host, { paddingTop: insets.top + 4 }]}>

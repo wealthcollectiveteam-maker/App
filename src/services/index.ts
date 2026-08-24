@@ -5,23 +5,51 @@ import type { BackendError, BackendErrorKind, IDataService } from '@/services/co
 import { toast } from '@/store/useToastStore';
 
 /**
- * Implementation selection. The Supabase backend is the default; setting
- * EXPO_PUBLIC_USE_MOCK=1 (or "true") forces the mock, so a broken backend or
- * a missing network can never block UI work.
+ * Implementation selection.
  *
- * A missing/incomplete .env also falls back to the mock rather than crashing
- * on launch — an unconfigured build should show the app, not a white screen.
- * That fallback is NOT silent: `isLiveBackend` is false and MockModeBanner
- * says so on every screen, because a build quietly running on fake data is
- * indistinguishable from a working one until someone loses real data.
+ * The Supabase backend is the default. In a DEV build, EXPO_PUBLIC_USE_MOCK=1
+ * forces the mock and a missing/incomplete .env falls back to it, so a broken
+ * backend or no network can never block UI work. That fallback is not silent:
+ * `isLiveBackend` is false and MockModeBanner says so on every screen.
+ *
+ * IN A PRODUCTION BUILD THE MOCK IS NOT AN OPTION. Neither switch is honoured:
+ * EXPO_PUBLIC_USE_MOCK is ignored outright, and missing credentials set
+ * `configurationError` instead, which the root layout turns into a blocking
+ * screen — the app refuses to run rather than opening onto invented data.
+ *
+ * Why refuse rather than fall back with a banner: a shipped build on mock data
+ * behaves EXACTLY like a working one — tasks tick off, streaks climb, the
+ * squad fills in — all of it invented and none of it saved, right up to the
+ * relaunch that loses 75 days. A banner asks the user to notice; refusing to
+ * start cannot be missed, cannot be scrolled past, and cannot lose data. It
+ * is a build-configuration fault, not a runtime condition: it is the same on
+ * every launch, and the only fix is a rebuilt binary.
  */
-const forceMock = ['1', 'true'].includes(
-  (process.env.EXPO_PUBLIC_USE_MOCK ?? '').toLowerCase(),
-);
+const forceMock =
+  __DEV__ &&
+  ['1', 'true'].includes((process.env.EXPO_PUBLIC_USE_MOCK ?? '').toLowerCase());
 
-const useMock = forceMock || !isBackendConfigured();
+const configured = isBackendConfigured();
 
-if (!forceMock && !isBackendConfigured()) {
+/**
+ * Non-null when a production build cannot reach a backend at all. The root
+ * layout renders this instead of the app.
+ */
+export const configurationError: string | null =
+  !__DEV__ && !configured
+    ? 'This build has no Supabase credentials, so nothing it showed you could be saved.'
+    : null;
+
+// In production an unconfigured build still constructs the mock so that no
+// import fails at module scope — but configurationError above means nothing
+// ever renders on top of it.
+const useMock = forceMock || !configured;
+
+if (!__DEV__ && !configured) {
+  console.error(
+    'FATAL: Supabase credentials missing (EXPO_PUBLIC_SUPABASE_URL / _ANON_KEY) in a production build — refusing to start.',
+  );
+} else if (!forceMock && !configured) {
   console.warn(
     'Supabase credentials missing (EXPO_PUBLIC_SUPABASE_URL / _ANON_KEY) — running on mock data.',
   );

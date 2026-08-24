@@ -3,6 +3,7 @@ import React from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { Card, OutlineButton } from '@/components/ui';
+import { configurationError } from '@/services';
 import { useSessionStore } from '@/store/useSessionStore';
 import { colors, font, space } from '@/theme/tokens';
 
@@ -12,6 +13,32 @@ import { colors, font, space } from '@/theme/tokens';
  * Both of these render OVER the Stack, never instead of it: unmounting the
  * navigator would leave expo-router with nothing to redirect.
  */
+
+/**
+ * A production build with no Supabase credentials.
+ *
+ * This is the one state the app refuses to run in. Falling back to mock data
+ * here would look identical to a working build — tasks ticking off, a streak
+ * climbing — while nothing was saved anywhere, and the user would only find
+ * out at the relaunch that lost everything. There is no in-app fix (the
+ * credentials are baked in at build time), so there is no Retry: it says what
+ * is wrong and stops.
+ */
+export function UnconfiguredBuildScreen() {
+  return (
+    <View style={[styles.container, styles.centered]}>
+      <Card style={styles.card}>
+        <WarningCircle size={34} color={colors.neutral500} />
+        <Text style={styles.title}>This build isn{'’'}t configured.</Text>
+        <Text style={styles.body}>
+          {configurationError} Rather than show you a challenge that
+          isn{'’'}t real, it stops here. Please install an official build
+          from TestFlight or the App Store.
+        </Text>
+      </Card>
+    </View>
+  );
+}
 
 /**
  * Restoring a session, or waiting for a redirect to land. Without this the
