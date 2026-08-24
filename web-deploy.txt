@@ -1,0 +1,86 @@
+Read CLAUDE.md first.
+
+Ship the web build. A friend is running the same idea as a static site on GitHub Pages
+and sharing a link; my app already static-renders all 19 routes, so this is mostly
+configuration, not new code.
+
+Goal: a URL I send to friends. They open it in Safari or Chrome, Add to Home Screen,
+and it behaves like an app. Same Supabase, same data, same accounts as the iOS build.
+
+============================================================
+BEFORE YOU BUILD — report these
+============================================================
+
+1. Does `npx expo export --platform web` still produce a clean `dist/`? Report its size
+   and confirm all 19 routes emit HTML.
+
+2. Which native-only modules would throw on web, and are they all already
+   environment-gated? HealthKit, expo-haptics, expo-notifications, the timer's
+   notification scheduling. A web visitor must never see a crash or a permission prompt
+   for something the browser cannot do.
+
+3. Does the mock-refuse-to-start check work on web? A web build with missing
+   credentials must fail the same way, not quietly serve fake data to my friends.
+
+4. Confirm `EXPO_PUBLIC_SUPABASE_ANON_KEY` is inlined into the web bundle and that this
+   is correct — it is the publishable key, it already ships in the iOS binary, and RLS
+   is the actual boundary. Say so explicitly so neither of us mistakes it for a leak
+   later.
+
+============================================================
+BUILD IT
+============================================================
+
+**Hosting shape.** I will create a repo named `<username>.github.io` so the site serves
+from the domain root and there is no base-path problem. Confirm that removes any need
+for `experiments.baseUrl`; if you disagree, say what to set instead.
+
+**Client-side routing.** GitHub Pages has no SPA fallback. Copy `index.html` to
+`404.html` in the output so a deep link or a refresh on `/track` does not 404. If Expo
+Router's static export already makes this unnecessary, say so rather than adding a file
+that does nothing.
+
+**Add to Home Screen.** A web manifest with the app name, the icon assets already in
+`assets/`, `display: standalone`, and `theme_color` / `background_color` matching the
+near-black ground. Installed, it should open full-screen with no browser chrome and the
+right icon — that is the whole reason this feels like an app rather than a bookmark.
+
+**Feature honesty on web.** Where a capability genuinely cannot work in a browser,
+the UI says so once, quietly, and moves on:
+  - Apple Health — hide the section entirely, exactly as it hides in Expo Go today
+  - Timer — it still runs and still computes from wall-clock time, but say plainly that
+    it cannot alert with the tab closed
+  - Pings — they still send and still appear in-app; do not promise a push that will
+    not arrive
+Do not disable features that do work. The swipe deck, the timer, journal, meals, squad
+and invite codes must all function.
+
+**A build script.** `npm run build:web` that exports and leaves the output ready to
+copy. I will be running this repeatedly; make it one command.
+
+============================================================
+WHAT I HAVE TO DO IN SUPABASE — tell me exactly
+============================================================
+
+The emailed sign-in flow currently redirects to `rankedfitness://`, which means nothing
+in a browser. Tell me precisely what to add to **Authentication → URL Configuration** so
+the web origin works, and whether Site URL needs to change or only Redirect URLs — I do
+not want to break the iOS deep link that already works.
+
+============================================================
+CONSTRAINTS
+============================================================
+
+No change to the data layer, RLS, the snapshot model, or the service contract. Web and
+iOS are the same app against the same database. Expo stays on 54. Do not touch the
+bundle ID.
+
+`npx tsc --noEmit` and `npx expo lint` clean.
+
+============================================================
+REPORT
+============================================================
+
+The four answers above · what changed · the exact commands I run to produce and publish
+the site · the exact Supabase settings to add · what a web visitor cannot do and how the
+UI tells them · anything you could not verify without actually hosting it.
