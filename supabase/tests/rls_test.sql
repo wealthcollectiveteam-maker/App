@@ -103,7 +103,7 @@ reset role;
 
 -- ---- fixtures (as superuser) ----
 insert into auth.users (id, email) values
-  ('00000000-0000-0000-0000-00000000000a', 'aly@test.dev'),
+  ('00000000-0000-0000-0000-00000000000a', 'ada@test.dev'),
   ('00000000-0000-0000-0000-00000000000b', 'ben@test.dev'),
   ('00000000-0000-0000-0000-00000000000c', 'cara@test.dev');
 
@@ -114,11 +114,11 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', p_user, 'role', 'authenticated')::text, false);
 end $$;
 
--- =====================  SETUP AS ALY  =====================
+-- =====================  SETUP AS ADA  =====================
 set role authenticated;
 call test_login('00000000-0000-0000-0000-00000000000a');
 
-insert into public.profiles (id, name) values (auth.uid(), 'Aly');
+insert into public.profiles (id, name) values (auth.uid(), 'Ada');
 insert into public.profile_private (id, why) values (auth.uid(), 'Because I said I would.');
 select public.create_challenge('hard', current_date, 'UTC');
 select public.create_squad('Group 1');
@@ -142,7 +142,7 @@ values (
 select public.get_or_freeze_today();
 select public.complete_task('read');
 
--- Grab the invite code for Ben (as Aly, who may see her own squad).
+-- Grab the invite code for Ben (as Ada, who may see her own squad).
 create temporary table t_ctx as
   select invite_code from public.squads limit 1;
 
@@ -156,8 +156,8 @@ select public.join_squad((select invite_code from t_ctx));
 do $$
 declare n integer;
 begin
-  -- Ben must see Aly in profiles (name/xp surface only)
-  select count(*) into n from public.profiles where name = 'Aly';
+  -- Ben must see Ada in profiles (name/xp surface only)
+  select count(*) into n from public.profiles where name = 'Ada';
   if n <> 1 then raise exception 'FAIL: squadmate cannot see profile name'; end if;
 
   -- ...and NOTHING below.
@@ -215,7 +215,7 @@ do $$
 declare r record; found_aly boolean := false;
 begin
   for r in select * from public.get_squad_status() loop
-    if r.name = 'Aly' then
+    if r.name = 'Ada' then
       found_aly := true;
       if r.done_today <> 1 or r.tasks_today <> 6 then
         raise exception 'FAIL: squad status counts wrong (% of %)', r.done_today, r.tasks_today;
@@ -232,7 +232,7 @@ insert into public.profiles (id, name) values (auth.uid(), 'Cara');
 do $$
 declare n integer;
 begin
-  select count(*) into n from public.profiles where name in ('Aly','Ben');
+  select count(*) into n from public.profiles where name in ('Ada','Ben');
   if n <> 0 then raise exception 'FAIL: outsider can see squad member profiles'; end if;
   select count(*) into n from public.squads;
   if n <> 0 then raise exception 'FAIL: outsider can enumerate squads'; end if;

@@ -1,4 +1,5 @@
 import { useRouter } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import {
   CaretLeftIcon as CaretLeft,
   CaretRightIcon as CaretRight,
@@ -17,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { NotificationPermissionBanner } from '@/components/NotificationPermissionBanner';
 import { Card, Kicker, OutlineButton, SegmentedControl } from '@/components/ui';
+import { PRIVACY_POLICY_URL, isPlaceholderLegalUrl } from '@/constants/legal';
 import type { HealthPrefs, NotificationPrefs } from '@/data/types';
 import { useAppStore } from '@/store/useAppStore';
 import { useSessionStore } from '@/store/useSessionStore';
@@ -61,6 +63,18 @@ export default function SettingsScreen() {
   const [whyDraft, setWhyDraft] = useState(why);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteText, setDeleteText] = useState('');
+
+  // Opens the hosted policy in a SFSafariViewController sheet rather than
+  // leaving for Safari, so the user comes straight back to Settings.
+  const openPrivacyPolicy = () => {
+    if (isPlaceholderLegalUrl(PRIVACY_POLICY_URL)) {
+      toast('Privacy Policy URL not set yet');
+      return;
+    }
+    WebBrowser.openBrowserAsync(PRIVACY_POLICY_URL).catch(() =>
+      toast('Could not open the Privacy Policy'),
+    );
+  };
 
   return (
     <ScrollView
@@ -276,19 +290,22 @@ export default function SettingsScreen() {
 
       <Kicker style={styles.sectionKicker}>Legal</Kicker>
       <Card>
-        {[
-          { label: 'Terms of Service', route: '/settings/terms' as const },
-          { label: 'Privacy Policy', route: '/settings/privacy' as const },
-        ].map(({ label, route }, i) => (
-          <Pressable
-            key={label}
-            onPress={() => router.push(route)}
-            style={[styles.prefRow, i > 0 && styles.rowBorder]}
-          >
-            <Text style={[styles.rowLabel, { flex: 1 }]}>{label}</Text>
-            <CaretRight size={15} color={colors.neutral600} />
-          </Pressable>
-        ))}
+        <Pressable
+          onPress={() => router.push('/settings/terms')}
+          style={styles.prefRow}
+        >
+          <Text style={[styles.rowLabel, { flex: 1 }]}>Terms of Service</Text>
+          <CaretRight size={15} color={colors.neutral600} />
+        </Pressable>
+        {/* Hosted, not in-app: the policy has to be updatable without a
+            build, and App Store Connect points at the same URL. */}
+        <Pressable
+          onPress={openPrivacyPolicy}
+          style={[styles.prefRow, styles.rowBorder]}
+        >
+          <Text style={[styles.rowLabel, { flex: 1 }]}>Privacy Policy</Text>
+          <CaretRight size={15} color={colors.neutral600} />
+        </Pressable>
       </Card>
 
       <Kicker style={styles.sectionKicker}>Account</Kicker>
