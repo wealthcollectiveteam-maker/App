@@ -1,0 +1,156 @@
+Read CLAUDE.md first.
+
+Build the missed-day engine. You found that it does not exist — challenges.flame only
+ever increments, nothing checks whether yesterday was sealed, and a user who skips a
+day keeps their streak and their Hard challenge never restarts. The tier cards promise
+a penalty the server cannot deliver.
+
+Decisions are made. These are not open questions:
+
+  ARCHIVE, DON'T WIPE  — a failed Hard attempt is preserved as a viewable record and a
+                         genuinely new challenge begins.
+  NO GRACE             — a miss is a miss. No free pass, no undo.
+  MIDNIGHT, AUTOMATIC  — evaluated on a schedule at each challenge's own local
+                         midnight, not lazily when the user next opens the app. A
+                         squadmate who stops opening the app must not appear to keep
+                         their streak.
+
+============================================================
+BEFORE YOU BUILD — report these first
+============================================================
+
+1. Does `challenges` carry a timezone? Setup sends one; confirm it is stored and is an
+   IANA name, not an offset. Offsets break across DST and this engine lives for 75 days.
+
+2. **`challenges.owner` is UNIQUE.** Archiving and starting fresh means two rows per
+   owner. That constraint has to become "one ACTIVE challenge per owner" — a partial
+   unique index where `ended_at is null`. Confirm the constraint's real name and shape
+   before changing it.
+
+3. Is `squad_members` keyed to the user or to the challenge? A Hard restart must not
+   eject someone from their squad.
+
+4. What does `seal_day` actually do, and is it explicitly invoked by the user or
+   implied by completing every task? This matters more than it sounds — see below.
+
+5. Can this project run `pg_cron`, or does the schedule need a Supabase scheduled Edge
+   Function? Report which is available and pick the one that works here.
+
+Stop and report. Then build.
+
+============================================================
+WHAT COUNTS AS A MISS
+============================================================
+
+A day is met when **every task in that day's frozen snapshot has a completion**.
+
+**A day where all tasks are complete counts as met whether or not `seal_day` was
+explicitly called.** If the evaluator finds an unsealed day with every task done, it
+seals it retroactively and moves on. Nobody loses a 40-day streak because they ticked
+their last box and closed the app without tapping a button. Get this right — it is the
+single most likely way this engine hurts someone who did the work.
+
+A day is missed when the day has ended in the challenge's timezone and any snapshot
+task has no completion.
+
+The day a challenge is created is never evaluated as missed.
+
+============================================================
+THE PENALTIES
+============================================================
+
+Read them from the tier config. Do not hardcode three branches.
+
+**HARD** — `restartsChallenge: true`
+  - Set `ended_at`, `ended_reason = 'missed_day'`, and the day reached on the current
+    challenge row. Everything it owns — days, completions, journal, meals, milestones,
+    workout logs — stays exactly where it is and remains readable by its owner.
+  - Create a new challenge for the same user: same tier, same custom tasks and target
+    overrides, starting today, day 1, flame 0.
+  - Squad membership survives. The person did not leave; their attempt ended.
+
+**MEDIUM and SOFT** — `restartsChallenge: false, resetsStreak: true`
+  - Flame to 0. Day count continues. The challenge is untouched otherwise.
+
+In both cases emit a feed item the squad can see. Completion status is already social;
+a broken streak is the same class of fact. Word it plainly — no commiseration, no
+exclamation marks.
+
+============================================================
+THE SCHEDULE
+============================================================
+
+Runs **hourly**. Every challenge sits in its own timezone, so a single daily run cannot
+catch every local midnight.
+
+Each run: for every active challenge whose local date has advanced past a day that has
+not been evaluated, evaluate that day.
+
+**Idempotency is not optional.** Running twice must never double-penalise. Mark each
+day evaluated as part of the same transaction that applies the penalty. Assume the job
+will overlap itself, retry, and run late — a scheduler that fires twice must be boring,
+not destructive.
+
+Catch up on gaps. If the job did not run for six hours, or a user was offline for three
+days, the next run evaluates every unevaluated day in order. Three missed days on Hard
+is one restart, not three.
+
+============================================================
+MAKE IT TESTABLE TODAY — the whole dev sheet, not just the miss
+============================================================
+
+Every scenario in the dev sheet is inert against the real backend. They were written
+for MockDataService and none survived the switch — Day 1, Day 12, Day 75 and missed day
+all do nothing. That matters beyond convenience: the Day 75 finish screen is unreachable
+for eleven weeks, so a bug in it would surface in October.
+
+Wire the sheet to `SECURITY DEFINER` simulation RPCs that mutate **the caller's own
+challenge only**. Same guard on every one: owner-scoped in SQL, `__DEV__`-gated on the
+client exactly as the sheet already is, and absent from a production bundle. Verify that
+by grepping the production export the way you did for the scenario sheet itself.
+
+What each must actually do:
+
+**Jump to day N** — move the challenge's start date back so today genuinely is day N,
+and backfill days 1..N-1 as sealed with every snapshot task completed. Set flame to
+match. A day counter that says 12 over an empty Wall and a zero streak is not a
+simulation of day 12, it is a lie that hides exactly the bugs I am trying to find.
+
+**Day 75, complete** — the same, at 75, with today's tasks done and the day sealed, so
+the finish screen is genuinely reachable and `getFinalResults` runs against real rows
+rather than the arithmetic you just removed.
+
+**Fresh start** — end the current challenge and create a new one at day 1 today,
+clearing the simulated history. This is the undo for everything above, so make it
+complete: after Fresh start the account must look exactly like a new signup.
+
+**Missed day** — runs the same evaluation the scheduled job runs, for this challenge,
+now.
+
+Two things to be honest about in your report: these write real rows to the live
+database, and the simulated completions are indistinguishable from real ones once
+written. Say so plainly. I will only ever point these at a throwaway account, and I need
+to know that Fresh start genuinely cleans up before the real challenge begins.
+
+============================================================
+CONSTRAINTS
+============================================================
+
+Apply the `0002` allow-list grant pattern — revoke all, grant back only what is
+sanctioned. The scheduled job runs server-side and may hold elevated rights; **no
+service-role key goes anywhere near the app.** RLS unchanged: nobody reads another
+member's private data, and an archived challenge is readable only by its owner.
+
+Write the migration; **do not apply it** — that is a production write and my call.
+
+`npx tsc --noEmit` and `npx expo lint` clean.
+
+============================================================
+REPORT
+============================================================
+
+The answers to the five questions above · what you built · the exact SQL I run and in
+what order · how I trigger a simulated miss on device · what happens to a user mid-
+challenge when this lands (nobody should be retroactively penalised for days that
+passed before the engine existed — say so explicitly) · anything unverified without a
+device or the live project.
