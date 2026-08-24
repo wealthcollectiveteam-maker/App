@@ -2,6 +2,7 @@ import React from 'react';
 import { Platform, Text, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
+import { CHALLENGE } from '@/constants/challenge';
 import { colors, font } from '@/theme/tokens';
 
 /**
@@ -11,7 +12,11 @@ import { colors, font } from '@/theme/tokens';
  */
 export function ProgressRing({
   day = 0,
-  total = 75,
+  // Only a divisor for the day/total path, which every current caller
+  // bypasses by passing `fraction`. It is the default length rather than a
+  // bare 75 so there is no literal here to go stale — a caller that does use
+  // day/total should pass the challenge's own length.
+  total = CHALLENGE.defaultDays,
   size = 172,
   fraction,
   children,

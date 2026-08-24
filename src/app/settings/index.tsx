@@ -19,8 +19,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { NotificationPermissionBanner } from '@/components/NotificationPermissionBanner';
 import { Card, Kicker, OutlineButton, SegmentedControl } from '@/components/ui';
+import { CHALLENGE_LENGTHS } from '@/constants/challenge';
 import { PRIVACY_POLICY_URL, isPlaceholderLegalUrl } from '@/constants/legal';
-import type { HealthPrefs, NotificationPrefs } from '@/data/types';
+import type {
+  ChallengeLength,
+  HealthPrefs,
+  NotificationPrefs,
+} from '@/data/types';
 import { useAppStore } from '@/store/useAppStore';
 import { useSessionStore } from '@/store/useSessionStore';
 import { toast } from '@/store/useToastStore';
@@ -45,6 +50,93 @@ const HEALTH_SUB_ROWS: { key: keyof HealthPrefs; label: string; sub: string }[] 
   { key: 'workoutPromptEnabled', label: 'Workout prompt', sub: 'Suggest marking workouts found in Apple Health' },
   { key: 'weightPrefillEnabled', label: 'Weight pre-fill', sub: 'Pre-fill the weekly check-in from your latest weight' },
 ];
+
+/**
+ * Changing the length mid-run. In the challenge section, one tap from the
+ * settings root — this decides when the challenge ends, so it does not live
+ * behind another screen.
+ *
+ * The confirmation is the point of this component. Shortening to a length
+ * the run has already passed does not move the finish line, it CROSSES it:
+ * the challenge completes today and cannot be un-completed. So the tap that
+ * would do that asks first, in those words, and only the second tap calls
+ * the server. Lengthening, which has no such consequence, just happens.
+ */
+function ChallengeLengthRow() {
+  const durationDays = useAppStore((s) => s.durationDays);
+  const day = useAppStore((s) => s.day);
+  const changeChallengeDuration = useAppStore((s) => s.changeChallengeDuration);
+  const [confirming, setConfirming] = useState<ChallengeLength | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const apply = async (days: ChallengeLength) => {
+    setBusy(true);
+    try {
+      const { completed } = await changeChallengeDuration(days);
+      toast(
+        completed
+          ? 'Challenge complete — that was your last day.'
+          : `Challenge is now ${days} days.`,
+      );
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not change the length.');
+    } finally {
+      setBusy(false);
+      setConfirming(null);
+    }
+  };
+
+  const press = (days: ChallengeLength) => {
+    if (days === durationDays || busy) return;
+    // The server applies exactly this rule (p_duration <= current day ends
+    // the challenge); asking it first would be a round trip to learn
+    // something the app already knows.
+    if (days <= day) {
+      setConfirming(days);
+      return;
+    }
+    apply(days);
+  };
+
+  return (
+    <>
+      <Kicker style={styles.sectionKicker}>Challenge length</Kicker>
+      <Card>
+        <Text style={styles.rowSub}>
+          You are on day {day} of {durationDays}. Moving the finish line never
+          changes a day you have already logged.
+        </Text>
+        <SegmentedControl
+          segments={CHALLENGE_LENGTHS.map((l) => String(l.days))}
+          value={String(durationDays)}
+          onChange={(v) => press(Number(v) as ChallengeLength)}
+          style={{ marginTop: 10 }}
+        />
+        {confirming !== null && (
+          <View style={styles.confirmBox}>
+            <Text style={styles.rowSub}>
+              You are already on day {day}. Setting {confirming} days finishes
+              your challenge today, and that cannot be undone.
+            </Text>
+            <View style={styles.confirmRow}>
+              <OutlineButton
+                label={busy ? 'Finishing…' : 'Finish it'}
+                small
+                onPress={() => apply(confirming)}
+              />
+              <OutlineButton
+                label="Cancel"
+                small
+                tone="ghost"
+                onPress={() => setConfirming(null)}
+              />
+            </View>
+          </View>
+        )}
+      </Card>
+    </>
+  );
+}
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
@@ -172,6 +264,8 @@ export default function SettingsScreen() {
           <CaretRight size={15} color={colors.neutral600} />
         </Pressable>
       </Card>
+
+      <ChallengeLengthRow />
 
       {/* Only where a HealthKit source can actually be queried. Everywhere
           else — web, Android, Expo Go, the simulator — this whole section
@@ -452,6 +546,17 @@ const styles = StyleSheet.create({
     fontFamily: font.medium,
     fontSize: 20,
     color: colors.text,
+  },
+  confirmBox: {
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+    marginTop: 12,
+    paddingTop: 12,
+    gap: 10,
+  },
+  confirmRow: {
+    flexDirection: 'row',
+    gap: 8,
   },
   sectionKicker: {
     marginTop: 18,

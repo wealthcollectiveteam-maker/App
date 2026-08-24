@@ -78,6 +78,7 @@ function benefits(results: FinalResults) {
 
 
 function StepOne({ onNext }: { onNext: () => void }) {
+  const durationDays = useAppStore((s) => s.durationDays);
   const feeling = useAppStore((s) => s.finishFeeling);
   const feelingText = useAppStore((s) => s.finishFeelingText);
   const setFeeling = useAppStore((s) => s.setFinishFeeling);
@@ -87,11 +88,11 @@ function StepOne({ onNext }: { onNext: () => void }) {
     <CelebrationGround>
       <ScrollView contentContainerStyle={styles.stepOne}>
         <Kicker color={colors.accent200} style={{ letterSpacing: 3 }}>
-          Day 75 of 75
+          Day {durationDays} of {durationDays}
         </Kicker>
         <Text style={styles.didIt}>You did it.</Text>
         <Text style={styles.didItSub}>
-          75 days. Never missed. Great job.
+          {durationDays} days. Never missed. Great job.
         </Text>
 
         <Kicker color={colors.accent300} style={{ marginTop: 38 }}>
@@ -154,6 +155,7 @@ function PhotoSlot({ label }: { label: string }) {
 }
 
 function StepTwo() {
+  const durationDays = useAppStore((s) => s.durationDays);
   const router = useRouter();
   const feeling = useAppStore((s) => s.finishFeeling);
   // The one read in the app that spans the whole challenge: 75 days of
@@ -197,8 +199,13 @@ function StepTwo() {
       style={{ flex: 1, backgroundColor: colors.bg }}
       contentContainerStyle={styles.stepTwo}
     >
-      <Kicker>75 Hard — The results</Kicker>
-      <Text style={styles.headline}>75 days, one different person.</Text>
+      {/* The tier is named "75 Hard" after the original challenge; the
+          RUN is however many days this person signed up for. Only the
+          second of these is a number about them. */}
+      <Kicker>The results</Kicker>
+      <Text style={styles.headline}>
+        {durationDays} days, one different person.
+      </Text>
       {feeling && (
         <Text style={styles.feelingEcho}>Feeling: {feeling}</Text>
       )}
@@ -207,7 +214,7 @@ function StepTwo() {
 
       <View style={{ flexDirection: 'row', gap: 10 }}>
         <PhotoSlot label="Day 1" />
-        <PhotoSlot label="Day 75" />
+        <PhotoSlot label={`Day ${durationDays}`} />
       </View>
 
       <View style={styles.statGrid}>
@@ -229,7 +236,9 @@ function StepTwo() {
       </View>
 
       <Card style={{ marginTop: 12 }}>
-        <Kicker style={{ marginBottom: 14 }}>What 75 days changed</Kicker>
+        <Kicker style={{ marginBottom: 14 }}>
+          What {durationDays} days changed
+        </Kicker>
         {benefits(results).map(({ Icon, lead, body }) => (
           <View key={lead} style={styles.benefitRow}>
             <Icon size={17} color={colors.accent400} />

@@ -135,7 +135,7 @@ export async function runSimulation(scenario: SimScenario): Promise<void> {
 const LABELS: Record<SimScenario, string> = {
   day1: 'Fresh start — day 1, history cleared.',
   day12: 'Jumped to day 12.',
-  day75: 'Day 75, complete.',
+  day75: 'Final day, complete.',
   missed: 'Evaluated. Check your streak.',
   advance: 'Advanced a day.',
 };

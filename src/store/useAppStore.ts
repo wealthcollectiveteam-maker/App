@@ -12,6 +12,7 @@ import {
 } from '@/constants/tiers';
 import type {
   BlockedUser,
+  ChallengeLength,
   BuiltinTaskKey,
   CustomTask,
   FeedItem,
@@ -249,6 +250,13 @@ interface AppState extends ScenarioState {
   removeCustomTask: (id: string) => void;
   /** Pending tier change — takes effect at the next rollover. */
   requestTierChange: (tier: Tier) => void;
+  /**
+   * Move the finish line. Resolves with whether the change ended the
+   * challenge, so the caller can say what happened rather than guess.
+   */
+  changeChallengeDuration: (
+    days: ChallengeLength,
+  ) => Promise<{ completed: boolean }>;
   /** Set a tier task's target — effective tomorrow, like every edit. */
   updateTaskTarget: (taskKey: TaskKey, value: number) => void;
   undoPendingChanges: () => void;
@@ -858,6 +866,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       updates.feed = [item, ...s.feed];
     }
     set(updates);
+  },
+
+  changeChallengeDuration: async (days) => {
+    const s = get();
+    if (days === s.durationDays) return { completed: false };
+    const result = await DataService.setChallengeDuration(days);
+    // The mirror already holds the new length; reflect it, and if the change
+    // ended the run, let refreshDay() bring back whatever the server now
+    // says the challenge is. Nothing here guesses at the ended state.
+    set({ durationDays: days });
+    if (result.completed) await get().refreshDay();
+    return result;
   },
 
   requestTierChange: (tier) => {

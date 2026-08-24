@@ -73,10 +73,12 @@ const SCENARIOS: {
   {
     key: 'day75',
     sim: 'day75',
-    label: 'Day 75, complete',
+    label: 'Final day, complete',
     sub: 'Challenge complete.',
     liveSub:
-      'All 75 days sealed and today done, so the finish screen is reachable.',
+      'Every day of THIS challenge sealed and today done, so the finish ' +
+      'screen is reachable. Jumps to day 30, 45 or 75 depending on the ' +
+      'length this challenge is running.',
   },
 ];
 
