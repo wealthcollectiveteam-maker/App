@@ -4,12 +4,17 @@
     "slug": "ranked-fitness",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/icon.png",
     "scheme": "rankedfitness",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#161826",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/13ba3946-9bc4-46e2-afcd-d4a4fd8113ba"
+    },
     "ios": {
-      "icon": "./assets/expo.icon",
       "bundleIdentifier": "com.aly786.rankedfitness",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
@@ -17,10 +22,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#151724",
+        "foregroundImage": "./assets/adaptive-icon.png"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
@@ -34,12 +37,13 @@
     },
     "plugins": [
       "expo-router",
+      "expo-updates",
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#161826",
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "backgroundColor": "#151724",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200
         }
       ],
       "expo-audio",
