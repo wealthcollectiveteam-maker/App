@@ -84,7 +84,7 @@ begin
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Hard') on conflict do nothing;
   v_old := public.create_challenge('hard', current_date, 'America/Toronto');
-  v_squad := public.create_squad('Proof squad');
+  select id into v_squad from public.create_squad('Proof squad');
 
   -- A custom task and a lowered target: both must survive into the restart.
   perform public.add_custom_task('Cold shower', 'Two minutes.', false, null);
@@ -252,7 +252,7 @@ begin
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Medium') on conflict do nothing;
   v_ch := public.create_challenge('medium', current_date, 'Europe/London');
-  perform public.create_squad('Medium squad');
+  perform id from public.create_squad('Medium squad');
 
   call t_set_day(v_ch, 4);
   call t_do_day(v_ch, 2);
@@ -311,7 +311,7 @@ begin
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Gap') on conflict do nothing;
   v_ch := public.create_challenge('hard', current_date, 'Australia/Sydney');
-  perform public.create_squad('Gap squad');
+  perform id from public.create_squad('Gap squad');
 
   -- Today is day 6. The user was offline for days 3, 4 and 5 — no snapshot
   -- rows exist for them at all, which is what "never opened the app" means.
@@ -501,11 +501,13 @@ declare
 begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_other, 'role','authenticated')::text, false);
-  select count(*) into v_rows from public.get_squad_status();
+  select count(*) into v_rows from public.get_squad_status(
+    (select squad_id from public.squad_members where user_id = v_other limit 1));
   if v_rows <> 2 then
     raise exception 'FAIL: roster returned % rows, expected 2', v_rows;
   end if;
-  select tasks_today into v_tasks from public.get_squad_status()
+  select tasks_today into v_tasks from public.get_squad_status(
+    (select squad_id from public.squad_members where user_id = v_other limit 1))
    where user_id = '00000000-0000-0000-0000-0000000000d1';
   if coalesce(v_tasks, 0) = 0 then
     raise exception 'FAIL: roster shows no task set for a restarted squadmate';

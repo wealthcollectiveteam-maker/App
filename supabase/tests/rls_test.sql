@@ -39,6 +39,10 @@ declare
     -- challenge_length() is the client's way in and can only ever answer
     -- for the caller, so that one IS granted.
     'challenge_length(uuid)',
+    -- 0009: empties every membership the caller holds in one call. Only
+    -- delete_account() should ever want that, and it reaches it as a
+    -- SECURITY DEFINER. A grant would put "leave everything" on the API.
+    'leave_all_squads()',
     'sim_fill_day(uuid,integer)'];
 begin
   for t in select tablename from pg_tables where schemaname = 'public' loop
@@ -146,7 +150,7 @@ call test_login('00000000-0000-0000-0000-00000000000a');
 insert into public.profiles (id, name) values (auth.uid(), 'Ada');
 insert into public.profile_private (id, why) values (auth.uid(), 'Because I said I would.');
 select public.create_challenge('hard', current_date, 'UTC');
-select public.create_squad('Group 1');
+select public.create_squad('Ada''s Squad');
 
 insert into public.journal_entries (owner, day, text) values (auth.uid(), 1, 'private journal');
 insert into public.meals (owner, day, text, nutrition)
@@ -239,7 +243,8 @@ end $$;
 do $$
 declare r record; found_aly boolean := false;
 begin
-  for r in select * from public.get_squad_status() loop
+  for r in select * from public.get_squad_status(
+             (select id from public.squads limit 1)) loop
     if r.name = 'Ada' then
       found_aly := true;
       if r.done_today <> 1 or r.tasks_today <> 6 then
@@ -368,10 +373,12 @@ do $$
 declare i integer;
 begin
   for i in 1..5 loop
-    perform public.send_ping('00000000-0000-0000-0000-00000000000b', 'No excuses.');
+    perform public.send_ping('00000000-0000-0000-0000-00000000000b', 'No excuses.',
+                             (select id from public.squads limit 1));
   end loop;
   begin
-    perform public.send_ping('00000000-0000-0000-0000-00000000000b', 'One more.');
+    perform public.send_ping('00000000-0000-0000-0000-00000000000b', 'One more.',
+                             (select id from public.squads limit 1));
     raise exception 'FAIL: ping quota not enforced server-side';
   exception when others then
     if sqlerrm like '%out of pings%' then
