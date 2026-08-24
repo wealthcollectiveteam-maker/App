@@ -4,7 +4,10 @@ import { create } from 'zustand';
 import type { Tier } from '@/data/types';
 import { isLiveBackend, supabaseService } from '@/services';
 import { AuthService } from '@/services/backend/AuthService';
-import { completeAuthFromUrl } from '@/services/backend/authLink';
+import {
+  clearAuthParamsFromUrl,
+  completeAuthFromUrl,
+} from '@/services/backend/authLink';
 import {
   checkAccount,
   createFirstChallenge,
@@ -140,6 +143,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return false;
     }
     if (!result) return false;
+    // The link carried an auth payload and it has now been spent, whether it
+    // worked or not. On web that payload is still sitting in the address bar.
+    clearAuthParamsFromUrl();
     if (!result.ok || !result.userId) {
       // Never silent: an expired link that left the PREVIOUS account signed
       // in looks exactly like a successful sign-in from the outside.

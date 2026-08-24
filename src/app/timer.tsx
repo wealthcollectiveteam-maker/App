@@ -5,7 +5,7 @@ import {
   CheckCircleIcon as CheckCircle,
 } from 'phosphor-react-native';
 import React, { useCallback, useState } from 'react';
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ProgressRing } from '@/components/ProgressRing';
@@ -33,6 +33,13 @@ function KeepAwakeWhileVisible() {
 /**
  * Never fail silently: when notification permission is denied, say so and
  * offer the system settings. Without it a backgrounded timer is invisible.
+ *
+ * On web there is no permission to grant — this app posts no web
+ * notifications at all — so the honest line is a different one, and it is
+ * about what the browser CAN still do. The countdown is derived from the
+ * target timestamp, not from a running interval, so it survives a
+ * backgrounded tab, a throttled one, and a reload; what it cannot do is get
+ * your attention once the tab is gone.
  */
 function NotificationDeniedNotice() {
   const [status, setStatus] = useState<NotificationPermission>('unavailable');
@@ -42,6 +49,19 @@ function NotificationDeniedNotice() {
       getNotificationPermissionStatus().then(setStatus).catch(() => {});
     }, []),
   );
+
+  if (Platform.OS === 'web') {
+    return (
+      <View style={styles.deniedNotice}>
+        <BellSlash size={15} color={colors.neutral400} />
+        <Text style={styles.deniedText}>
+          Keep this tab open. The countdown is read off the clock, so it stays
+          right in the background — but a browser can{'’'}t alert you once
+          the tab is closed.
+        </Text>
+      </View>
+    );
+  }
 
   if (status !== 'denied') return null;
   return (

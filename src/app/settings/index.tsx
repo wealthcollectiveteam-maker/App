@@ -6,6 +6,7 @@ import {
 } from 'phosphor-react-native';
 import React, { useState } from 'react';
 import {
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -32,6 +33,13 @@ const PREF_ROWS: { key: keyof NotificationPrefs; label: string; sub: string }[] 
   { key: 'dailyReminder', label: 'Daily reminder', sub: 'An evening nudge if tasks are open' },
 ];
 
+/**
+ * A browser cannot deliver a notification this app is able to send, and it
+ * has no Apple Health to read. Rather than show toggles that quietly do
+ * nothing, each affected section says what is true here once and moves on.
+ */
+const IS_WEB = Platform.OS === 'web';
+
 const HEALTH_SUB_ROWS: { key: keyof HealthPrefs; label: string; sub: string }[] = [
   { key: 'dietPromptEnabled', label: 'Diet prompt', sub: 'Suggest marking diet complete when food is logged elsewhere' },
   { key: 'workoutPromptEnabled', label: 'Workout prompt', sub: 'Suggest marking workouts found in Apple Health' },
@@ -53,6 +61,7 @@ export default function SettingsScreen() {
   const deleteAccount = useAppStore((s) => s.deleteAccount);
   const healthPrefs = useAppStore((s) => s.healthPrefs);
   const setHealthPref = useAppStore((s) => s.setHealthPref);
+  const healthAvailable = useAppStore((s) => s.healthAvailable);
   const weeklyCheckinEnabled = useAppStore((s) => s.weeklyCheckinEnabled);
   const setWeeklyCheckinEnabled = useAppStore((s) => s.setWeeklyCheckinEnabled);
   const unitPreference = useAppStore((s) => s.unitPreference);
@@ -95,29 +104,42 @@ export default function SettingsScreen() {
       </View>
 
       <Kicker style={styles.sectionKicker}>Notifications</Kicker>
-      <NotificationPermissionBanner />
-      <Card>
-        {PREF_ROWS.map(({ key, label, sub }, i) => (
-          <View
-            key={key}
-            style={[styles.prefRow, i > 0 && styles.rowBorder]}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>{label}</Text>
-              <Text style={styles.rowSub}>{sub}</Text>
-            </View>
-            <Switch
-              value={prefs[key]}
-              onValueChange={(v) => setPref(key, v)}
-              trackColor={{
-                false: colors.neutral800,
-                true: colors.accent700,
-              }}
-              thumbColor={prefs[key] ? colors.accent300 : colors.neutral500}
-            />
-          </View>
-        ))}
-      </Card>
+      {IS_WEB ? (
+        <Card>
+          <Text style={styles.rowSub}>
+            In a browser this app can{'’'}t send you notifications. Pings
+            still send and still show up in Squad, and the timer still keeps
+            time — you just have to come back and look. Install the iOS app for
+            alerts.
+          </Text>
+        </Card>
+      ) : (
+        <>
+          <NotificationPermissionBanner />
+          <Card>
+            {PREF_ROWS.map(({ key, label, sub }, i) => (
+              <View
+                key={key}
+                style={[styles.prefRow, i > 0 && styles.rowBorder]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowLabel}>{label}</Text>
+                  <Text style={styles.rowSub}>{sub}</Text>
+                </View>
+                <Switch
+                  value={prefs[key]}
+                  onValueChange={(v) => setPref(key, v)}
+                  trackColor={{
+                    false: colors.neutral800,
+                    true: colors.accent700,
+                  }}
+                  thumbColor={prefs[key] ? colors.accent300 : colors.neutral500}
+                />
+              </View>
+            ))}
+          </Card>
+        </>
+      )}
 
       <Kicker style={styles.sectionKicker}>Units</Kicker>
       <Card>
@@ -151,46 +173,57 @@ export default function SettingsScreen() {
         </Pressable>
       </Card>
 
-      <Kicker style={styles.sectionKicker}>Apple Health</Kicker>
-      <Card>
-        <View style={styles.prefRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.rowLabel}>Connect Apple Health</Text>
-            <Text style={styles.rowSub}>
-              Read-only. Data stays on this device — never uploaded, never
-              visible to squadmates.
-            </Text>
-          </View>
-          <Switch
-            value={healthPrefs.healthEnabled}
-            onValueChange={(v) => setHealthPref('healthEnabled', v)}
-            trackColor={{ false: colors.neutral800, true: colors.accent700 }}
-            thumbColor={
-              healthPrefs.healthEnabled ? colors.accent300 : colors.neutral500
-            }
-          />
-        </View>
-        {healthPrefs.healthEnabled &&
-          HEALTH_SUB_ROWS.map(({ key, label, sub }) => (
-            <View key={key} style={[styles.prefRow, styles.rowBorder]}>
+      {/* Only where a HealthKit source can actually be queried. Everywhere
+          else — web, Android, Expo Go, the simulator — this whole section
+          goes, the same way TodaysHealthCard on Track does. A "Connect Apple
+          Health" switch that can never connect to anything is worse than no
+          switch: it reads as a feature the user failed to turn on. */}
+      {healthAvailable && (
+        <>
+          <Kicker style={styles.sectionKicker}>Apple Health</Kicker>
+          <Card>
+            <View style={styles.prefRow}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.rowLabel}>{label}</Text>
-                <Text style={styles.rowSub}>{sub}</Text>
+                <Text style={styles.rowLabel}>Connect Apple Health</Text>
+                <Text style={styles.rowSub}>
+                  Read-only. Data stays on this device — never uploaded, never
+                  visible to squadmates.
+                </Text>
               </View>
               <Switch
-                value={healthPrefs[key]}
-                onValueChange={(v) => setHealthPref(key, v)}
-                trackColor={{
-                  false: colors.neutral800,
-                  true: colors.accent700,
-                }}
+                value={healthPrefs.healthEnabled}
+                onValueChange={(v) => setHealthPref('healthEnabled', v)}
+                trackColor={{ false: colors.neutral800, true: colors.accent700 }}
                 thumbColor={
-                  healthPrefs[key] ? colors.accent300 : colors.neutral500
+                  healthPrefs.healthEnabled
+                    ? colors.accent300
+                    : colors.neutral500
                 }
               />
             </View>
-          ))}
-      </Card>
+            {healthPrefs.healthEnabled &&
+              HEALTH_SUB_ROWS.map(({ key, label, sub }) => (
+                <View key={key} style={[styles.prefRow, styles.rowBorder]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.rowLabel}>{label}</Text>
+                    <Text style={styles.rowSub}>{sub}</Text>
+                  </View>
+                  <Switch
+                    value={healthPrefs[key]}
+                    onValueChange={(v) => setHealthPref(key, v)}
+                    trackColor={{
+                      false: colors.neutral800,
+                      true: colors.accent700,
+                    }}
+                    thumbColor={
+                      healthPrefs[key] ? colors.accent300 : colors.neutral500
+                    }
+                  />
+                </View>
+              ))}
+          </Card>
+        </>
+      )}
 
       <Kicker style={styles.sectionKicker}>Track</Kicker>
       <Card>

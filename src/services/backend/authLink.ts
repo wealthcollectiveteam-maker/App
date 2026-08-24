@@ -47,6 +47,25 @@ export interface AuthLinkResult {
 }
 
 /**
+ * WEB ONLY, and only once the link has been consumed. On a phone the payload
+ * arrives in a deep link and is gone the moment it is read; in a browser it
+ * stays in the address bar, which means a live access token sits in the URL
+ * the user can copy, bookmark, or paste into a group chat, and the next
+ * reload feeds an already-spent refresh token straight back into
+ * setSession(). Same page, same history entry — only the credentials go.
+ */
+export function clearAuthParamsFromUrl(): void {
+  if (typeof window === 'undefined' || !window.history?.replaceState) return;
+  const { pathname } = window.location;
+  try {
+    window.history.replaceState(window.history.state, '', pathname);
+  } catch {
+    // A browser that refuses the rewrite still has a valid session; the
+    // tidy-up is not worth failing sign-in over.
+  }
+}
+
+/**
  * Completes sign-in from a deep link. Returns null when the URL carries no
  * auth payload at all — every other deep link (a timer notification tap, an
  * invite link) reaches this function too, and must pass through untouched.
