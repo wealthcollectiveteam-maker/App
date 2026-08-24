@@ -719,3 +719,79 @@ to authenticated;
 --   restart_challenge(...)     ends a challenge; reachable only from the
 --                              evaluator.
 --   challenge_length(uuid)     reads any challenge's length by id.
+
+-- =============================================================================
+-- 9. THE SCHEDULED JOB HAS NEVER BEEN ABLE TO RUN
+-- =============================================================================
+--
+-- Found while proving the finish line below actually fires. Calling
+-- evaluate_all_challenges() raises `invalid transaction termination` at its
+-- COMMIT — every time, for every caller, since 0007. It is not permissions
+-- and not environmental: PostgreSQL refuses transaction control inside a
+-- routine that runs in an atomic context, and 0007 declared the procedure
+-- `security definer set search_path = public` while having it COMMIT once per
+-- challenge. Those cannot both be true. Each of the two clauses is enough on
+-- its own; measured, not guessed:
+--
+--   language plpgsql                                 commit  -> CALL ok
+--   language plpgsql set search_path=public          commit  -> raises
+--   language plpgsql security definer                commit  -> raises
+--   language plpgsql security definer set search_path commit -> raises
+--
+-- The consequence is the entire engine. Nothing has ever applied a missed-day
+-- penalty, retroactively sealed a met day, restarted a HARD run, or — as of
+-- this migration — completed a finished challenge, because the hourly entry
+-- point aborts on its first iteration and takes the whole pass with it.
+-- evaluate_challenge() itself is fine and always was, which is exactly why
+-- this survived: every proof to date called the function directly, and the
+-- function is not the broken part.
+--
+-- So the procedure becomes plain: no SET clause, no SECURITY DEFINER. Neither
+-- was doing the work people assume.
+--
+--   The privileges live in evaluate_challenge(), which is still SECURITY
+--   DEFINER with its own pinned search_path — this procedure only chooses ids
+--   and loops. Its caller is pg_cron, which runs as the database owner, so
+--   invoker rights here are the owner's rights.
+--
+--   The search_path protection that the SET clause was there for is kept by
+--   the body itself: every identifier in it is schema-qualified
+--   (public.challenges, public.evaluate_challenge). set_config() is NOT used
+--   as a substitute — it was tried, and it makes no difference to the atomic
+--   context either way.
+--
+-- The COMMIT is what is being protected here, and it is worth protecting: it
+-- is what stops one unusable challenge row from rolling back the penalties
+-- and retroactive seals of every other challenge in the same pass.
+create or replace procedure public.evaluate_all_challenges()
+language plpgsql
+as $$
+declare
+  r        record;
+  v_judged integer;
+  v_total  integer := 0;
+  v_failed integer := 0;
+begin
+  for r in
+    select id from public.challenges where ended_at is null order by id
+  loop
+    begin
+      v_judged := public.evaluate_challenge(r.id);
+      v_total := v_total + v_judged;
+    exception when others then
+      v_failed := v_failed + 1;
+      raise warning 'evaluate_challenge(%) failed: %', r.id, sqlerrm;
+    end;
+    commit;
+  end loop;
+
+  raise notice 'evaluate_all_challenges: % day(s) judged, % challenge(s) failed',
+    v_total, v_failed;
+end;
+$$;
+
+-- Unchanged in intent from 0007, restated because the procedure was
+-- re-created: this is the scheduler's entry point and nothing else's. It
+-- walks EVERY challenge in the database, so no client role may call it.
+revoke all on procedure public.evaluate_all_challenges()
+from public, anon, authenticated;

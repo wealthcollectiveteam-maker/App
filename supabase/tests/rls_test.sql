@@ -34,6 +34,11 @@ declare
     'evaluate_challenge(uuid)',
     'restart_challenge(uuid,integer,text)',
     'active_challenge_of(uuid)',
+    -- 0008: takes a challenge id, so a grant would let any user read the
+    -- length of somebody else's challenge. The zero-argument
+    -- challenge_length() is the client's way in and can only ever answer
+    -- for the caller, so that one IS granted.
+    'challenge_length(uuid)',
     'sim_fill_day(uuid,integer)'];
 begin
   for t in select tablename from pg_tables where schemaname = 'public' loop

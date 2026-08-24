@@ -407,18 +407,39 @@ begin
 
   perform public.evaluate_challenge(v_ch);
 
-  if (select ended_at from public.challenges where id = v_ch) is not null then
-    raise exception 'FAIL: a COMPLETED 75-day run was scored as abandoned and restarted';
+  -- Until 0008 this asserted `ended_at is null`, because ending a challenge
+  -- meant only one thing: it had been abandoned or restarted. 0008 gives the
+  -- word a second meaning, so the assertion gets SHARPER rather than looser —
+  -- it is no longer enough that the run did not end, it now has to have
+  -- ended for the right reason, and the run must not have been replaced.
+  if (select ended_reason from public.challenges where id = v_ch)
+     is distinct from 'completed' then
+    raise exception 'FAIL: a COMPLETED 75-day run ended as %, not completed',
+      coalesce((select ended_reason from public.challenges where id = v_ch),
+               '(still running)');
+  end if;
+  if (select ended_on_day from public.challenges where id = v_ch) <> 75 then
+    raise exception 'FAIL: the run completed on the wrong day';
+  end if;
+  -- The distinction the old assertion was really protecting: a finished run
+  -- must not be scored as abandoned, and abandonment is what creates a
+  -- replacement challenge for the same owner.
+  if (select count(*) from public.challenges where owner = v_uid) <> 1 then
+    raise exception 'FAIL: a COMPLETED run was restarted';
   end if;
   if exists (select 1 from public.challenge_days
               where challenge_id = v_ch and day > 75 and evaluated_at is not null) then
     raise exception 'FAIL: a day past the end of the challenge was judged';
   end if;
+  if exists (select 1 from public.challenge_days
+              where challenge_id = v_ch and day > 75) then
+    raise exception 'FAIL: a snapshot was frozen past the final day';
+  end if;
   if (select last_evaluated_day from public.challenges where id = v_ch) <> 75 then
     raise exception 'FAIL: the cursor ran past the final day';
   end if;
 
-  raise notice 'PASS: nothing past the final day is judged — a finished run stays finished';
+  raise notice 'PASS: a finished run completes — judged to day 75, nothing beyond it, no restart';
 end $$;
 
 -- =============================================================================
