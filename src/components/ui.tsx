@@ -7,14 +7,13 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
-import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
-import { colors, font, radius, shadows, space } from '@/theme/tokens';
+import { colors, font, microTracking, radius, space } from '@/theme/tokens';
 
-/** Section kicker: 10px, .14em, uppercase, accent. */
+/** Section kicker: 10px, .14em, uppercase. */
 export function Kicker({
   children,
-  color = colors.accent400,
+  color = colors.textMid,
   style,
 }: {
   children: React.ReactNode;
@@ -25,9 +24,9 @@ export function Kicker({
     <Text
       style={[
         {
-          fontFamily: font.medium,
+          fontFamily: font.semibold,
           fontSize: 10,
-          letterSpacing: 1.4,
+          letterSpacing: microTracking(10),
           textTransform: 'uppercase',
           color,
         },
@@ -39,45 +38,23 @@ export function Kicker({
   );
 }
 
-/** Nocturne signature: 1px rule fading to transparent at both ends. */
+/** Hairline rule. Flat now — the system's edges are straight, not faded. */
 export function FadingDivider({ style }: { style?: ViewStyle }) {
   return (
-    <View style={[{ height: 1, width: '100%' }, style]}>
-      <Svg width="100%" height={1}>
-        <Defs>
-          <LinearGradient id="fade" x1="0" y1="0" x2="1" y2="0">
-            <Stop offset="0" stopColor={colors.text} stopOpacity={0} />
-            <Stop offset="0.5" stopColor={colors.text} stopOpacity={0.16} />
-            <Stop offset="1" stopColor={colors.text} stopOpacity={0} />
-          </LinearGradient>
-        </Defs>
-        <Rect x="0" y="0" width="100%" height={1} fill="url(#fade)" />
-      </Svg>
-    </View>
+    <View style={[{ height: 1, backgroundColor: colors.line }, style]} />
   );
 }
 
-/** Accent-fade divider used in the finish flow. */
+/** Accent rule, used in the finish flow. */
 export function AccentDivider({ style }: { style?: ViewStyle }) {
   return (
-    <View style={[{ height: 1, width: '100%' }, style]}>
-      <Svg width="100%" height={1}>
-        <Defs>
-          <LinearGradient id="afade" x1="0" y1="0" x2="1" y2="0">
-            <Stop offset="0" stopColor={colors.accent500} stopOpacity={0} />
-            <Stop offset="0.5" stopColor={colors.accent500} stopOpacity={0.7} />
-            <Stop offset="1" stopColor={colors.accent500} stopOpacity={0} />
-          </LinearGradient>
-        </Defs>
-        <Rect x="0" y="0" width="100%" height={1} fill="url(#afade)" />
-      </Svg>
-    </View>
+    <View style={[{ height: 1, backgroundColor: colors.accent }, style]} />
   );
 }
 
 /**
- * Primary button style: outlined (1px accent border on transparent),
- * uppercase, .16em — accent is never a large filled area.
+ * SECONDARY action: outlined, square, uppercase with wide tracking.
+ * Primary actions are solid accent — see `PrimaryButton` in primitives.
  */
 export function OutlineButton({
   label,
@@ -94,37 +71,39 @@ export function OutlineButton({
 }) {
   const borderColor =
     tone === 'accent'
-      ? colors.accent500
+      ? colors.accent
       : tone === 'neutral'
-        ? colors.neutral700
+        ? colors.line
         : 'transparent';
   const textColor =
     tone === 'accent'
-      ? colors.accent300
+      ? colors.textHi
       : tone === 'neutral'
-        ? colors.neutral400
-        : colors.neutral500;
+        ? colors.textMid
+        : colors.textLow;
   return (
     <Pressable
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
       style={({ pressed, hovered }: any) => [
         styles.button,
         small && styles.buttonSmall,
         { borderColor },
         (hovered || pressed) &&
-          tone === 'accent' && {
-            backgroundColor: colors.accentTint,
-            borderColor: colors.accent400,
-          },
+          tone === 'accent' && { backgroundColor: colors.accentTint },
         (hovered || pressed) &&
-          tone !== 'accent' && { backgroundColor: 'rgba(233,233,237,0.05)' },
+          tone !== 'accent' && { backgroundColor: colors.surfaceAlt },
         style,
       ]}
     >
       <Text
         style={[
           styles.buttonLabel,
-          small && { fontSize: 10.5 },
+          small && {
+            fontSize: 10.5,
+            letterSpacing: microTracking(10.5),
+          },
           { color: textColor },
         ]}
       >
@@ -144,6 +123,10 @@ export function Card({
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
+/**
+ * Underlined text tabs. The active tab carries the accent rule; there is no
+ * box. Same API as before so every call site keeps working.
+ */
 export function SegmentedControl({
   segments,
   value,
@@ -163,16 +146,24 @@ export function SegmentedControl({
           <Pressable
             key={s}
             onPress={() => onChange(s)}
-            style={[styles.segment, active && styles.segmentActive]}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: active }}
+            style={styles.segment}
           >
             <Text
               style={[
                 styles.segmentLabel,
-                active && { color: colors.accent200 },
+                active && { color: colors.accent400 },
               ]}
             >
               {s}
             </Text>
+            <View
+              style={[
+                styles.segmentRule,
+                { backgroundColor: active ? colors.accent : 'transparent' },
+              ]}
+            />
           </Pressable>
         );
       })}
@@ -197,38 +188,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   buttonLabel: {
-    fontFamily: font.medium,
+    fontFamily: font.semibold,
     fontSize: 12,
-    letterSpacing: 1.9, // .16em
+    letterSpacing: microTracking(12),
     textTransform: 'uppercase',
+    textAlign: 'center',
   },
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.line,
     padding: space.cardPad,
-    ...shadows.sm,
   },
   segmented: {
     flexDirection: 'row',
-    borderWidth: 1,
-    borderColor: colors.divider,
-    borderRadius: radius.sm,
-    overflow: 'hidden',
+    gap: 18,
+    alignItems: 'flex-end',
   },
   segment: {
-    flex: 1,
-    minHeight: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  segmentActive: {
-    backgroundColor: colors.accent900,
+    minHeight: 32,
+    justifyContent: 'flex-end',
+    gap: 5,
   },
   segmentLabel: {
-    fontFamily: font.medium,
-    fontSize: 10,
-    letterSpacing: 1.4,
+    fontFamily: font.semibold,
+    fontSize: 11,
+    letterSpacing: microTracking(11),
     textTransform: 'uppercase',
-    color: colors.neutral500,
+    color: colors.textLow,
+  },
+  segmentRule: {
+    height: 2,
   },
 });
