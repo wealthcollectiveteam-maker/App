@@ -27,7 +27,11 @@ export const AuthService = {
         // Redirect URLs; Supabase quietly falls back to Site URL for a value
         // that is not on that allow-list, which is exactly today's behaviour,
         // so a missing entry costs the web link and breaks nothing else.
-        emailRedirectTo: Linking.createURL('/'),
+        // '' rather than '/': on a device the empty path yields
+        // `rankedfitness://`, where '/' would yield `rankedfitness:///`.
+        // Both deep-link fine, but only the first is the string already
+        // written down in authLink.ts and in the Supabase dashboard.
+        emailRedirectTo: Linking.createURL(''),
       },
     });
     return error ? { ok: false, error: error.message } : { ok: true };
