@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Micro, PrimaryButton, Serif } from '@/components/primitives';
 import { Card, OutlineButton } from '@/components/ui';
 import { CHALLENGE } from '@/constants/challenge';
-import { missedDayLine, tierTaskSummary, TIERS } from '@/constants/tiers';
+import { buildTierTask, missedDayLine, TIERS } from '@/constants/tiers';
 import type { Tier } from '@/data/types';
 import { AuthService } from '@/services/backend/AuthService';
 import { useSessionStore } from '@/store/useSessionStore';
@@ -86,7 +86,31 @@ function TierCard({
           {def.tagline}
         </Micro>
       </View>
-      <Text style={styles.tierTasks}>{tierTaskSummary(tier)}</Text>
+      <Text style={styles.tierPromise}>{def.promise}</Text>
+
+      {/* The real task list, with the descriptor that makes it that tier.
+          A count told you how much; this tells you what — and what a tier
+          demands of you is the whole basis for choosing one. */}
+      <View style={styles.tierTasks}>
+        {def.tasks.map((t) => (
+          <View key={t.key} style={styles.tierTaskRow}>
+            <View
+              style={[
+                styles.tierTaskDot,
+                { backgroundColor: selected ? colors.accent : colors.textLow },
+              ]}
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.tierTaskLabel}>
+                {buildTierTask(tier, t.key).label}
+              </Text>
+              <Serif size={13} style={{ color: colors.textLow }}>
+                {t.sub}
+              </Serif>
+            </View>
+          </View>
+        ))}
+      </View>
       <Serif
         size={15}
         style={{
@@ -473,12 +497,32 @@ const styles = StyleSheet.create({
     fontSize: 26,
     letterSpacing: -0.6,
   },
-  tierTasks: {
+  tierPromise: {
     fontFamily: font.regular,
     fontSize: 14,
-    lineHeight: 21,
+    lineHeight: 20,
     color: colors.textMid,
-    marginTop: 12,
+    marginTop: 10,
+  },
+  tierTasks: {
+    marginTop: 14,
+    gap: 6,
+  },
+  tierTaskRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 9,
+  },
+  tierTaskDot: {
+    width: 5,
+    height: 5,
+    marginTop: 7,
+    transform: [{ rotate: '45deg' }],
+  },
+  tierTaskLabel: {
+    fontFamily: font.medium,
+    fontSize: 14,
+    color: colors.textHi,
   },
   whyField: {
     flexDirection: 'row',

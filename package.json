@@ -58,6 +58,7 @@
     "test:health-gate": "node --experimental-strip-types scripts/health-env.test.mjs",
     "test:units": "node --experimental-strip-types scripts/units.test.mjs",
     "test:fdc": "node --experimental-strip-types scripts/fdc.test.mjs",
+    "test:tiers": "node --experimental-strip-types scripts/tiers.test.mjs",
     "test:rls": "bash scripts/test-rls.sh"
   },
   "private": true

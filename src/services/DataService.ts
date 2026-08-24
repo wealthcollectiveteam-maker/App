@@ -157,10 +157,17 @@ export class MockDataService implements IDataService {
     const workoutTasks = tierTaskKeys(this.state.tier).filter((k) =>
       k.startsWith('workout'),
     ).length;
+    // Every figure derives from the tier actually run, not from Hard's
+    // numbers with everyone else's totals quietly borrowed from them.
+    const water = tierStandardTarget(this.state.tier, 'water');
+    const read = tierStandardTarget(this.state.tier, 'read');
     return {
       workouts: CHALLENGE.days * workoutTasks,
-      pagesRead: CHALLENGE.days * 10,
-      gallons: CHALLENGE.days,
+      pagesRead: CHALLENGE.days * (read?.value ?? 0),
+      water: {
+        value: CHALLENGE.days * (water?.value ?? 0),
+        unit: water?.unit ?? 'litres',
+      },
       day1PhotoUri: null,
       day75PhotoUri: this.state.proofs.photo ?? null,
     };

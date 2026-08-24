@@ -240,7 +240,12 @@ export interface Squad {
 export interface FinalResults {
   workouts: number;
   pagesRead: number;
-  gallons: number;
+  /**
+   * Total water, in the unit the TIER counts it in — Hard counts gallons,
+   * Medium and Soft litres. A bare number labelled "Gallons" was true of
+   * one tier and wrong for the other two.
+   */
+  water: TaskTarget;
   day1PhotoUri: string | null;
   day75PhotoUri: string | null;
 }

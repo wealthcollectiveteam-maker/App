@@ -164,7 +164,10 @@ function StepTwo() {
         {[
           { value: results.workouts, label: 'Workouts' },
           { value: results.pagesRead, label: 'Pages read' },
-          { value: results.gallons, label: 'Gallons' },
+          {
+            value: results.water.value,
+            label: results.water.unit === 'gallons' ? 'Gallons' : 'Litres',
+          },
         ].map((s) => (
           <Card key={s.label} style={styles.statCell}>
             <Text style={styles.statValue}>{s.value}</Text>

@@ -151,17 +151,42 @@ export default function YouScreen() {
           </View>
         </Card>
 
-        <View style={styles.whyCard}>
-          <View style={styles.whyRule} />
+        {/* The why is optional at sign-up, so it is genuinely empty for
+            anyone who skipped it — and a pair of bare quote marks is not an
+            empty state. Ask for it, and go where it can be written. */}
+        <Pressable
+          onPress={() => (why ? undefined : router.push('/settings'))}
+          accessibilityRole={why ? 'text' : 'button'}
+          accessibilityLabel={why ? 'Why I started' : 'Add why you started'}
+          style={styles.whyCard}
+        >
+          <View
+            style={[
+              styles.whyRule,
+              !why && { backgroundColor: colors.textLow },
+            ]}
+          />
           <View style={styles.whyBody}>
             <Micro color={colors.textMid}>Why I started</Micro>
-            <Serif size={21} style={{ marginTop: 10, color: colors.textHi }}>
-              {'“'}
-              {why}
-              {'”'}
-            </Serif>
+            {why ? (
+              <Serif size={21} style={{ marginTop: 10, color: colors.textHi }}>
+                {'“'}
+                {why}
+                {'”'}
+              </Serif>
+            ) : (
+              <>
+                <Serif size={19} style={{ marginTop: 10, color: colors.textLow }}>
+                  You haven{'’'}t written one yet. Day {day} is a good
+                  place to start.
+                </Serif>
+                <Micro color={colors.accent400} style={{ marginTop: 12 }}>
+                  Write it in settings {'→'}
+                </Micro>
+              </>
+            )}
           </View>
-        </View>
+        </Pressable>
 
         <View style={{ marginTop: 20 }}>
           {rows.map(({ label, meta, onPress }) => (
