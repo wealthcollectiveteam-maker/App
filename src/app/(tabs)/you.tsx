@@ -1,3 +1,4 @@
+import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -18,6 +19,7 @@ import {
   selectXpToNext,
   useAppStore,
 } from '@/store/useAppStore';
+import { useSessionStore } from '@/store/useSessionStore';
 import { toast } from '@/store/useToastStore';
 import { colors, font, microTracking, space } from '@/theme/tokens';
 
@@ -78,6 +80,7 @@ export default function YouScreen() {
   const why = useAppStore((s) => s.why);
   const squad = useAppStore((s) => s.squad);
   const profileName = useAppStore((s) => s.profileName);
+  const signOut = useSessionStore((s) => s.signOut);
   const router = useRouter();
 
   const level = selectLevel(xp);
@@ -89,16 +92,34 @@ export default function YouScreen() {
     { label: 'My Challenge', meta: null, onPress: () => router.push('/my-challenge') },
     { label: 'Settings', meta: null, onPress: () => router.push('/settings') },
     {
+      // Both of these used to be theatre: the code row said "Invite code
+      // copied" without touching the clipboard, and Sign out said
+      // "Signed out (mock)" and left the session exactly where it was.
       label: 'Invite code',
-      meta: squad?.code ?? 'Solo',
-      onPress: () =>
-        toast(
-          squad
-            ? 'Invite code copied'
-            : 'Running solo — create a squad from the Squad tab',
-        ),
+      meta: squad?.code || (squad ? '—' : 'Solo'),
+      onPress: () => {
+        if (!squad) {
+          toast('Running solo — create a squad from the Squad tab');
+          return;
+        }
+        if (!squad.code) {
+          toast('The invite code hasn’t arrived yet — one moment');
+          return;
+        }
+        Clipboard.setStringAsync(squad.code)
+          .then(() => toast(`Invite code ${squad.code} copied`))
+          .catch(() => toast('Could not copy — the code is on the Squad tab'));
+      },
     },
-    { label: 'Sign out', meta: null, onPress: () => toast('Signed out (mock)') },
+    {
+      label: 'Sign out',
+      meta: null,
+      onPress: () => {
+        signOut()
+          .then(() => toast('Signed out'))
+          .catch(() => toast('Signed out'));
+      },
+    },
   ];
 
   return (
