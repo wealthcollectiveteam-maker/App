@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,13 +12,15 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Card, Kicker, OutlineButton, SegmentedControl } from '@/components/ui';
-import { TIERS } from '@/constants/tiers';
+import { Micro, PrimaryButton, Serif } from '@/components/primitives';
+import { Card, OutlineButton } from '@/components/ui';
+import { CHALLENGE } from '@/constants/challenge';
+import { missedDayLine, tierTaskSummary, TIERS } from '@/constants/tiers';
 import type { Tier } from '@/data/types';
 import { AuthService } from '@/services/backend/AuthService';
 import { useSessionStore } from '@/store/useSessionStore';
 import { toast } from '@/store/useToastStore';
-import { colors, font, radius, space } from '@/theme/tokens';
+import { colors, font, microTracking, radius, space } from '@/theme/tokens';
 
 /**
  * Sign in / sign up. One screen, three steps:
@@ -40,13 +43,61 @@ type Step = 'email' | 'code' | 'setup';
 
 const TIER_ORDER: Tier[] = ['hard', 'medium', 'soft'];
 
-function tierSummary(tier: Tier): string {
+/**
+ * A tier card. The consequence line is DERIVED from that tier's missed-day
+ * rules — "miss a task, restart at day one" is true of hard alone, so as a
+ * blanket promise under the heading it was false for two thirds of users.
+ */
+function TierCard({
+  tier,
+  selected,
+  onPress,
+}: {
+  tier: Tier;
+  selected: boolean;
+  onPress: () => void;
+}) {
   const def = TIERS[tier];
-  return `${def.taskKeys.length} tasks a day · ${
-    def.missedDay.restartsChallenge
-      ? 'a missed day restarts the challenge'
-      : 'a missed day breaks the streak, not the challenge'
-  }`;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityState={{ selected }}
+      accessibilityLabel={`${def.label} tier`}
+      style={[styles.tierCard, selected && styles.tierCardSelected]}
+    >
+      {selected && (
+        <View style={styles.selectedTab}>
+          <View style={styles.selectedTabInner}>
+            <Text style={styles.selectedTabText}>SELECTED</Text>
+          </View>
+        </View>
+      )}
+      <View style={styles.tierHeading}>
+        <Text
+          style={[
+            styles.tierName,
+            { color: selected ? colors.textHi : colors.textMid },
+          ]}
+        >
+          {def.label.toUpperCase()}
+        </Text>
+        <Micro color={selected ? colors.accent400 : colors.textLow}>
+          {def.tagline}
+        </Micro>
+      </View>
+      <Text style={styles.tierTasks}>{tierTaskSummary(tier)}</Text>
+      <Serif
+        size={15}
+        style={{
+          marginTop: 10,
+          color: selected ? colors.accent400 : colors.textLow,
+        }}
+      >
+        {missedDayLine(tier)}
+      </Serif>
+    </Pressable>
+  );
 }
 
 export default function AuthScreen() {
@@ -140,21 +191,30 @@ export default function AuthScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingTop: insets.top + 48, paddingBottom: insets.bottom + 40 },
+          { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 40 },
         ]}
         keyboardShouldPersistTaps="handled"
       >
-        <Kicker>Ranked Fitness</Kicker>
-        <Text style={styles.title}>
-          {step === 'setup' ? 'Set up your challenge' : 'Sign in'}
-        </Text>
-        <Text style={styles.lede}>
-          {step === 'email'
-            ? 'We email a 6-digit code. No password to forget.'
-            : step === 'code'
-              ? `Enter the code we sent to ${email.trim()}.`
-              : 'Your name is what your squad sees. Your tier and your why are yours.'}
-        </Text>
+        {/* Giant ghost numeral, bleeding off the top-right corner. It is
+            decoration: it never takes a touch, and it never scales with the
+            system font (it would swallow the screen). */}
+        <View style={styles.ghostWrap} pointerEvents="none">
+          <Text style={styles.ghost75} allowFontScaling={false}>
+            {CHALLENGE.days}
+          </Text>
+        </View>
+
+        <Text style={styles.wordmark}>RANKED</Text>
+        {step !== 'setup' && (
+          <>
+            <Text style={styles.title}>Sign in</Text>
+            <Serif style={{ marginTop: 10 }}>
+              {step === 'email'
+                ? 'We email a 6-digit code. No password to forget.'
+                : `Enter the code we sent to ${email.trim()}.`}
+            </Serif>
+          </>
+        )}
 
         {step === 'email' && (
           <Card style={styles.card}>
@@ -174,9 +234,10 @@ export default function AuthScreen() {
               onSubmitEditing={sendCode}
               returnKeyType="send"
             />
-            <OutlineButton
-              label={busy ? 'Sending…' : 'Send code'}
-              onPress={busy ? undefined : sendCode}
+            <PrimaryButton
+              label={busy ? 'Sending…' : 'Send code →'}
+              disabled={busy}
+              onPress={sendCode}
               style={styles.action}
             />
           </Card>
@@ -198,9 +259,10 @@ export default function AuthScreen() {
               editable={!busy}
               onSubmitEditing={verify}
             />
-            <OutlineButton
-              label={busy ? 'Verifying…' : 'Verify'}
-              onPress={busy ? undefined : verify}
+            <PrimaryButton
+              label={busy ? 'Verifying…' : 'Verify →'}
+              disabled={busy}
+              onPress={verify}
               style={styles.action}
             />
             <View style={styles.secondaryRow}>
@@ -226,57 +288,68 @@ export default function AuthScreen() {
         )}
 
         {step === 'setup' && (
-          <Card style={styles.card}>
+          <View style={styles.setup}>
             <Text style={styles.label}>Display name</Text>
             <TextInput
               value={name}
               onChangeText={setName}
               autoCapitalize="words"
               placeholder="Your name"
-              placeholderTextColor={colors.neutral600}
+              placeholderTextColor={colors.textLow}
               style={styles.input}
               editable={!busy}
               maxLength={24}
             />
-            <Text style={[styles.label, { marginTop: 16 }]}>Tier</Text>
-            <SegmentedControl
-              segments={TIER_ORDER.map((t) => TIERS[t].label)}
-              /* No segment is active until one is picked — the control must
-                 not answer this question on the user's behalf. */
-              value={tier ? TIERS[tier].label : ''}
-              onChange={(label) => {
-                const picked = TIER_ORDER.find((t) => TIERS[t].label === label);
-                if (picked) setTier(picked);
-              }}
-              style={{ marginTop: 6 }}
+
+            <Micro color={colors.accent400} style={{ marginTop: 30 }}>
+              {CHALLENGE.days} days. No shortcuts. No mercy.
+            </Micro>
+            <Text style={styles.pickTitle}>Pick your tier.</Text>
+
+            <View style={{ gap: 10, marginTop: 20 }}>
+              {TIER_ORDER.map((t) => (
+                <TierCard
+                  key={t}
+                  tier={t}
+                  selected={tier === t}
+                  onPress={() => setTier(t)}
+                />
+              ))}
+            </View>
+
+            <View style={styles.whyField}>
+              <Micro color={colors.textMid}>Why?</Micro>
+              <TextInput
+                value={why}
+                onChangeText={setWhy}
+                placeholder="Only you ever see this."
+                placeholderTextColor={colors.textLow}
+                style={styles.whyInput}
+                editable={!busy}
+                maxLength={280}
+              />
+            </View>
+
+            {/* True to the snapshot model, and a stronger promise than
+                "locked once you start" — which the app never was. */}
+            <Text style={styles.hint}>Changes start tomorrow. Never today.</Text>
+
+            <PrimaryButton
+              // Enabled without a tier on purpose: pressing it says WHICH
+              // answer is missing, which a dead button never does.
+              label={busy ? 'Starting…' : 'Start day 01 →'}
+              disabled={busy}
+              onPress={startChallenge}
+              style={{ marginTop: 18 }}
             />
-            <Text style={styles.hint}>
-              {tier
-                ? tierSummary(tier)
-                : 'Pick one. It sets your daily tasks and what a missed day costs.'}
-            </Text>
-            <Text style={[styles.label, { marginTop: 16 }]}>Why you started</Text>
-            <TextInput
-              value={why}
-              onChangeText={setWhy}
-              multiline
-              placeholder="Optional. Only you ever see this."
-              placeholderTextColor={colors.neutral600}
-              style={[styles.input, { minHeight: 68 }]}
-              editable={!busy}
-              maxLength={280}
-            />
-            <Text style={styles.hint}>
-              Day 1 starts today. Tasks and tier stay editable in My Challenge —
-              edits always take effect tomorrow.
-            </Text>
-            <OutlineButton
-              label={busy ? 'Starting…' : 'Start day 1'}
-              tone={tier && name.trim() ? 'accent' : 'neutral'}
-              onPress={busy ? undefined : startChallenge}
-              style={styles.action}
-            />
-          </Card>
+            <Micro
+              size={10}
+              color={colors.textLow}
+              style={{ marginTop: 16, textAlign: 'center' }}
+            >
+              Step 2 of 3 — squad next
+            </Micro>
+          </View>
         )}
 
         {busy && (
@@ -293,66 +366,158 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.screenX,
     minHeight: '100%',
   },
+  ghostWrap: {
+    position: 'absolute',
+    top: -70,
+    right: -46,
+  },
+  ghost75: {
+    fontFamily: font.black,
+    fontSize: 300,
+    lineHeight: 300,
+    letterSpacing: -18,
+    color: colors.surfaceAlt,
+  },
+  wordmark: {
+    fontFamily: font.blackItalic,
+    fontSize: 21,
+    letterSpacing: 0.4,
+    color: colors.textHi,
+  },
   title: {
-    fontFamily: font.medium,
-    fontSize: 24,
-    color: colors.text,
+    fontFamily: font.bold,
+    fontSize: 40,
+    lineHeight: 44,
+    letterSpacing: -1.6,
+    color: colors.textHi,
+    marginTop: 34,
+  },
+  pickTitle: {
+    fontFamily: font.bold,
+    fontSize: 48,
+    lineHeight: 50,
+    letterSpacing: -2.4,
+    color: colors.textHi,
     marginTop: 10,
   },
-  lede: {
-    fontFamily: font.regular,
-    fontSize: 13.5,
-    lineHeight: 19,
-    color: colors.neutral400,
-    marginTop: 6,
+  setup: {
+    marginTop: 34,
   },
   card: {
-    marginTop: 22,
+    marginTop: 26,
   },
   label: {
-    fontFamily: font.regular,
-    fontSize: 11.5,
-    color: colors.neutral500,
+    fontFamily: font.semibold,
+    fontSize: 10,
+    letterSpacing: microTracking(10),
+    textTransform: 'uppercase',
+    color: colors.textMid,
   },
   input: {
-    fontFamily: font.regular,
-    fontSize: 15,
-    color: colors.text,
-    minHeight: 46,
+    fontFamily: font.medium,
+    fontSize: 16,
+    color: colors.textHi,
+    minHeight: 48,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: colors.divider,
+    borderColor: colors.line,
     borderRadius: radius.sm,
-    backgroundColor: colors.bg,
-    marginTop: 6,
+    backgroundColor: colors.surface,
+    marginTop: 8,
   },
   codeInput: {
-    fontSize: 22,
+    fontSize: 24,
     letterSpacing: 8,
     textAlign: 'center',
   },
+  tierCard: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    padding: 18,
+    paddingTop: 22,
+  },
+  tierCardSelected: {
+    borderColor: colors.accent,
+    backgroundColor: colors.surface,
+  },
+  selectedTab: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    backgroundColor: colors.accent,
+    transform: [{ skewX: '-12deg' }],
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+    // The slant would otherwise poke past the card's own right edge.
+    marginRight: -2,
+  },
+  selectedTabInner: {
+    transform: [{ skewX: '12deg' }],
+  },
+  selectedTabText: {
+    fontFamily: font.semibold,
+    fontSize: 10,
+    letterSpacing: microTracking(10),
+    textTransform: 'uppercase',
+    color: colors.bg,
+  },
+  tierHeading: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  tierName: {
+    fontFamily: font.blackItalic,
+    fontSize: 26,
+    letterSpacing: -0.6,
+  },
+  tierTasks: {
+    fontFamily: font.regular,
+    fontSize: 14,
+    lineHeight: 21,
+    color: colors.textMid,
+    marginTop: 12,
+  },
+  whyField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: colors.line,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    marginTop: 20,
+  },
+  whyInput: {
+    flex: 1,
+    fontFamily: font.serifItalic,
+    fontSize: 17,
+    color: colors.textHi,
+    minHeight: 44,
+  },
   action: {
-    marginTop: 16,
+    marginTop: 18,
     alignSelf: 'stretch',
   },
   secondaryRow: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 12,
+    marginTop: 14,
   },
   hint: {
     fontFamily: font.regular,
-    fontSize: 11.5,
-    lineHeight: 16,
-    color: colors.neutral500,
-    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.textMid,
+    marginTop: 18,
   },
   error: {
     fontFamily: font.regular,
-    fontSize: 12.5,
+    fontSize: 13,
     lineHeight: 18,
-    color: colors.accent300,
+    color: colors.accent400,
     marginTop: 16,
   },
 });

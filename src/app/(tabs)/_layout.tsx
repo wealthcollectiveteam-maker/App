@@ -1,26 +1,11 @@
 import { Tabs } from 'expo-router';
-import {
-  HouseIcon as House,
-  LightningIcon as Lightning,
-  NotebookIcon as Notebook,
-  UserIcon as User,
-  UsersThreeIcon as UsersThree,
-} from 'phosphor-react-native';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppHeader } from '@/components/AppHeader';
 import { TimerMiniBar } from '@/components/TimerMiniBar';
-import { colors, font } from '@/theme/tokens';
-
-const ICONS: Record<string, React.ComponentType<any>> = {
-  index: House,
-  checkin: Lightning,
-  track: Notebook,
-  squad: UsersThree,
-  you: User,
-};
+import { colors, font, microTracking } from '@/theme/tokens';
 
 const LABELS: Record<string, string> = {
   index: 'HOME',
@@ -35,47 +20,56 @@ interface TabBarProps {
   navigation: any;
 }
 
+/**
+ * Wordmark-set tab bar: labels only, the active one lit and underlined in
+ * accent. Icons are gone — the schematics carry the whole bar on type.
+ */
 function TabBar({ state, navigation }: TabBarProps) {
   const insets = useSafeAreaInsets();
   return (
     <>
       <TimerMiniBar />
-      <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-      {state.routes.map((route, index) => {
-        const focused = state.index === index;
-        const Icon = ICONS[route.name];
-        if (!Icon) return null;
-        return (
-          <Pressable
-            key={route.key}
-            onPress={() => {
-              const event = navigation.emit({
-                type: 'tabPress',
-                target: route.key,
-                canPreventDefault: true,
-              });
-              if (!focused && !event.defaultPrevented) {
-                navigation.navigate(route.name);
-              }
-            }}
-            style={styles.item}
-          >
-            <Icon
-              size={22}
-              weight={focused ? 'fill' : 'regular'}
-              color={focused ? colors.accent400 : colors.neutral600}
-            />
-            <Text
-              style={[
-                styles.label,
-                { color: focused ? colors.accent300 : colors.neutral600 },
-              ]}
+      <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+        {state.routes.map((route, index) => {
+          const focused = state.index === index;
+          const label = LABELS[route.name];
+          if (!label) return null;
+          return (
+            <Pressable
+              key={route.key}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: focused }}
+              accessibilityLabel={label}
+              onPress={() => {
+                const event = navigation.emit({
+                  type: 'tabPress',
+                  target: route.key,
+                  canPreventDefault: true,
+                });
+                if (!focused && !event.defaultPrevented) {
+                  navigation.navigate(route.name);
+                }
+              }}
+              style={styles.item}
             >
-              {LABELS[route.name]}
-            </Text>
-          </Pressable>
-        );
-      })}
+              <Text
+                style={[
+                  styles.label,
+                  { color: focused ? colors.accent400 : colors.textLow },
+                ]}
+                numberOfLines={1}
+              >
+                {label}
+              </Text>
+              <View
+                style={[
+                  styles.rule,
+                  { backgroundColor: focused ? colors.accent : 'transparent' },
+                ]}
+              />
+            </Pressable>
+          );
+        })}
       </View>
     </>
   );
@@ -91,7 +85,11 @@ export default function TabLayout() {
         sceneStyle: { backgroundColor: colors.bg },
       }}
     >
-      <Tabs.Screen name="index" />
+      {/* Home is the only screen that carries STREAK beside the tier badge. */}
+      <Tabs.Screen
+        name="index"
+        options={{ header: () => <AppHeader showStreak /> }}
+      />
       <Tabs.Screen name="checkin" />
       <Tabs.Screen name="track" />
       <Tabs.Screen name="squad" />
@@ -105,20 +103,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: colors.bg,
     borderTopWidth: 1,
-    borderTopColor: colors.divider,
-    paddingTop: 8,
+    borderTopColor: colors.line,
+    paddingTop: 12,
   },
   item: {
     flex: 1,
     minHeight: 44,
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
+    justifyContent: 'flex-start',
+    gap: 6,
   },
   label: {
-    fontFamily: font.medium,
-    fontSize: 8.5,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
+    fontFamily: font.semibold,
+    fontSize: 10.5,
+    letterSpacing: microTracking(10.5),
+  },
+  rule: {
+    height: 2,
+    alignSelf: 'stretch',
+    marginHorizontal: 10,
   },
 });

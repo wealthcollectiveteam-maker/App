@@ -1,7 +1,6 @@
 import { useRouter } from 'expo-router';
 import {
   CameraIcon as Camera,
-  CheckCircleIcon as CheckCircle,
   CheckIcon as Check,
 } from 'phosphor-react-native';
 import React from 'react';
@@ -24,8 +23,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useShallow } from 'zustand/react/shallow';
 
+import { Micro, PrimaryButton, Serif, Skew } from '@/components/primitives';
 import { ScreenState } from '@/components/ScreenState';
-import { Card, Kicker, OutlineButton } from '@/components/ui';
 import { WorkoutSuggestion } from '@/components/WorkoutSuggestion';
 import type { TaskDef, TaskKey } from '@/data/types';
 import { useStartTimer } from '@/hooks/useStartTimer';
@@ -37,9 +36,13 @@ import {
   useAppStore,
 } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
-import { colors, font, radius, shadows, space } from '@/theme/tokens';
+import { colors, font, microTracking, space } from '@/theme/tokens';
 
 const FLY_THRESHOLD = 90;
+
+/** "10:00" from a whole-minute timer target. */
+const clockFace = (minutes: number) =>
+  `${String(minutes).padStart(2, '0')}:00`;
 
 function ProofRow({ taskKey }: { taskKey: TaskKey }) {
   const proof = useAppStore((s) => s.proofs[taskKey]);
@@ -53,27 +56,25 @@ function ProofRow({ taskKey }: { taskKey: TaskKey }) {
           toast('Proof attached');
         }
       }}
+      accessibilityRole="button"
+      accessibilityLabel={proof ? 'Proof attached' : 'Attach proof, optional'}
       style={styles.proofRow}
     >
       <View
         style={[
           styles.proofSquare,
-          proof && {
-            borderStyle: 'solid',
-            borderColor: colors.accent500,
-            backgroundColor: colors.accentTint,
-          },
+          proof && { borderColor: colors.accent, backgroundColor: colors.accentDeep },
         ]}
       >
         {proof ? (
-          <Check size={18} color={colors.accent400} weight="bold" />
+          <Check size={15} weight="bold" color={colors.accent400} />
         ) : (
-          <Camera size={18} color={colors.neutral500} />
+          <Camera size={15} color={colors.textLow} />
         )}
       </View>
-      <Text style={styles.proofText}>
-        {proof ? 'proof attached' : 'attach proof — optional'}
-      </Text>
+      <Micro color={proof ? colors.accent400 : colors.textLow}>
+        {proof ? 'Proof attached' : 'Proof optional'}
+      </Micro>
     </Pressable>
   );
 }
@@ -130,10 +131,7 @@ function TopCard({
     });
 
   const cardStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: tx.value },
-      { rotate: `${tx.value / 18}deg` },
-    ],
+    transform: [{ translateX: tx.value }, { rotate: `${tx.value / 22}deg` }],
   }));
   const doneStyle = useAnimatedStyle(() => ({
     opacity: interpolate(tx.value, [0, FLY_THRESHOLD], [0, 1], 'clamp'),
@@ -145,38 +143,56 @@ function TopCard({
   return (
     <GestureDetector gesture={pan}>
       <Animated.View style={[styles.topCard, cardStyle]}>
-        <Animated.View style={[styles.stamp, styles.stampDone, doneStyle]}>
-          <Text style={[styles.stampText, { color: colors.accent300 }]}>
-            DONE
-          </Text>
-        </Animated.View>
-        <Animated.View style={[styles.stamp, styles.stampLater, laterStyle]}>
-          <Text style={[styles.stampText, { color: colors.neutral400 }]}>
-            LATER
-          </Text>
-        </Animated.View>
+        {/* The accent rule down the left edge. */}
+        <View style={styles.cardRule} />
 
-        <Kicker>
-          Task {index} of {total}
-        </Kicker>
-        <Text style={styles.cardTitle}>{task.label}</Text>
-        <Text style={styles.cardSub}>{task.sub}</Text>
-        {suggestion && (
-          <WorkoutSuggestion taskKey={task.key} workout={suggestion} />
-        )}
-        {task.proof && <ProofRow taskKey={task.key} />}
-        {task.timerMinutes ? (
-          <OutlineButton
-            label="Start timer"
-            small
-            onPress={() => onStartTimer(task)}
-            style={{ marginTop: 14, alignSelf: 'flex-start' }}
-          />
-        ) : null}
-        <View style={{ flex: 1 }} />
-        <Text style={styles.cardFooter}>
-          {'\u2190'} later&nbsp;&nbsp;|&nbsp;&nbsp;swipe to complete {'\u2192'}
-        </Text>
+        <View style={styles.cardBody}>
+          <Animated.View style={[styles.stamp, styles.stampDone, doneStyle]}>
+            <Micro color={colors.accent400}>Done</Micro>
+          </Animated.View>
+          <Animated.View style={[styles.stamp, styles.stampLater, laterStyle]}>
+            <Micro color={colors.textMid}>Later</Micro>
+          </Animated.View>
+
+          <View style={styles.cardHeader}>
+            <Micro color={colors.textMid}>Task</Micro>
+            <Text style={styles.counterFigure} maxFontSizeMultiplier={1.3}>
+              {String(index).padStart(2, '0')}
+              <Text style={styles.counterTotal}>
+                /{String(total).padStart(2, '0')}
+              </Text>
+            </Text>
+          </View>
+
+          <Text style={styles.cardTitle}>{task.label}</Text>
+          <Serif style={{ marginTop: 10 }}>{task.sub}</Serif>
+
+          {suggestion && (
+            <WorkoutSuggestion taskKey={task.key} workout={suggestion} />
+          )}
+          {task.proof && <ProofRow taskKey={task.key} />}
+
+          <View style={{ flex: 1, minHeight: 24 }} />
+
+          {task.timerMinutes ? (
+            <View style={styles.timerRow}>
+              <Text style={styles.ghostClock} maxFontSizeMultiplier={1.3}>
+                {clockFace(task.timerMinutes)}
+              </Text>
+              <Skew
+                label={'Start\ntimer'}
+                onPress={() => onStartTimer(task)}
+                accessibilityLabel={`Start timer for ${task.label}`}
+              />
+            </View>
+          ) : null}
+
+          <View style={styles.cardFooter}>
+            <Micro color={colors.textLow}>← Later</Micro>
+            <Text style={styles.footerPipe}>|</Text>
+            <Micro color={colors.textHi}>Swipe to complete →</Micro>
+          </View>
+        </View>
       </Animated.View>
     </GestureDetector>
   );
@@ -188,24 +204,26 @@ function AllDone({ total }: { total: number }) {
   const router = useRouter();
 
   return (
-    <Card style={styles.allDone}>
-      <CheckCircle size={54} weight="fill" color={colors.accent500} />
-      <Text style={styles.allDoneTitle}>
-        {dayComplete ? `Day ${day} locked in.` : `All ${total} done.`}
+    <View style={styles.allDone}>
+      <Text style={styles.allDoneFigure} maxFontSizeMultiplier={1.3}>
+        {String(total).padStart(2, '0')}
       </Text>
-      <Text style={styles.allDoneSub}>
+      <Micro color={colors.accent400}>
+        {dayComplete ? `Day ${day} locked in` : 'All done today'}
+      </Micro>
+      <Serif style={{ marginTop: 12, textAlign: 'center' }}>
         {dayComplete
           ? 'Flame fed. See you tomorrow.'
           : 'Seal the day and feed the flame.'}
-      </Text>
+      </Serif>
       {!dayComplete && (
-        <OutlineButton
-          label="Lock in."
+        <PrimaryButton
+          label="Lock in →"
           onPress={() => router.push('/celebration')}
-          style={{ marginTop: 16, alignSelf: 'stretch' }}
+          style={{ marginTop: 22, alignSelf: 'stretch' }}
         />
       )}
-    </Card>
+    </View>
   );
 }
 
@@ -232,9 +250,9 @@ export default function CheckinScreen() {
       >
         <View style={styles.header}>
           <Text style={styles.title}>Check-in</Text>
-          <Text style={styles.counter}>
-            {doneCount} OF {total}
-          </Text>
+          <Micro color={colors.textMid}>
+            {doneCount} of {total} done
+          </Micro>
         </View>
 
         <View style={styles.deck}>
@@ -264,22 +282,29 @@ export default function CheckinScreen() {
         <View style={styles.chips}>
           {tasks.map((t) => {
             const done = !!tasksDone[t.key];
+            const now = !done && t.key === topKey;
             return (
               <View
                 key={t.key}
                 style={[
                   styles.chip,
-                  done ? styles.chipDone : styles.chipPending,
+                  done && styles.chipDone,
+                  now && styles.chipNow,
                 ]}
               >
+                {done && (
+                  <Check size={13} weight="bold" color={colors.accent400} />
+                )}
                 <Text
                   style={[
                     styles.chipText,
-                    { color: done ? colors.accent300 : colors.neutral500 },
+                    done && { color: colors.accent400 },
+                    now && { color: colors.textHi },
                   ]}
+                  numberOfLines={1}
                 >
-                  {done ? '\u2713 ' : ''}
                   {t.label.split(' — ')[0]}
+                  {now ? ' · Now' : ''}
                 </Text>
               </View>
             );
@@ -300,60 +325,59 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'baseline',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    gap: 12,
+    marginBottom: 18,
   },
   title: {
-    fontFamily: font.medium,
-    fontSize: 24,
-    color: colors.text,
-  },
-  counter: {
-    fontFamily: font.medium,
-    fontSize: 11,
-    letterSpacing: 2.64,
-    color: colors.neutral400,
+    fontFamily: font.bold,
+    fontSize: 34,
+    letterSpacing: -1,
+    color: colors.textHi,
   },
   deck: {
-    height: 320,
-    justifyContent: 'center',
+    // Sizes to the card, so nothing clips when the system font grows.
+    minHeight: 380,
   },
   topCard: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 300,
+    flexDirection: 'row',
+    minHeight: 380,
     backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: 18,
-    ...shadows.md,
     ...(Platform.OS === 'web'
       ? ({ touchAction: 'none', userSelect: 'none' } as any)
       : null),
+  },
+  cardRule: {
+    width: 2,
+    backgroundColor: colors.accent,
+  },
+  cardBody: {
+    flex: 1,
+    padding: 22,
   },
   underCard: {
     position: 'absolute',
     left: 0,
     right: 0,
-    height: 300,
-    backgroundColor: colors.neutral900,
-    borderRadius: radius.lg,
-    opacity: 0.55,
+    top: 0,
+    bottom: 0,
+    backgroundColor: colors.surfaceAlt,
   },
   under1: {
     top: 10,
+    bottom: -10,
     marginHorizontal: 10,
+    opacity: 0.7,
   },
   under2: {
     top: 20,
+    bottom: -20,
     marginHorizontal: 20,
-    opacity: 0.35,
+    opacity: 0.4,
   },
   stamp: {
     position: 'absolute',
-    top: 18,
-    borderWidth: 2,
-    borderRadius: radius.sm,
+    top: 20,
+    borderWidth: 1,
     paddingHorizontal: 10,
     paddingVertical: 4,
     zIndex: 2,
@@ -361,79 +385,96 @@ const styles = StyleSheet.create({
   // Stamps sit opposite the exit direction (Tinder-style) so they stay on
   // screen while the card is dragged toward the edge.
   stampDone: {
-    left: 18,
-    borderColor: colors.accent500,
-    transform: [{ rotate: '-8deg' }],
+    left: 20,
+    borderColor: colors.accent,
+    transform: [{ skewX: '-12deg' }],
   },
   stampLater: {
-    right: 18,
-    borderColor: colors.neutral600,
-    transform: [{ rotate: '8deg' }],
+    right: 20,
+    borderColor: colors.line,
+    transform: [{ skewX: '-12deg' }],
   },
-  stampText: {
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  counterFigure: {
+    fontFamily: font.black,
+    fontSize: 32,
+    letterSpacing: -1.4,
+    color: colors.accent400,
+    fontVariant: ['tabular-nums'],
+  },
+  counterTotal: {
     fontFamily: font.semibold,
-    fontSize: 16,
-    letterSpacing: 2,
+    fontSize: 17,
+    letterSpacing: 0,
+    color: colors.textMid,
   },
   cardTitle: {
-    fontFamily: font.medium,
-    fontSize: 23,
-    color: colors.text,
-    marginTop: 10,
-  },
-  cardSub: {
-    fontFamily: font.regular,
-    fontSize: 13.5,
-    color: colors.neutral400,
-    marginTop: 6,
-    lineHeight: 19,
+    fontFamily: font.bold,
+    fontSize: 42,
+    lineHeight: 46,
+    letterSpacing: -1.8,
+    color: colors.textHi,
+    marginTop: 26,
   },
   proofRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginTop: 16,
+    marginTop: 18,
   },
   proofSquare: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.sm,
+    width: 30,
+    height: 30,
     borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: colors.neutral600,
+    borderColor: colors.line,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  proofText: {
-    fontFamily: font.regular,
-    fontSize: 12,
-    color: colors.neutral500,
-  },
-  cardFooter: {
-    fontFamily: font.regular,
-    fontSize: 11.5,
-    color: colors.neutral600,
-    textAlign: 'center',
-  },
-  allDone: {
-    height: 300,
+  timerRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.lg,
-    paddingHorizontal: 24,
-  },
-  allDoneTitle: {
-    fontFamily: font.medium,
-    fontSize: 22,
-    color: colors.text,
+    justifyContent: 'space-between',
+    gap: 16,
     marginTop: 12,
   },
-  allDoneSub: {
+  ghostClock: {
+    fontFamily: font.black,
+    fontSize: 54,
+    letterSpacing: -2.4,
+    color: colors.surfaceAlt,
+    fontVariant: ['tabular-nums'],
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    marginTop: 22,
+  },
+  footerPipe: {
     fontFamily: font.regular,
-    fontSize: 13.5,
-    color: colors.neutral400,
-    marginTop: 6,
-    textAlign: 'center',
+    fontSize: 12,
+    color: colors.line,
+  },
+  allDone: {
+    minHeight: 380,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    paddingHorizontal: 24,
+  },
+  allDoneFigure: {
+    fontFamily: font.black,
+    fontSize: 84,
+    lineHeight: 88,
+    letterSpacing: -4,
+    color: colors.accent,
+    fontVariant: ['tabular-nums'],
   },
   chips: {
     flexDirection: 'row',
@@ -442,19 +483,26 @@ const styles = StyleSheet.create({
     marginTop: 22,
   },
   chip: {
-    borderRadius: radius.pill,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.line,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   chipDone: {
-    backgroundColor: colors.accent900,
+    backgroundColor: colors.accentDeep,
+    borderColor: colors.accentDeep,
   },
-  chipPending: {
-    borderWidth: 1,
-    borderColor: colors.neutral700,
+  chipNow: {
+    borderColor: colors.accent,
   },
   chipText: {
-    fontFamily: font.regular,
-    fontSize: 11.5,
+    fontFamily: font.semibold,
+    fontSize: 11,
+    letterSpacing: microTracking(11),
+    textTransform: 'uppercase',
+    color: colors.textLow,
   },
 });

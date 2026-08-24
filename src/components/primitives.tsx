@@ -223,7 +223,7 @@ export function TheWall({
       <View style={styles.wallHeader}>
         <Text style={styles.microLabel}>The Wall</Text>
         <Text style={styles.wallCount}>
-          {doneDays} / {CHALLENGE.days}
+          {day} / {CHALLENGE.days}
         </Text>
       </View>
 

@@ -63,6 +63,8 @@ export const colors = {
   celebrationGlow: '#1A3E8F',
 
   backdrop: 'rgba(5,6,8,0.62)',
+  /** Ground scrim on the celebration/finish gradients. */
+  groundScrim: 'rgba(5,6,8,0.35)',
 } as const;
 
 /** The redesign is square. Corners are a hairline, not a curve. */

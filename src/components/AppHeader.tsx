@@ -1,4 +1,3 @@
-import { FireIcon as Fire } from 'phosphor-react-native';
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -6,6 +5,7 @@ import { runOnJS } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BottomSheet } from '@/components/BottomSheet';
+import { Micro, Skew } from '@/components/primitives';
 import { Kicker, SegmentedControl } from '@/components/ui';
 import type { Scenario, Tier } from '@/data/types';
 import {
@@ -13,7 +13,7 @@ import {
   useAppStore,
   type ScreenStateKind,
 } from '@/store/useAppStore';
-import { colors, font, radius } from '@/theme/tokens';
+import { colors, font, microTracking, radius } from '@/theme/tokens';
 
 const SCENARIOS: { key: Scenario; label: string; sub: string }[] = [
   { key: 'day1', label: 'Day 1', sub: 'Fresh start. Nothing done yet.' },
@@ -27,10 +27,12 @@ const STATE_SEGMENTS = ['READY', 'LOADING', 'ERROR'];
 
 /**
  * Persistent header: RANKED wordmark (long-press 600ms opens the hidden dev
- * scenario sheet), tier tag, flame chip. The long-press runs through
- * react-native-gesture-handler so it works with touch and mouse alike.
+ * scenario sheet) and the skewed tier badge. Home also carries STREAK; the
+ * other tabs do not, so the day numeral stays the loudest thing on screen.
+ * The long-press runs through react-native-gesture-handler so it works with
+ * touch and mouse alike.
  */
-export function AppHeader() {
+export function AppHeader({ showStreak = false }: { showStreak?: boolean }) {
   const insets = useSafeAreaInsets();
   const tier = useAppStore((s) => s.tier);
   const tierLabel = useAppStore(selectTierLabel);
@@ -62,30 +64,29 @@ export function AppHeader() {
       <GestureDetector gesture={longPress}>
         <View>
           <Text style={styles.wordmark} selectable={false}>
-            <Text style={{ color: colors.accent400 }}>R</Text>ANKED
+            RANKED
           </Text>
         </View>
       </GestureDetector>
 
       <View style={styles.right}>
-        <View style={styles.tierTag}>
-          <Text style={styles.tierText}>{tierLabel}</Text>
-        </View>
-        <View style={styles.flameChip}>
-          <Fire
-            size={13}
-            weight={flame > 0 ? 'fill' : 'regular'}
-            color={flame > 0 ? colors.accent400 : colors.neutral700}
-          />
-          <Text
-            style={[
-              styles.flameText,
-              { color: flame > 0 ? colors.neutral200 : colors.neutral600 },
-            ]}
-          >
-            {flame}
-          </Text>
-        </View>
+        <Skew label={tierLabel} filled size="sm" />
+        {showStreak && (
+          <View style={styles.streak}>
+            <Micro size={11} color={colors.textMid}>
+              Streak
+            </Micro>
+            <Text
+              style={[
+                styles.streakFigure,
+                { color: flame > 0 ? colors.textHi : colors.textLow },
+              ]}
+              maxFontSizeMultiplier={1.4}
+            >
+              {String(flame).padStart(2, '0')}
+            </Text>
+          </View>
+        )}
       </View>
 
       <BottomSheet visible={devOpen} onClose={() => setDevOpen(false)}>
@@ -190,42 +191,26 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   wordmark: {
-    fontFamily: font.medium,
-    fontSize: 19,
-    letterSpacing: 4.18, // .22em
-    color: colors.text,
+    fontFamily: font.blackItalic,
+    fontSize: 21,
+    letterSpacing: 0.4,
+    color: colors.textHi,
   },
   right: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 12,
   },
-  tierTag: {
-    backgroundColor: colors.accent800,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  tierText: {
-    fontFamily: font.medium,
-    fontSize: 10,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-    color: colors.accent100,
-  },
-  flameChip: {
+  streak: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    borderWidth: 1,
-    borderColor: colors.divider,
-    borderRadius: radius.pill,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
+    gap: 6,
   },
-  flameText: {
-    fontFamily: font.medium,
-    fontSize: 11.5,
+  streakFigure: {
+    fontFamily: font.black,
+    fontSize: 15,
+    letterSpacing: microTracking(15),
+    fontVariant: ['tabular-nums'],
   },
   scenarioRow: {
     paddingVertical: 10,
@@ -234,17 +219,17 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   scenarioRowActive: {
-    backgroundColor: colors.accent900,
+    backgroundColor: colors.accentDeep,
   },
   scenarioLabel: {
     fontFamily: font.medium,
     fontSize: 14,
-    color: colors.text,
+    color: colors.textHi,
   },
   scenarioSub: {
     fontFamily: font.regular,
     fontSize: 12,
-    color: colors.neutral500,
+    color: colors.textMid,
     marginTop: 2,
   },
 });

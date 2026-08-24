@@ -1,26 +1,16 @@
-import {
-  CaretRightIcon as CaretRight,
-  DiamondIcon as Diamond,
-  FireIcon as Fire,
-  FlagIcon as Flag,
-  GearIcon as Gear,
-  LightningIcon as Lightning,
-  SignOutIcon as SignOut,
-  TrophyIcon as Trophy,
-} from 'phosphor-react-native';
 import { useRouter } from 'expo-router';
 import React from 'react';
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { FlairAvatar } from '@/components/FlairAvatar';
+import {
+  DiamondBadge,
+  InitialsTile,
+  Micro,
+  Serif,
+  StatBox,
+} from '@/components/primitives';
 import { ScreenState } from '@/components/ScreenState';
-import { Card, Kicker } from '@/components/ui';
+import { Card } from '@/components/ui';
 import { CHALLENGE, XP } from '@/constants/challenge';
 import {
   selectLevel,
@@ -29,15 +19,7 @@ import {
   useAppStore,
 } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
-import { colors, font, space } from '@/theme/tokens';
-
-const BADGES = [
-  { key: 'dayone', label: 'DAY ONE', Icon: Flag, unlocked: (s: BadgeState) => s.day >= 1 && (s.perfectDays >= 1 || s.day > 1) },
-  { key: 'weekone', label: 'WEEK ONE', Icon: Fire, unlocked: (s: BadgeState) => s.bestFlame >= 7 },
-  { key: 'digits', label: 'DOUBLE DIGITS', Icon: Lightning, unlocked: (s: BadgeState) => s.bestFlame >= 10 },
-  { key: 'halfway', label: 'HALFWAY', Icon: Diamond, unlocked: (s: BadgeState) => s.day >= Math.ceil(CHALLENGE.days / 2) },
-  { key: 'finisher', label: 'FINISHER', Icon: Trophy, unlocked: (s: BadgeState) => s.day >= CHALLENGE.days && s.dayComplete },
-];
+import { colors, font, microTracking, space } from '@/theme/tokens';
 
 interface BadgeState {
   day: number;
@@ -45,6 +27,47 @@ interface BadgeState {
   perfectDays: number;
   dayComplete: boolean;
 }
+
+/** Every threshold is derived from CHALLENGE.days — none is typed twice. */
+const HALFWAY = Math.ceil(CHALLENGE.days / 2);
+
+const BADGES: {
+  key: string;
+  value: number;
+  label: string;
+  earned: (s: BadgeState) => boolean;
+}[] = [
+  {
+    key: 'dayone',
+    value: 1,
+    label: 'Day one',
+    earned: (s) => s.day >= 1 && (s.perfectDays >= 1 || s.day > 1),
+  },
+  {
+    key: 'weekone',
+    value: 7,
+    label: 'Week one',
+    earned: (s) => s.bestFlame >= 7,
+  },
+  {
+    key: 'digits',
+    value: 10,
+    label: 'Double digits',
+    earned: (s) => s.bestFlame >= 10,
+  },
+  {
+    key: 'halfway',
+    value: HALFWAY,
+    label: 'Halfway',
+    earned: (s) => s.day >= HALFWAY,
+  },
+  {
+    key: 'finisher',
+    value: CHALLENGE.days,
+    label: 'Finisher',
+    earned: (s) => s.day >= CHALLENGE.days && s.dayComplete,
+  },
+];
 
 export default function YouScreen() {
   const day = useAppStore((s) => s.day);
@@ -62,96 +85,103 @@ export default function YouScreen() {
   const toNext = selectXpToNext(xp);
   const badgeState: BadgeState = { day, bestFlame, perfectDays, dayComplete };
 
+  const rows = [
+    { label: 'My Challenge', meta: null, onPress: () => router.push('/my-challenge') },
+    { label: 'Settings', meta: null, onPress: () => router.push('/settings') },
+    {
+      label: 'Invite code',
+      meta: squad?.code ?? 'Solo',
+      onPress: () =>
+        toast(
+          squad
+            ? 'Invite code copied'
+            : 'Running solo — create a squad from the Squad tab',
+        ),
+    },
+    { label: 'Sign out', meta: null, onPress: () => toast('Signed out (mock)') },
+  ];
+
   return (
     <ScreenState>
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.bg }}
-      contentContainerStyle={styles.content}
-    >
-      <View style={{ alignItems: 'center', marginTop: 6 }}>
-        <FlairAvatar
-          initials={profileName.slice(0, 2).toUpperCase()}
-          level={level}
-          size={58}
-        />
-        <Text style={styles.name}>{profileName}</Text>
-        <Text style={styles.meta}>
-          LVL {level} · {xp.toLocaleString()} XP · Day {day}
-        </Text>
-        <View style={styles.xpTrack}>
-          <View
-            style={[
-              styles.xpFill,
-              { width: `${(into / XP.perLevel) * 100}%` },
-            ]}
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.bg }}
+        contentContainerStyle={styles.content}
+      >
+        <View style={styles.identity}>
+          <InitialsTile
+            initials={profileName.slice(0, 2).toUpperCase()}
+            active
+            size={84}
           />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.name} numberOfLines={1}>
+              {profileName}
+            </Text>
+            <Micro color={colors.textMid} style={{ marginTop: 6 }}>
+              LVL {level} · {xp.toLocaleString()} XP · Day {day}
+            </Micro>
+            <View style={styles.xpTrack}>
+              <View
+                style={[styles.xpFill, { width: `${(into / XP.perLevel) * 100}%` }]}
+              />
+            </View>
+            <Serif size={13} style={{ marginTop: 8, color: colors.textLow }}>
+              {toNext} XP to LVL {level + 1} — flair ring grows
+            </Serif>
+          </View>
         </View>
-        <Text style={styles.xpHint}>
-          {toNext} XP to LVL {level + 1} — flair ring grows
-        </Text>
-      </View>
 
-      <View style={styles.statGrid}>
-        {[
-          { label: 'Current day', value: day },
-          { label: 'Best flame', value: bestFlame },
-          { label: 'Perfect days', value: perfectDays },
-        ].map((s) => (
-          <Card key={s.label} style={styles.statCell}>
-            <Text style={styles.statValue}>{s.value}</Text>
-            <Kicker color={colors.neutral500} style={{ marginTop: 4 }}>
-              {s.label}
-            </Kicker>
-          </Card>
-        ))}
-      </View>
-
-      <Card style={{ marginTop: 12 }}>
-        <Kicker style={{ marginBottom: 12 }}>Badges</Kicker>
-        <View style={styles.badgeRow}>
-          {BADGES.map(({ key, label, Icon, unlocked }) => {
-            const on = unlocked(badgeState);
-            return (
-              <View key={key} style={{ alignItems: 'center', gap: 6, opacity: on ? 1 : 0.35 }}>
-                <View
-                  style={[
-                    styles.badgeCircle,
-                    { borderColor: on ? colors.accent600 : colors.neutral700 },
-                  ]}
-                >
-                  <Icon
-                    size={19}
-                    weight={on ? 'fill' : 'regular'}
-                    color={on ? colors.accent300 : colors.neutral500}
-                  />
-                </View>
-                <Text style={styles.badgeLabel}>{label}</Text>
-              </View>
-            );
-          })}
+        <View style={styles.statGrid}>
+          <StatBox value={day} label="Current day" />
+          <StatBox value={bestFlame} label="Best flame" tone="accent" />
+          <StatBox value={perfectDays} label="Perfect days" tone="accent" />
         </View>
-      </Card>
 
-      <Card style={{ marginTop: 12 }}>
-        <Kicker style={{ marginBottom: 8 }}>Why I started</Kicker>
-        <Text style={styles.whyText}>{'\u201C'}{why}{'\u201D'}</Text>
-      </Card>
+        <Card style={{ marginTop: 12 }}>
+          <Micro color={colors.textMid}>Badges</Micro>
+          <View style={styles.badgeRow}>
+            {BADGES.map((b) => (
+              <DiamondBadge
+                key={b.key}
+                value={b.value}
+                label={b.label}
+                earned={b.earned(badgeState)}
+              />
+            ))}
+          </View>
+        </Card>
 
-      <View style={{ marginTop: 12 }}>
-        {[
-          { label: 'My Challenge', Icon: CaretRight, meta: null, onPress: () => router.push('/my-challenge') },
-          { label: 'Settings', Icon: Gear, meta: null, onPress: () => router.push('/settings') },
-          { label: 'Invite code', Icon: CaretRight, meta: squad?.code ?? 'Solo', onPress: () => toast(squad ? 'Invite code copied' : 'Running solo — create a squad from the Squad tab') },
-          { label: 'Sign out', Icon: SignOut, meta: null, onPress: () => toast('Signed out (mock)') },
-        ].map(({ label, Icon, meta, onPress }) => (
-          <Pressable key={label} onPress={onPress} style={styles.row}>
-            <Icon size={17} color={colors.neutral500} />
-            <Text style={styles.rowLabel}>{label}</Text>
-            {meta && <Text style={styles.rowMeta}>{meta}</Text>}
-          </Pressable>
-        ))}
-      </View>
-    </ScrollView>
+        <View style={styles.whyCard}>
+          <View style={styles.whyRule} />
+          <View style={styles.whyBody}>
+            <Micro color={colors.textMid}>Why I started</Micro>
+            <Serif size={21} style={{ marginTop: 10, color: colors.textHi }}>
+              {'“'}
+              {why}
+              {'”'}
+            </Serif>
+          </View>
+        </View>
+
+        <View style={{ marginTop: 20 }}>
+          {rows.map(({ label, meta, onPress }) => (
+            <Pressable
+              key={label}
+              onPress={onPress}
+              accessibilityRole="button"
+              accessibilityLabel={label}
+              style={styles.row}
+            >
+              <Text style={styles.rowLabel}>{label}</Text>
+              {meta ? (
+                <Text style={styles.rowMeta}>{meta}</Text>
+              ) : (
+                <Text style={styles.rowArrow}>{'→'}</Text>
+              )}
+            </Pressable>
+          ))}
+        </View>
+      </ScrollView>
     </ScreenState>
   );
 }
@@ -162,97 +192,73 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 28,
   },
-  name: {
-    fontFamily: font.medium,
-    fontSize: 20,
-    color: colors.text,
-    marginTop: 10,
+  identity: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 16,
   },
-  meta: {
-    fontFamily: font.regular,
-    fontSize: 12.5,
-    color: colors.neutral500,
-    marginTop: 3,
+  name: {
+    fontFamily: font.bold,
+    fontSize: 30,
+    letterSpacing: -0.9,
+    color: colors.textHi,
   },
   xpTrack: {
-    width: 190,
-    height: 4,
-    borderRadius: 99,
-    backgroundColor: colors.neutral900,
+    height: 3,
+    backgroundColor: colors.surfaceAlt,
     marginTop: 12,
     overflow: 'hidden',
   },
   xpFill: {
-    height: 4,
-    borderRadius: 99,
-    backgroundColor: colors.accent500,
-  },
-  xpHint: {
-    fontFamily: font.regular,
-    fontSize: 11,
-    color: colors.neutral500,
-    marginTop: 6,
+    height: 3,
+    backgroundColor: colors.accent,
   },
   statGrid: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 18,
-  },
-  statCell: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 14,
-  },
-  statValue: {
-    fontFamily: font.medium,
-    fontSize: 24,
-    color: colors.text,
+    marginTop: 22,
   },
   badgeRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginTop: 22,
   },
-  badgeCircle: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+  whyCard: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    marginTop: 12,
   },
-  badgeLabel: {
-    fontFamily: font.medium,
-    fontSize: 7.5,
-    letterSpacing: 0.7,
-    color: colors.neutral500,
-    textAlign: 'center',
-    maxWidth: 52,
+  whyRule: {
+    width: 2,
+    backgroundColor: colors.accent,
   },
-  whyText: {
-    fontFamily: font.regular,
-    fontSize: 13.5,
-    color: colors.neutral300,
-    fontStyle: 'italic',
-    lineHeight: 19,
+  whyBody: {
+    flex: 1,
+    padding: space.cardPad,
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    minHeight: 48,
+    minHeight: 56,
     borderBottomWidth: 1,
-    borderBottomColor: colors.divider,
+    borderBottomColor: colors.line,
   },
   rowLabel: {
     flex: 1,
-    fontFamily: font.regular,
-    fontSize: 14,
-    color: colors.text,
+    fontFamily: font.medium,
+    fontSize: 17,
+    color: colors.textHi,
   },
   rowMeta: {
-    fontFamily: font.medium,
-    fontSize: 12.5,
-    letterSpacing: 1.5,
-    color: colors.neutral500,
+    fontFamily: font.semibold,
+    fontSize: 14,
+    letterSpacing: microTracking(14),
+    color: colors.textMid,
+  },
+  rowArrow: {
+    fontFamily: font.regular,
+    fontSize: 17,
+    color: colors.textLow,
   },
 });

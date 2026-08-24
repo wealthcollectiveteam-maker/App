@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 
 import { MealBuilderSheet } from '@/components/MealBuilderSheet';
+import { Micro, Serif, Skew, TheWall } from '@/components/primitives';
 import { QuickAddSheet } from '@/components/QuickAddSheet';
 import { ScreenState } from '@/components/ScreenState';
 import { TodaysHealthCard } from '@/components/TodaysHealthCard';
@@ -40,51 +41,85 @@ import { colors, font, radius, space } from '@/theme/tokens';
 
 function JournalTab() {
   const day = useAppStore((s) => s.day);
+  const dayComplete = useAppStore((s) => s.dayComplete);
   const journal = useAppStore((s) => s.journal);
   const saveJournal = useAppStore((s) => s.saveJournal);
   const [draft, setDraft] = useState('');
 
+  // Days finished BEFORE today, plus today once it is sealed. Nothing here
+  // invents a per-day history the app does not keep.
+  const doneDays = Math.max(0, day - 1) + (dayComplete ? 1 : 0);
+  const today = journal.filter((e) => e.day === day);
+  const earlier = journal.filter((e) => e.day !== day);
+
+  const save = () => {
+    const text = draft.trim();
+    if (!text) return;
+    saveJournal(text);
+    setDraft('');
+    toast('+10 XP — entry saved');
+  };
+
   return (
-    <View style={{ gap: 12 }}>
+    <View style={{ gap: 14 }}>
       <Card>
-        <Kicker>Day {day} — Today{'\u2019'}s entry</Kicker>
-        <TextInput
-          multiline
-          numberOfLines={3}
-          value={draft}
-          onChangeText={setDraft}
-          placeholder="How did today go?"
-          placeholderTextColor={colors.neutral600}
-          style={styles.textarea}
-        />
-        <OutlineButton
-          label="Save entry"
-          onPress={() => {
-            const text = draft.trim();
-            if (!text) return;
-            saveJournal(text);
-            setDraft('');
-            toast('+10 XP — entry saved');
-          }}
-          style={{ marginTop: 12 }}
-        />
+        <TheWall day={day} doneDays={doneDays} />
       </Card>
 
-      {journal.length === 0 ? (
-        <Text style={styles.empty}>
-          No entries yet. Day {day} is a good place to start.
-        </Text>
-      ) : (
-        journal.map((e) => (
-          <Card key={e.id}>
-            <View style={styles.entryHeader}>
-              <Kicker color={colors.accent300}>Day {e.day}</Kicker>
-              <Text style={styles.timeMeta}>{relativeTime(e.timestamp)}</Text>
-            </View>
-            <Text style={styles.entryBody}>{e.text}</Text>
-          </Card>
-        ))
-      )}
+      <Card>
+        <View style={styles.entryHeader}>
+          <Micro color={colors.textMid}>
+            Day {String(day).padStart(2, '0')} — Today{'’'}s entry
+          </Micro>
+          {today.length > 0 && (
+            <Micro size={10} color={colors.textLow}>
+              {relativeTime(today[0].timestamp)}
+            </Micro>
+          )}
+        </View>
+
+        {today.length === 0 ? (
+          <Serif style={{ marginTop: 14, color: colors.textLow }}>
+            Nothing written yet. Day {day} is a good place to start.
+          </Serif>
+        ) : (
+          today.map((e) => (
+            <Serif key={e.id} size={20} style={{ marginTop: 14 }}>
+              {'“'}
+              {e.text}
+              {'”'}
+            </Serif>
+          ))
+        )}
+
+        <View style={styles.entryDivider} />
+
+        <View style={styles.saveRow}>
+          <TextInput
+            multiline
+            value={draft}
+            onChangeText={setDraft}
+            placeholder="How did today go?"
+            placeholderTextColor={colors.textLow}
+            style={styles.textarea}
+          />
+          <Skew label="Save entry" onPress={save} />
+        </View>
+      </Card>
+
+      {earlier.map((e) => (
+        <Card key={e.id}>
+          <View style={styles.entryHeader}>
+            <Micro color={colors.textMid}>
+              Day {String(e.day).padStart(2, '0')}
+            </Micro>
+            <Micro size={10} color={colors.textLow}>
+              {relativeTime(e.timestamp)}
+            </Micro>
+          </View>
+          <Serif style={{ marginTop: 10 }}>{e.text}</Serif>
+        </Card>
+      ))}
     </View>
   );
 }
@@ -366,18 +401,23 @@ export default function TrackScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.title}>Track</Text>
-        <TodaysHealthCard />
-        <WeeklyCheckinCard />
-        <SegmentedControl
-          segments={['JOURNAL', 'MEALS', 'MILESTONES']}
-          value={tab}
-          onChange={setTab}
-          style={{ marginBottom: 16 }}
-        />
+        <View style={styles.header}>
+          <Text style={styles.title}>Track</Text>
+          <SegmentedControl
+            segments={['JOURNAL', 'MEALS', 'MILESTONES']}
+            value={tab}
+            onChange={setTab}
+          />
+        </View>
         {tab === 'JOURNAL' && <JournalTab />}
         {tab === 'MEALS' && <MealsTab />}
         {tab === 'MILESTONES' && <MilestonesTab />}
+        {/* Health readings sit under the tab content: on-device only, and
+            never the loudest thing on the screen. */}
+        <View style={{ marginTop: 16, gap: 12 }}>
+          <TodaysHealthCard />
+          <WeeklyCheckinCard />
+        </View>
       </ScrollView>
     </ScreenState>
   );
@@ -389,22 +429,38 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 28,
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 18,
+  },
   title: {
-    fontFamily: font.medium,
-    fontSize: 24,
-    color: colors.text,
-    marginBottom: 14,
+    fontFamily: font.bold,
+    fontSize: 34,
+    letterSpacing: -1,
+    color: colors.textHi,
+  },
+  entryDivider: {
+    height: 1,
+    backgroundColor: colors.line,
+    marginTop: 22,
+  },
+  saveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 14,
   },
   textarea: {
+    flex: 1,
     fontFamily: font.regular,
-    fontSize: 13.5,
-    color: colors.text,
-    minHeight: 72,
-    marginTop: 10,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: colors.divider,
-    borderRadius: radius.sm,
+    fontSize: 15,
+    color: colors.textHi,
+    minHeight: 44,
+    paddingVertical: 8,
     textAlignVertical: 'top',
   },
   input: {

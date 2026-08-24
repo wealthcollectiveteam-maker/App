@@ -1,24 +1,23 @@
-import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import {
-  CameraIcon as Camera,
-  CheckSquareIcon as CheckSquare,
-  PlayIcon as Play,
-  SquareIcon as Square,
-  UsersThreeIcon as UsersThree,
-} from 'phosphor-react-native';
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useShallow } from 'zustand/react/shallow';
 
-import { FlairAvatar } from '@/components/FlairAvatar';
 import { HealthPromptCards } from '@/components/HealthPromptCard';
-import { ProgressRing } from '@/components/ProgressRing';
+import {
+  InitialsTile,
+  Micro,
+  PrimaryButton,
+  SegmentBar,
+  Serif,
+  Skew,
+  TaskRow,
+} from '@/components/primitives';
 import { ScreenState } from '@/components/ScreenState';
-import { Card, FadingDivider, Kicker, OutlineButton } from '@/components/ui';
+import { Card, OutlineButton } from '@/components/ui';
 import { WorkoutSuggestion } from '@/components/WorkoutSuggestion';
 import { CHALLENGE } from '@/constants/challenge';
-import { missedDayCopy } from '@/constants/tiers';
+import { missedDayCopy, targetText } from '@/constants/tiers';
 import type { TaskDef } from '@/data/types';
 import { useStartTimer } from '@/hooks/useStartTimer';
 import {
@@ -28,7 +27,7 @@ import {
   useAppStore,
 } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
-import { colors, font, radius, space } from '@/theme/tokens';
+import { colors, font, space } from '@/theme/tokens';
 
 function StatusBanner() {
   const day = useAppStore((s) => s.day);
@@ -39,55 +38,75 @@ function StatusBanner() {
 
   if (day === CHALLENGE.days && dayComplete) {
     return (
-      <LinearGradient
-        colors={[colors.celebrationGround, colors.surface]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0.9, y: 1 }}
-        style={styles.day75Card}
-      >
-        <Kicker color={colors.accent200}>Challenge complete</Kicker>
-        <Text style={styles.day75Title}>
-          {CHALLENGE.days} days. Every task. Never missed.
-        </Text>
-        <OutlineButton
-          label="See your results"
-          onPress={() => router.push('/finish')}
-          style={{ marginTop: 14 }}
-        />
-      </LinearGradient>
+      <View style={styles.banner}>
+        <View style={styles.bannerRule} />
+        <View style={styles.bannerBody}>
+          <Micro color={colors.accent400}>Challenge complete</Micro>
+          <Text style={styles.bannerTitle}>
+            {CHALLENGE.days} days. Every task. Never missed.
+          </Text>
+          <PrimaryButton
+            label="See your results"
+            onPress={() => router.push('/finish')}
+            style={{ marginTop: 14 }}
+          />
+        </View>
+      </View>
     );
   }
 
   if (missedDay) {
     return (
-      <Card style={{ borderWidth: 1, borderColor: colors.neutral700 }}>
-        <Kicker color={colors.neutral400}>Streak broken</Kicker>
-        <Text style={styles.bannerBody}>{missedDayCopy(tier, day)}</Text>
-      </Card>
-    );
-  }
-
-  if (day === 1) {
-    return (
-      <Card style={{ borderWidth: 1, borderColor: colors.accent800 }}>
-        <Kicker>Day 1 of {CHALLENGE.days}</Kicker>
-        <Text style={styles.bannerBody}>It starts now.</Text>
-      </Card>
+      <View style={styles.banner}>
+        <View style={[styles.bannerRule, { backgroundColor: colors.textLow }]} />
+        <View style={styles.bannerBody}>
+          <Micro color={colors.textMid}>Streak broken</Micro>
+          <Serif style={{ marginTop: 6 }}>{missedDayCopy(tier, day)}</Serif>
+        </View>
+      </View>
     );
   }
 
   return null;
 }
 
-function TaskRow({ task }: { task: TaskDef }) {
+/**
+ * The right-hand meta on a task row, in priority order: a timer control, a
+ * proof note, then the task's own target. Nothing here invents progress the
+ * app does not track.
+ */
+function TaskMeta({ task }: { task: TaskDef }) {
+  const startTimer = useStartTimer();
+
+  if (task.timerMinutes) {
+    return (
+      <Skew
+        label="Timer ▸"
+        size="sm"
+        onPress={() => startTimer(task)}
+        accessibilityLabel={`Start timer for ${task.label}`}
+      />
+    );
+  }
+  if (task.proof) return <Micro color={colors.textLow}>Proof optional</Micro>;
+  if (task.target) {
+    return <Micro color={colors.accent400}>{targetText(task.target)}</Micro>;
+  }
+  return null;
+}
+
+function HomeTaskRow({ task }: { task: TaskDef }) {
   const doneAt = useAppStore((s) => s.tasksDone[task.key]);
   const completeTask = useAppStore((s) => s.completeTask);
   const uncompleteTask = useAppStore((s) => s.uncompleteTask);
-  const startTimer = useStartTimer();
   const done = !!doneAt;
 
   return (
-    <Pressable
+    <TaskRow
+      label={task.label}
+      done={done}
+      meta={done ? doneAt : undefined}
+      right={done ? undefined : <TaskMeta task={task} />}
       onPress={() => {
         if (done) {
           uncompleteTask(task.key);
@@ -96,98 +115,55 @@ function TaskRow({ task }: { task: TaskDef }) {
           toast('+20 XP');
         }
       }}
-      style={styles.taskRow}
-    >
-      {done ? (
-        <CheckSquare size={21} weight="fill" color={colors.accent500} />
-      ) : (
-        <Square size={21} weight="regular" color={colors.neutral600} />
-      )}
-      <Text
-        style={[
-          styles.taskLabel,
-          done && {
-            textDecorationLine: 'line-through',
-            color: colors.neutral500,
-          },
-        ]}
-      >
-        {task.label}
-      </Text>
-      {done ? (
-        <Text style={styles.taskMeta}>{doneAt}</Text>
-      ) : (
-        <>
-          {task.proof && (
-            <View style={styles.proofMeta}>
-              <Camera size={12} color={colors.neutral600} />
-              <Text style={styles.taskMeta}>proof optional</Text>
-            </View>
-          )}
-          {task.timerMinutes ? (
-            <Pressable
-              onPress={() => startTimer(task)}
-              hitSlop={8}
-              style={({ pressed, hovered }: any) => [
-                styles.playButton,
-                (hovered || pressed) && { borderColor: colors.accent400 },
-              ]}
-            >
-              <Play size={13} weight="fill" color={colors.accent400} />
-            </Pressable>
-          ) : null}
-        </>
-      )}
-    </Pressable>
+    />
   );
 }
 
-function SquadSnapshot() {
+/** Initials strip: your own tile carries the accent underline. */
+function SquadStrip() {
   const squad = useAppStore((s) => s.squad);
-  const taskCount = useAppStore((s) => selectTasks(s).length);
   const router = useRouter();
 
   if (!squad) {
     return (
-      <Pressable onPress={() => router.navigate('/squad')}>
-        <Card style={styles.soloCard}>
-          <UsersThree size={22} color={colors.neutral500} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.soloTitle}>Running it solo.</Text>
-            <Text style={styles.soloSub}>
-              Invite a squad when you want witnesses.
-            </Text>
-          </View>
-          <OutlineButton
-            label="Invite"
-            small
-            onPress={() => router.navigate('/squad')}
-          />
-        </Card>
-      </Pressable>
+      <Card style={styles.soloCard}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.soloTitle}>Running it solo.</Text>
+          <Text style={styles.soloSub}>
+            Invite a squad when you want witnesses.
+          </Text>
+        </View>
+        <OutlineButton
+          label="Invite"
+          small
+          onPress={() => router.navigate('/squad')}
+        />
+      </Card>
     );
   }
 
   return (
-    <Pressable onPress={() => router.navigate('/squad')}>
-      <Card>
-        <View style={styles.snapshotHeader}>
-          <Kicker>{squad.name} — Squad</Kicker>
-          <Text style={styles.snapshotStreak}>
-            {squad.streak}-day squad streak
-          </Text>
-        </View>
-        <View style={styles.snapshotRow}>
-          {squad.members.map((m) => (
-            <View key={m.id} style={{ alignItems: 'center', gap: 5 }}>
-              <FlairAvatar initials={m.initials} level={m.level} size={36} />
-              <Text style={styles.snapshotCount}>
-                {Math.min(m.doneToday, taskCount)} of {taskCount}
-              </Text>
-            </View>
-          ))}
-        </View>
-      </Card>
+    <Pressable
+      onPress={() => router.navigate('/squad')}
+      accessibilityRole="button"
+      accessibilityLabel="Open the squad tab"
+      style={styles.strip}
+    >
+      <Micro color={colors.textMid}>Squad</Micro>
+      <View style={styles.stripTiles}>
+        {squad.members.map((m) => (
+          <InitialsTile
+            key={m.id}
+            initials={m.initials}
+            active={m.isSelf}
+            size={40}
+          />
+        ))}
+      </View>
+      <View style={styles.stripStreak}>
+        <Micro color={colors.accent400}>{squad.streak}-day</Micro>
+        <View style={styles.diamond} />
+      </View>
     </Pressable>
   );
 }
@@ -209,22 +185,41 @@ export default function HomeScreen() {
         contentContainerStyle={styles.content}
       >
         <StatusBanner />
-        <HealthPromptCards />
 
-        <View style={{ alignItems: 'center', marginTop: 18 }}>
-          <ProgressRing day={day} total={CHALLENGE.days} />
-          <Text style={styles.todayCount}>
-            {doneCount} OF {tasks.length} TODAY
+        {/* The day number is the largest element on this screen. */}
+        <View style={styles.dayBlock}>
+          <Text style={styles.dayNumber} maxFontSizeMultiplier={1.3}>
+            {String(day).padStart(2, '0')}
           </Text>
-          <Text style={styles.why}>{'\u201C'}{why}{'\u201D'}</Text>
+          <View style={styles.dayMeta}>
+            <Micro color={colors.textMid}>
+              Of {CHALLENGE.days} days
+            </Micro>
+            <Micro color={colors.accent400} style={{ marginTop: 6 }}>
+              {doneCount} of {tasks.length} today
+            </Micro>
+          </View>
         </View>
 
-        <FadingDivider style={{ marginVertical: 18 }} />
+        <SegmentBar
+          done={doneCount}
+          total={tasks.length}
+          height={5}
+          style={{ marginTop: 18 }}
+        />
 
-        <View>
+        {!!why && (
+          <Serif style={{ marginTop: 16 }}>
+            {'“'}
+            {why}
+            {'”'}
+          </Serif>
+        )}
+
+        <View style={{ marginTop: 20 }}>
           {tasks.map((t) => (
             <View key={t.key}>
-              <TaskRow task={t} />
+              <HomeTaskRow task={t} />
               {workoutSuggestions[t.key] && (
                 <WorkoutSuggestion
                   taskKey={t.key}
@@ -235,20 +230,22 @@ export default function HomeScreen() {
           ))}
         </View>
 
+        <HealthPromptCards />
+
         {!dayComplete && (
-          <OutlineButton
-            label={allDone ? 'Finish the day' : 'Go to check-in'}
-            onPress={() =>
-              allDone
-                ? router.push('/celebration')
-                : router.navigate('/checkin')
+          <PrimaryButton
+            label={
+              allDone ? 'Finish the day →' : 'Go to check-in →'
             }
-            style={{ marginTop: 16 }}
+            onPress={() =>
+              allDone ? router.push('/celebration') : router.navigate('/checkin')
+            }
+            style={{ marginTop: 28 }}
           />
         )}
 
-        <View style={{ marginTop: 16 }}>
-          <SquadSnapshot />
+        <View style={{ marginTop: 20 }}>
+          <SquadStrip />
         </View>
       </ScrollView>
     </ScreenState>
@@ -261,92 +258,67 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 28,
   },
+  banner: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    marginBottom: 20,
+  },
+  bannerRule: {
+    width: 2,
+    backgroundColor: colors.accent,
+  },
   bannerBody: {
-    fontFamily: font.regular,
-    fontSize: 13.5,
-    color: colors.neutral300,
-    marginTop: 6,
-    lineHeight: 19,
-  },
-  day75Card: {
-    borderRadius: radius.lg,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: colors.accent800,
-  },
-  day75Title: {
-    fontFamily: font.medium,
-    fontSize: 20,
-    color: colors.text,
-    marginTop: 6,
-  },
-  todayCount: {
-    fontFamily: font.medium,
-    fontSize: 11,
-    letterSpacing: 2.64,
-    color: colors.neutral400,
-    marginTop: 14,
-    textTransform: 'uppercase',
-  },
-  why: {
-    fontFamily: font.regular,
-    fontSize: 12.5,
-    color: colors.neutral500,
-    marginTop: 6,
-    fontStyle: 'italic',
-  },
-  taskRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: 44,
-    gap: 12,
-  },
-  taskLabel: {
     flex: 1,
-    fontFamily: font.regular,
-    fontSize: 14,
-    color: colors.text,
+    padding: space.cardPad,
   },
-  taskMeta: {
-    fontFamily: font.regular,
-    fontSize: 11.5,
-    color: colors.neutral600,
+  bannerTitle: {
+    fontFamily: font.bold,
+    fontSize: 20,
+    letterSpacing: -0.4,
+    color: colors.textHi,
+    marginTop: 8,
   },
-  proofMeta: {
+  dayBlock: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 14,
+  },
+  dayNumber: {
+    fontFamily: font.black,
+    fontSize: 104,
+    lineHeight: 104,
+    letterSpacing: -6,
+    color: colors.textHi,
+    fontVariant: ['tabular-nums'],
+  },
+  dayMeta: {
+    flex: 1,
+    paddingBottom: 16,
+  },
+  strip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-  },
-  playButton: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    gap: 14,
     borderWidth: 1,
-    borderColor: colors.accent700,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 4,
+    borderColor: colors.line,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
   },
-  snapshotHeader: {
+  stripTiles: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  stripStreak: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 8,
   },
-  snapshotStreak: {
-    fontFamily: font.regular,
-    fontSize: 11.5,
-    color: colors.neutral500,
-  },
-  snapshotRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 14,
-    paddingHorizontal: 8,
-  },
-  snapshotCount: {
-    fontFamily: font.regular,
-    fontSize: 10.5,
-    color: colors.neutral500,
+  diamond: {
+    width: 8,
+    height: 8,
+    backgroundColor: colors.accent,
+    transform: [{ rotate: '45deg' }],
   },
   soloCard: {
     flexDirection: 'row',
@@ -354,14 +326,15 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   soloTitle: {
-    fontFamily: font.medium,
-    fontSize: 14,
-    color: colors.text,
+    fontFamily: font.bold,
+    fontSize: 16,
+    letterSpacing: -0.2,
+    color: colors.textHi,
   },
   soloSub: {
     fontFamily: font.regular,
-    fontSize: 11.5,
-    color: colors.neutral500,
-    marginTop: 2,
+    fontSize: 13,
+    color: colors.textMid,
+    marginTop: 3,
   },
 });

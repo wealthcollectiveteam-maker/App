@@ -1,12 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
-import {
-  BellIcon as Bell,
-  CameraIcon as Camera,
-  CheckCircleIcon as CheckCircle,
-  PaperPlaneRightIcon as PaperPlaneRight,
-  PencilSimpleIcon as PencilSimple,
-  UsersThreeIcon as UsersThree,
-} from 'phosphor-react-native';
+import { UsersThreeIcon as UsersThree } from 'phosphor-react-native';
 import React, { useState } from 'react';
 import {
   Platform,
@@ -20,6 +13,12 @@ import {
 
 import { BottomSheet } from '@/components/BottomSheet';
 import { FlairAvatar } from '@/components/FlairAvatar';
+import {
+  InitialsTile,
+  Micro,
+  SegmentBar,
+  Skew,
+} from '@/components/primitives';
 import { ScreenState } from '@/components/ScreenState';
 import {
   Card,
@@ -39,7 +38,7 @@ import {
   useAppStore,
 } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
-import { colors, font, radius, space } from '@/theme/tokens';
+import { colors, font, microTracking, radius, space } from '@/theme/tokens';
 
 const REPORT_REASONS: ReportReason[] = [
   'Spam',
@@ -182,41 +181,49 @@ function ModerationSheet({
 
 function FeedRow({
   item,
+  newest,
   onLongPress,
 }: {
   item: FeedItem;
+  newest: boolean;
   onLongPress: (item: FeedItem) => void;
 }) {
   const inbound = item.kind === 'ping-in';
-  const Icon =
-    item.kind === 'proof'
-      ? Camera
-      : item.kind === 'complete'
-        ? CheckCircle
-        : item.kind === 'change'
-          ? PencilSimple
-          : inbound
-            ? Bell
-            : PaperPlaneRight;
+  // A ping carries a written message, and the message is the part worth
+  // reading — so it, and only it, gets the serif.
+  const isPing = inbound || item.kind === 'ping-out';
 
   return (
     <Pressable
       onLongPress={() => onLongPress(item)}
       delayLongPress={450}
-      style={[styles.feedRow, inbound && styles.feedRowInbound]}
+      style={styles.feedRow}
     >
-      <Icon
-        size={16}
-        weight={inbound ? 'fill' : 'regular'}
-        color={inbound ? colors.accent300 : colors.neutral500}
+      {/* Newest carries the accent rule. */}
+      <View
+        style={[
+          styles.feedRule,
+          { backgroundColor: newest ? colors.accent : 'transparent' },
+        ]}
       />
       <Text style={styles.feedText} numberOfLines={2}>
-        <Text style={{ fontFamily: font.semibold, color: colors.text }}>
+        <Text style={{ fontFamily: font.bold, color: colors.textHi }}>
           {item.who}{' '}
         </Text>
-        {inbound ? `pinged you — ${item.text}` : item.text}
+        {inbound ? 'pinged you \u2014 ' : ''}
+        {isPing ? (
+          <Text style={styles.feedQuote}>
+            {'\u201C'}
+            {item.text}
+            {'\u201D'}
+          </Text>
+        ) : (
+          item.text
+        )}
       </Text>
-      <Text style={styles.timeMeta}>{relativeTime(item.timestamp)}</Text>
+      <Micro size={10} color={colors.textLow}>
+        {relativeTime(item.timestamp)}
+      </Micro>
     </Pressable>
   );
 }
@@ -323,28 +330,36 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
           {/* Flexible so a long squad name can never squeeze the code out
               of the row — the code is the one thing here that must stay
               fully readable. */}
-          <View style={{ flex: 1, paddingRight: 12 }}>
+          <View style={{ flex: 1, minWidth: 150, paddingRight: 12 }}>
             <Text style={styles.squadName} numberOfLines={2}>
               {squad.name}
             </Text>
-            <Text style={styles.squadStreak}>
-              {squad.streak}-day squad streak
-            </Text>
+            <View style={styles.squadStreakRow}>
+              <Micro color={colors.accent400}>
+                {squad.streak}-day squad streak
+              </Micro>
+              <View style={styles.diamond} />
+            </View>
           </View>
           <View style={{ alignItems: 'flex-end' }}>
-            <Kicker color={colors.neutral500}>Invite code</Kicker>
+            <Micro color={colors.textMid}>Invite code</Micro>
             {squad.code ? (
               <>
                 {/* Plain selectable Text: readable aloud, and long-press
-                    still works if the clipboard is unavailable. */}
-                <Text style={styles.inviteCode} selectable>
+                    still works if the clipboard is unavailable. It scales
+                    with the system font — the row wraps rather than clips. */}
+                <Text
+                  style={styles.inviteCode}
+                  selectable
+                  maxFontSizeMultiplier={1.5}
+                >
                   {squad.code}
                 </Text>
                 <OutlineButton
                   label="Copy"
                   small
                   onPress={copyCode}
-                  style={{ marginTop: 6 }}
+                  style={{ marginTop: 8 }}
                 />
               </>
             ) : (
@@ -356,15 +371,10 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
 
       <View>
         <View style={styles.membersHeader}>
-          <Kicker color={colors.neutral500}>Members</Kicker>
-          <Text
-            style={[
-              styles.pingCounter,
-              outOfPings && { color: colors.neutral600 },
-            ]}
-          >
+          <Micro color={colors.textMid}>Members</Micro>
+          <Micro color={outOfPings ? colors.textLow : colors.textMid}>
             {pingsLeft} of {PINGS.maxPerDay} pings left today
-          </Text>
+          </Micro>
         </View>
         {squad.members.map((m) => {
           // Squadmates run their own tiers, so their denominator is theirs,
@@ -373,21 +383,25 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
           const total = m.isSelf ? taskCount : m.tasksToday || taskCount;
           return (
           <View key={m.id} style={styles.memberRow}>
-            <FlairAvatar initials={m.initials} level={m.level} size={36} />
-            <View style={{ flex: 1 }}>
+            <InitialsTile initials={m.initials} active={m.isSelf} size={44} />
+            <View style={{ flex: 1, gap: 8 }}>
               <Text style={styles.memberName}>{m.name}</Text>
-              <Text style={styles.memberMeta}>
-                {Math.min(m.doneToday, total)} of {total} today
-              </Text>
+              {/* This member's OWN task count, never the viewer's. */}
+              <SegmentBar done={Math.min(m.doneToday, total)} total={total} />
             </View>
-            {!m.isSelf &&
-              (outOfPings ? (
-                <View style={styles.pingDisabled}>
-                  <Text style={styles.pingDisabledText}>PING</Text>
-                </View>
-              ) : (
-                <OutlineButton label="Ping" small onPress={() => onPing(m)} />
-              ))}
+            <Text style={styles.memberCount} maxFontSizeMultiplier={1.4}>
+              {Math.min(m.doneToday, total)}/{total}
+            </Text>
+            {!m.isSelf && (
+              <Skew
+                label="Ping"
+                size="sm"
+                tone={outOfPings ? 'muted' : 'accent'}
+                disabled={outOfPings}
+                onPress={() => onPing(m)}
+                accessibilityLabel={"Ping " + m.name}
+              />
+            )}
           </View>
           );
         })}
@@ -399,16 +413,21 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
       </View>
 
       <View>
-        <Kicker color={colors.neutral500} style={{ marginBottom: 8 }}>
+        <Micro color={colors.textMid} style={{ marginBottom: 10 }}>
           Today
-        </Kicker>
+        </Micro>
         {visibleFeed.length === 0 ? (
           <Text style={styles.empty}>
             No activity yet. Be the first to lock in.
           </Text>
         ) : (
-          visibleFeed.map((f) => (
-            <FeedRow key={f.id} item={f} onLongPress={setModerating} />
+          visibleFeed.map((f, i) => (
+            <FeedRow
+              key={f.id}
+              item={f}
+              newest={i === 0}
+              onLongPress={setModerating}
+            />
           ))
         )}
       </View>
@@ -441,8 +460,7 @@ function LeaderboardTab() {
               styles.leaderRow,
               r.isSelf && {
                 borderWidth: 1,
-                borderColor: colors.accent700,
-                borderRadius: radius.sm,
+                borderColor: colors.accent,
               },
             ]}
           >
@@ -487,13 +505,14 @@ export default function SquadScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.title}>Squad</Text>
-        <SegmentedControl
-          segments={['SQUAD', 'LEADERBOARD']}
-          value={tab}
-          onChange={setTab}
-          style={{ marginBottom: 16 }}
-        />
+        <View style={styles.header}>
+          <Text style={styles.title}>Squad</Text>
+          <SegmentedControl
+            segments={['SQUAD', 'LEADERBOARD']}
+            value={tab}
+            onChange={setTab}
+          />
+        </View>
         {tab === 'SQUAD' ? (
           <SquadTab onPing={setPingTarget} />
         ) : (
@@ -511,27 +530,44 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 28,
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 18,
+  },
   title: {
-    fontFamily: font.medium,
-    fontSize: 24,
-    color: colors.text,
-    marginBottom: 14,
+    fontFamily: font.bold,
+    fontSize: 34,
+    letterSpacing: -1,
+    color: colors.textHi,
   },
   squadHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
   },
   squadName: {
-    fontFamily: font.medium,
-    fontSize: 18,
-    color: colors.text,
+    fontFamily: font.bold,
+    fontSize: 22,
+    letterSpacing: -0.5,
+    color: colors.textHi,
   },
-  squadStreak: {
-    fontFamily: font.regular,
-    fontSize: 12,
-    color: colors.neutral500,
-    marginTop: 3,
+  squadStreakRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+  },
+  diamond: {
+    width: 8,
+    height: 8,
+    backgroundColor: colors.accent,
+    transform: [{ rotate: '45deg' }],
   },
   inviteCode: {
     // Monospace on purpose: this gets read out loud, and 0/O and 1/I have
@@ -539,13 +575,13 @@ const styles = StyleSheet.create({
     fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
     fontSize: 26,
     letterSpacing: 3,
-    color: colors.accent300,
-    marginTop: 3,
+    color: colors.textHi,
+    marginTop: 6,
   },
   inviteCodePending: {
     fontFamily: font.regular,
     fontSize: 13,
-    color: colors.neutral500,
+    color: colors.textMid,
     marginTop: 6,
   },
   codeInput: {
@@ -556,96 +592,89 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
-  },
-  pingCounter: {
-    fontFamily: font.regular,
-    fontSize: 11,
-    color: colors.neutral500,
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 14,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
   },
   memberRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    minHeight: 52,
+    gap: 14,
+    minHeight: 68,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
   },
   memberName: {
-    fontFamily: font.medium,
-    fontSize: 14,
-    color: colors.text,
+    fontFamily: font.bold,
+    fontSize: 17,
+    letterSpacing: -0.3,
+    color: colors.textHi,
   },
-  memberMeta: {
-    fontFamily: font.regular,
-    fontSize: 11.5,
-    color: colors.neutral500,
-    marginTop: 1,
-  },
-  pingDisabled: {
-    minHeight: 32,
-    borderWidth: 1,
-    borderColor: colors.neutral700,
-    borderRadius: radius.sm,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pingDisabledText: {
-    fontFamily: font.medium,
-    fontSize: 10.5,
-    letterSpacing: 1.9,
-    color: colors.neutral600,
+  memberCount: {
+    fontFamily: font.semibold,
+    fontSize: 13,
+    color: colors.textMid,
+    fontVariant: ['tabular-nums'],
   },
   outOfPings: {
     fontFamily: font.regular,
-    fontSize: 11.5,
-    color: colors.neutral600,
-    marginTop: 6,
+    fontSize: 12,
+    color: colors.textLow,
+    marginTop: 10,
   },
   feedRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
     backgroundColor: colors.surface,
-    borderRadius: radius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingRight: 14,
+    paddingVertical: 12,
     marginBottom: 6,
   },
-  feedRowInbound: {
-    backgroundColor: colors.accent900,
+  feedRule: {
+    width: 2,
+    alignSelf: 'stretch',
+    marginVertical: -12,
   },
   feedText: {
     flex: 1,
     fontFamily: font.regular,
-    fontSize: 12.5,
-    color: colors.neutral300,
-    lineHeight: 17,
+    fontSize: 13.5,
+    color: colors.textMid,
+    lineHeight: 19,
+  },
+  feedQuote: {
+    fontFamily: font.serifItalic,
+    color: colors.accent400,
   },
   timeMeta: {
     fontFamily: font.regular,
     fontSize: 10.5,
-    color: colors.neutral600,
+    color: colors.textLow,
   },
   empty: {
     fontFamily: font.regular,
-    fontSize: 12.5,
-    color: colors.neutral500,
+    fontSize: 13,
+    color: colors.textMid,
     paddingVertical: 10,
   },
   soloTitle: {
-    fontFamily: font.medium,
-    fontSize: 17,
-    color: colors.text,
-    marginTop: 12,
+    fontFamily: font.bold,
+    fontSize: 20,
+    letterSpacing: -0.4,
+    color: colors.textHi,
+    marginTop: 14,
   },
   soloSub: {
     fontFamily: font.regular,
-    fontSize: 12.5,
-    color: colors.neutral500,
-    marginTop: 6,
+    fontSize: 13.5,
+    color: colors.textMid,
+    marginTop: 8,
     textAlign: 'center',
-    lineHeight: 18,
+    lineHeight: 19,
     paddingHorizontal: 16,
   },
   quipWrap: {
@@ -656,15 +685,15 @@ const styles = StyleSheet.create({
   },
   quip: {
     borderWidth: 1,
-    borderColor: colors.neutral700,
-    borderRadius: radius.pill,
+    borderColor: colors.line,
+    borderRadius: radius.sm,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 9,
   },
   quipText: {
-    fontFamily: font.regular,
-    fontSize: 12.5,
-    color: colors.neutral300,
+    fontFamily: font.medium,
+    fontSize: 13,
+    color: colors.textMid,
   },
   reasonRow: {
     minHeight: 44,
@@ -674,9 +703,9 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   reasonText: {
-    fontFamily: font.regular,
-    fontSize: 14,
-    color: colors.text,
+    fontFamily: font.medium,
+    fontSize: 15,
+    color: colors.textHi,
   },
   sendRow: {
     flexDirection: 'row',
@@ -685,12 +714,12 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontFamily: font.regular,
-    fontSize: 13.5,
-    color: colors.text,
-    minHeight: 42,
+    fontSize: 14,
+    color: colors.textHi,
+    minHeight: 44,
     paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: colors.divider,
+    borderColor: colors.line,
     borderRadius: radius.sm,
     backgroundColor: colors.bg,
   },
@@ -702,40 +731,42 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   rank: {
-    width: 18,
-    fontFamily: font.medium,
-    fontSize: 14,
-    color: colors.neutral500,
+    width: 20,
+    fontFamily: font.black,
+    fontSize: 15,
+    color: colors.textLow,
     textAlign: 'center',
+    fontVariant: ['tabular-nums'],
   },
   leaderName: {
     flex: 1,
-    fontFamily: font.medium,
-    fontSize: 14,
-    color: colors.text,
+    fontFamily: font.bold,
+    fontSize: 15,
+    letterSpacing: -0.2,
+    color: colors.textHi,
   },
   leaderTierTag: {
-    backgroundColor: colors.accent900,
-    borderRadius: 5,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    backgroundColor: colors.accentDeep,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
   },
   leaderTierText: {
-    fontFamily: font.medium,
-    fontSize: 8.5,
-    letterSpacing: 1,
+    fontFamily: font.semibold,
+    fontSize: 9,
+    letterSpacing: microTracking(9),
     textTransform: 'uppercase',
-    color: colors.accent300,
+    color: colors.accent400,
   },
   leaderXp: {
-    fontFamily: font.regular,
+    fontFamily: font.semibold,
     fontSize: 13,
-    color: colors.neutral400,
+    color: colors.textMid,
+    fontVariant: ['tabular-nums'],
   },
   footerNote: {
     fontFamily: font.regular,
-    fontSize: 11.5,
-    color: colors.neutral600,
+    fontSize: 12,
+    color: colors.textLow,
     textAlign: 'center',
     marginTop: 4,
   },

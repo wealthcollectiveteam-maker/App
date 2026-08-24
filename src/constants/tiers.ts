@@ -130,6 +130,8 @@ export function renderTaskLabel(
 export interface TierDef {
   key: Tier;
   label: string;
+  /** Two-word descriptor shown beside the tier name on the picker. */
+  tagline: string;
   taskKeys: BuiltinTaskKey[];
   workoutMinutes: number;
   /** Standard target values per task for this tier. */
@@ -148,6 +150,7 @@ export const TIERS: Record<Tier, TierDef> = {
   hard: {
     key: 'hard',
     label: 'Hard',
+    tagline: 'The original',
     taskKeys: ['workout1', 'workout2', 'water', 'read', 'diet', 'photo'],
     workoutMinutes: 45,
     standards: { workout1: 45, workout2: 45, water: 1, read: 10 },
@@ -160,6 +163,7 @@ export const TIERS: Record<Tier, TierDef> = {
   medium: {
     key: 'medium',
     label: 'Medium',
+    tagline: 'Build the base',
     taskKeys: ['workout1', 'water', 'read', 'diet', 'photo'],
     workoutMinutes: 45,
     standards: { workout1: 45, water: 1, read: 10 },
@@ -172,6 +176,7 @@ export const TIERS: Record<Tier, TierDef> = {
   soft: {
     key: 'soft',
     label: 'Soft',
+    tagline: 'Keep the habit',
     taskKeys: ['workout1', 'water', 'read', 'diet'],
     workoutMinutes: 45,
     standards: { workout1: 45, water: 1, read: 10 },
@@ -230,6 +235,26 @@ export const tierTaskCount = (tier: Tier) => TIER_TASKS[tier].length;
 
 export const missedDayCopy = (tier: Tier, day: number) =>
   TIERS[tier].missedDay.copy.replace('{day}', String(day));
+
+/**
+ * The consequence line shown INSIDE a tier's card on the picker.
+ *
+ * Derived from that tier's missed-day rules, never from a hardcoded string
+ * per tier: "miss a task, restart at day one" is true of hard alone, and as
+ * a blanket line under the heading it was simply false for the other two.
+ */
+export function missedDayLine(tier: Tier): string {
+  const { restartsChallenge, resetsStreak } = TIERS[tier].missedDay;
+  if (restartsChallenge) return 'Miss a task, restart at day one.';
+  if (resetsStreak) {
+    return 'Miss a task, the streak resets. Your day count continues.';
+  }
+  return 'Miss a task, the day still counts.';
+}
+
+/** Every task in a tier, at standard targets, as one readable line. */
+export const tierTaskSummary = (tier: Tier): string =>
+  TIER_TASKS[tier].map((t) => t.label).join(' · ');
 
 /**
  * The displayed tier label for a task set: any tier task below its

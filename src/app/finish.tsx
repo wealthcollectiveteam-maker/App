@@ -92,7 +92,7 @@ function StepOne({ onNext }: { onNext: () => void }) {
                   styles.pill,
                   active && {
                     borderColor: colors.accent300,
-                    backgroundColor: 'rgba(90,144,232,0.18)',
+                    backgroundColor: colors.accentTint,
                   },
                 ]}
               >
@@ -278,7 +278,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.accent800,
     borderRadius: radius.sm,
-    backgroundColor: 'rgba(8,9,16,0.25)',
+    backgroundColor: colors.groundScrim,
     marginTop: 12,
   },
   stepTwo: {
