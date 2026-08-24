@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
@@ -6,6 +6,12 @@ import { runOnJS } from 'react-native-reanimated';
 import { BottomSheet } from '@/components/BottomSheet';
 import { Kicker, SegmentedControl } from '@/components/ui';
 import type { Scenario, Tier } from '@/data/types';
+import { isLiveBackend } from '@/services';
+import {
+  isSimulationEnabled,
+  runSimulation,
+  type SimScenario,
+} from '@/services/backend/devSimulation';
 import { useAppStore, type ScreenStateKind } from '@/store/useAppStore';
 import { colors, font, radius } from '@/theme/tokens';
 
@@ -17,6 +23,12 @@ import { colors, font, radius } from '@/theme/tokens';
  * state through the same store actions the app uses. Shipped, it was
  * reachable by anyone who long-pressed the wordmark for 600ms.
  *
+ * ON A LIVE BACKEND the scenarios go through devSimulation.ts, which calls
+ * owner-scoped RPCs that write real rows. They did nothing at all before
+ * that: they were written for MockDataService and none survived the switch,
+ * which is why the Day 75 finish screen had been unreachable and untestable
+ * for eleven weeks. On the mock they keep the old in-memory path.
+ *
  * It lives in its own module so AppHeader can reach it through a `__DEV__`
  * guarded require(). `__DEV__` is a compile-time constant, so in a
  * production bundle that branch is dead code and this file is never
@@ -24,11 +36,48 @@ import { colors, font, radius } from '@/theme/tokens';
  * a check.
  */
 
-const SCENARIOS: { key: Scenario; label: string; sub: string }[] = [
-  { key: 'day1', label: 'Day 1', sub: 'Fresh start. Nothing done yet.' },
-  { key: 'day12', label: 'Day 12', sub: 'Mid-run. Partial progress today.' },
-  { key: 'missed', label: 'Missed day', sub: 'Streak broken banner.' },
-  { key: 'day75', label: 'Day 75', sub: 'Challenge complete.' },
+/**
+ * `liveSub` describes what the simulation ACTUALLY does on a real backend,
+ * because that is what will happen. A day counter reading 12 over an empty
+ * Wall and a zero streak is not a simulation of day 12.
+ */
+const SCENARIOS: {
+  key: Scenario;
+  sim: SimScenario;
+  label: string;
+  sub: string;
+  liveSub: string;
+}[] = [
+  {
+    key: 'day1',
+    sim: 'day1',
+    label: 'Day 1 - fresh start',
+    sub: 'Fresh start. Nothing done yet.',
+    liveSub:
+      'Ends this challenge and DELETES the simulated history. The undo for everything below.',
+  },
+  {
+    key: 'day12',
+    sim: 'day12',
+    label: 'Day 12',
+    sub: 'Mid-run. Partial progress today.',
+    liveSub: 'Days 1-11 sealed with every task done, flame 11. Today untouched.',
+  },
+  {
+    key: 'missed',
+    sim: 'missed',
+    label: 'Missed day',
+    sub: 'Streak broken banner.',
+    liveSub: 'Runs the real midnight evaluation on yesterday. Hard restarts.',
+  },
+  {
+    key: 'day75',
+    sim: 'day75',
+    label: 'Day 75, complete',
+    sub: 'Challenge complete.',
+    liveSub:
+      'All 75 days sealed and today done, so the finish screen is reachable.',
+  },
 ];
 
 const TIER_SEGMENTS = ['HARD', 'MEDIUM', 'SOFT'];
@@ -53,8 +102,34 @@ export function DevScenarioSheet({ children }: { children: React.ReactNode }) {
   const toggleHealthSimulation = useAppStore((s) => s.toggleHealthSimulation);
   const advanceDay = useAppStore((s) => s.advanceDay);
   const [open, setOpen] = useState(false);
+  const [simEnabled, setSimEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Checked when the sheet opens rather than on mount: the answer is a round
+  // trip, and it changes only when someone edits sim_allowed_users by hand.
+  useEffect(() => {
+    if (!open || !isLiveBackend) return;
+    isSimulationEnabled().then(setSimEnabled, () => setSimEnabled(false));
+  }, [open]);
 
   const openDev = () => setOpen(true);
+
+  /**
+   * On a live backend a scenario is a server round trip, so the sheet stays
+   * open until it lands. Closing it immediately is what let the old dead
+   * buttons look as though they had worked.
+   */
+  const run = async (row: (typeof SCENARIOS)[number]) => {
+    if (!isLiveBackend) {
+      loadScenario(row.key);
+      setOpen(false);
+      return;
+    }
+    setBusy(true);
+    await runSimulation(row.sim);
+    setBusy(false);
+    setOpen(false);
+  };
 
   const longPress = Gesture.LongPress()
     .minDuration(600)
@@ -70,20 +145,35 @@ export function DevScenarioSheet({ children }: { children: React.ReactNode }) {
       </GestureDetector>
 
       <BottomSheet visible={open} onClose={() => setOpen(false)}>
-        <Kicker style={{ marginBottom: 10 }}>Dev — mock scenario</Kicker>
+        <Kicker style={{ marginBottom: 10 }}>
+          {isLiveBackend ? 'Dev — live simulation' : 'Dev — mock scenario'}
+        </Kicker>
+        {isLiveBackend ? (
+          <Text style={styles.warning}>
+            {simEnabled === false
+              ? 'This account is not in sim_allowed_users, so every scenario below will be refused.'
+              : 'These write real rows to the real database, and a simulated completion is indistinguishable from a real one. Use a throwaway account.'}
+          </Text>
+        ) : null}
         {SCENARIOS.map((s) => {
-          const active = s.key === scenario;
+          const active = !isLiveBackend && s.key === scenario;
           return (
             <Pressable
               key={s.key}
+              disabled={busy}
               onPress={() => {
-                loadScenario(s.key);
-                setOpen(false);
+                run(s);
               }}
-              style={[styles.scenarioRow, active && styles.scenarioRowActive]}
+              style={[
+                styles.scenarioRow,
+                active && styles.scenarioRowActive,
+                busy && styles.scenarioRowBusy,
+              ]}
             >
               <Text style={styles.scenarioLabel}>{s.label}</Text>
-              <Text style={styles.scenarioSub}>{s.sub}</Text>
+              <Text style={styles.scenarioSub}>
+                {isLiveBackend ? s.liveSub : s.sub}
+              </Text>
             </Pressable>
           );
         })}
@@ -124,15 +214,26 @@ export function DevScenarioSheet({ children }: { children: React.ReactNode }) {
         </Pressable>
 
         <Pressable
+          disabled={busy}
           onPress={() => {
-            advanceDay();
-            setOpen(false);
+            if (!isLiveBackend) {
+              advanceDay();
+              setOpen(false);
+              return;
+            }
+            setBusy(true);
+            runSimulation('advance').finally(() => {
+              setBusy(false);
+              setOpen(false);
+            });
           }}
-          style={styles.scenarioRow}
+          style={[styles.scenarioRow, busy && styles.scenarioRowBusy]}
         >
           <Text style={styles.scenarioLabel}>Advance day (rollover)</Text>
           <Text style={styles.scenarioSub}>
-            Simulate local midnight: pending task edits take effect.
+            {isLiveBackend
+              ? 'Winds the start date back a day, sealing today as done. Pending edits take effect.'
+              : 'Simulate local midnight: pending task edits take effect.'}
           </Text>
         </Pressable>
 
@@ -168,6 +269,16 @@ const styles = StyleSheet.create({
   },
   scenarioRowActive: {
     backgroundColor: colors.accentDeep,
+  },
+  scenarioRowBusy: {
+    opacity: 0.5,
+  },
+  warning: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    lineHeight: 15,
+    color: colors.textMid,
+    marginBottom: 10,
   },
   scenarioLabel: {
     fontFamily: font.medium,

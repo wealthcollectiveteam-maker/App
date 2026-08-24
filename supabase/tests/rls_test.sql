@@ -28,6 +28,13 @@ declare
   upd_allow text[] := array['profiles','profile_private','meals','milestones',
     'workout_logs'];
   del_allow text[] := array['blocked_users','workout_logs'];
+  -- functions `authenticated` must NOT be able to execute (see the loop).
+  server_only text[] := array[
+    'evaluate_all_challenges()',
+    'evaluate_challenge(uuid)',
+    'restart_challenge(uuid,integer,text)',
+    'active_challenge_of(uuid)',
+    'sim_fill_day(uuid,integer)'];
 begin
   for t in select tablename from pg_tables where schemaname = 'public' loop
     qualified := format('public.%I', t.tablename);
@@ -58,7 +65,18 @@ begin
     end if;
   end loop;
 
-  -- functions: anon can execute NOTHING in public; authenticated everything.
+  -- functions: anon can execute NOTHING in public. `authenticated` gets
+  -- everything EXCEPT the server-only surface, which is an allow-list in
+  -- the same two-directional shape as the table grants above — a function
+  -- that loses its grant fails, and so does one that gains an unexpected
+  -- one.
+  --
+  -- What is on this list and why (0007): the missed-day evaluator walks
+  -- every challenge in the database and applies penalties. A grant on
+  -- evaluate_challenge(uuid) alone would let any user drive that machinery
+  -- against somebody else's challenge id. They stay reachable from the
+  -- SECURITY DEFINER functions that call them, because privilege checks
+  -- there run as the function owner.
   for f in
     select p.oid from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
@@ -67,8 +85,10 @@ begin
     if has_function_privilege('anon', f.oid, 'EXECUTE') then
       raise exception 'FAIL: anon can execute %', f.oid::regprocedure;
     end if;
-    if not has_function_privilege('authenticated', f.oid, 'EXECUTE') then
-      raise exception 'FAIL: authenticated cannot execute %', f.oid::regprocedure;
+    if has_function_privilege('authenticated', f.oid, 'EXECUTE')
+       = (f.oid::regprocedure::text = any(server_only)) then
+      raise exception 'FAIL: authenticated EXECUTE grant wrong on %',
+        f.oid::regprocedure;
     end if;
   end loop;
 

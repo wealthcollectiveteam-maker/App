@@ -377,6 +377,10 @@ export class SupabaseDataService implements IDataService {
     this.state.flame = config?.flame ?? 0;
     this.state.bestFlame = config?.bestFlame ?? 0;
     this.state.perfectDays = config?.perfectDays ?? 0;
+    // Server-owned. The penalty that set it was applied at local midnight by
+    // the scheduled evaluator, which the user was almost certainly not
+    // present for — so this is the only thing that can tell them.
+    this.state.missedDay = config?.missedDay ?? false;
     this.customTasks = config?.customTasks ?? [];
     this.targetOverrides = config?.targetOverrides ?? {};
     this.overridesAtDayStart = { ...this.targetOverrides };
@@ -474,6 +478,7 @@ export class SupabaseDataService implements IDataService {
     this.state.flame = config?.flame ?? this.state.flame;
     this.state.bestFlame = config?.bestFlame ?? this.state.bestFlame;
     this.state.perfectDays = config?.perfectDays ?? this.state.perfectDays;
+    this.state.missedDay = config?.missedDay ?? this.state.missedDay;
     this.customTasks = config?.customTasks ?? this.customTasks;
     this.targetOverrides = config?.targetOverrides ?? this.targetOverrides;
     this.overridesAtDayStart = { ...this.targetOverrides };

@@ -19,5 +19,11 @@ for m in supabase/migrations/*.sql; do
   sudo -u postgres psql -v ON_ERROR_STOP=1 -q -d ranked_test -f "$m"
 done
 
-sudo -u postgres psql -v ON_ERROR_STOP=1 -d ranked_test \
-  -f supabase/tests/rls_test.sql 2>&1 | grep -E "PASS|FAIL|ALL PROOFS"
+# Every proof suite, in order. rls_test covers the privacy and immutability
+# guarantees; missed_day_test covers the engine that archives, restarts and
+# resets streaks on top of them.
+for t in supabase/tests/rls_test.sql supabase/tests/missed_day_test.sql; do
+  echo "===== $t"
+  sudo -u postgres psql -v ON_ERROR_STOP=1 -d ranked_test \
+    -f "$t" 2>&1 | grep -E "PASS|FAIL|PROOFS PASSED"
+done

@@ -117,6 +117,20 @@ export interface ChallengeConfig {
   bestFlame: number;
   /** Days sealed complete. The other half of the You screen's stats. */
   perfectDays: number;
+  /**
+   * Whether a missed day is current news for THIS challenge.
+   *
+   * Server-owned, and derived rather than stored on the client: the
+   * evaluator writes challenges.missed_notice_day when it applies a penalty
+   * (the day after the miss for Medium/Soft, day 1 of the replacement for
+   * Hard), and this is true only while that equals today. It therefore
+   * clears itself at the next rollover with no second piece of client state
+   * to fall out of step — and, critically, it is true after a penalty the
+   * user was not present for. The banner used to be set only by a local
+   * action, so a streak broken at midnight while the app was closed showed
+   * nothing at all.
+   */
+  missedDay: boolean;
   customTasks: CustomTask[];
   targetOverrides: Partial<Record<TaskKey, number>>;
   pendingTier: Tier | null;
@@ -124,7 +138,7 @@ export interface ChallengeConfig {
 
 /**
  * feed_items.kind -> FeedKind. The check constraint allows
- * complete/proof/change/ping; the app has no 'ping', only the two
+ * complete/proof/change/ping/miss; the app has no 'ping', only the two
  * directions of one. Anything unrecognised becomes 'change', the neutral
  * kind, rather than a value no renderer has a case for.
  */
@@ -133,6 +147,7 @@ function toFeedKind(kind: string, mine: boolean): FeedKind {
     case 'complete':
     case 'proof':
     case 'change':
+    case 'miss':
       return kind;
     case 'ping':
       return mine ? 'ping-out' : 'ping-in';
@@ -254,7 +269,7 @@ export const BackendApi = {
     ] = await Promise.all([
         sb()
           .from('challenges')
-          .select('base_tier, flame, best_flame')
+          .select('base_tier, flame, best_flame, missed_notice_day')
           .eq('id', challengeId)
           .single(),
         sb().from('custom_tasks').select('*').eq('challenge_id', challengeId),
@@ -297,6 +312,7 @@ export const BackendApi = {
       flame: challenge?.flame ?? 0,
       bestFlame: challenge?.best_flame ?? 0,
       perfectDays: sealedResult.count ?? 0,
+      missedDay: (challenge?.missed_notice_day ?? null) === currentDay,
       customTasks: (customs ?? []).map(
         (c: {
           id: string;

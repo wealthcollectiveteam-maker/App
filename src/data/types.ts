@@ -210,7 +210,18 @@ export interface SquadMember {
   isSelf: boolean;
 }
 
-export type FeedKind = 'ping-in' | 'ping-out' | 'complete' | 'proof' | 'change';
+/**
+ * `miss` is written by the missed-day evaluator alone — never by a client.
+ * It is the same class of fact as `complete`: the squad already sees when
+ * someone locks in a day, and a broken streak belongs in the same place.
+ */
+export type FeedKind =
+  | 'ping-in'
+  | 'ping-out'
+  | 'complete'
+  | 'proof'
+  | 'change'
+  | 'miss';
 
 export interface FeedItem {
   id: string;

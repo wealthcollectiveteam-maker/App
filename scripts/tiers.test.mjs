@@ -27,6 +27,8 @@ import {
   tierStandardTarget,
 } from '../src/constants/tiers.ts';
 
+import { readFileSync } from 'node:fs';
+
 let failures = 0;
 function expect(name, actual, expected) {
   const a = JSON.stringify(actual);
@@ -126,6 +128,41 @@ expect('add + remove with an unchanged count still says something',
     ...none, addedTomorrow: [{ id: 'a' }], removedTomorrow: [{ id: 'b' }],
   }, 'hard'),
   'Your task list changes tomorrow — still 6 tasks.');
+
+// ---- 8. The server's copy of the missed-day rules matches this file -------
+//
+// The missed-day evaluator reads public.tier_rules; it carries no branch per
+// tier. That is only true as long as the two agree, and they live in
+// different languages in different repositories of truth — a tier whose
+// penalty is edited here and not there would show one consequence on the
+// picker card and apply another at midnight. This parses the seed out of the
+// migration and compares it to TIERS, so the drift is caught by a test
+// rather than by a user losing a challenge they were told they would keep.
+const migration = readFileSync(
+  new URL('../supabase/migrations/0007_missed_day_engine.sql', import.meta.url),
+  'utf8',
+);
+const seed = migration.slice(
+  migration.indexOf('insert into public.tier_rules'),
+  migration.indexOf('on conflict (tier) do update'),
+);
+const seeded = Object.fromEntries(
+  [...seed.matchAll(/\('(\w+)',\s*(true|false),\s*(true|false)\)/g)].map(
+    ([, tier, restarts, resets]) => [
+      tier,
+      { restartsChallenge: restarts === 'true', resetsStreak: resets === 'true' },
+    ],
+  ),
+);
+
+expect('tier_rules seeds every tier the app defines',
+  Object.keys(seeded).sort(), Object.keys(TIERS).sort());
+
+for (const tier of Object.keys(TIERS)) {
+  const { restartsChallenge, resetsStreak } = TIERS[tier].missedDay;
+  expect(`tier_rules.${tier} matches TIERS.${tier}.missedDay`,
+    seeded[tier], { restartsChallenge, resetsStreak });
+}
 
 console.log(failures === 0 ? '\nAll tier guards passed.' : `\n${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);

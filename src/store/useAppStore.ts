@@ -176,7 +176,6 @@ interface AppState extends ScenarioState {
 
   loadScenario: (scenario: Scenario) => void;
   setTier: (tier: Tier) => void;
-  applyMissedDay: () => void;
   /**
    * `sync: false` completes locally only, for the one caller that owns the
    * backend write itself — the timer, whose completeTimedTask() carries the
@@ -376,20 +375,6 @@ export const useAppStore = create<AppState>((set, get) => ({
             })),
           }
         : null,
-    });
-  },
-
-  /** Apply the active tier's missed-day penalty. */
-  applyMissedDay: () => {
-    const s = get();
-    const penalty = TIERS[s.tier].missedDay;
-    set({
-      missedDay: true,
-      dayComplete: false,
-      tasksDone: {},
-      deferred: [],
-      flame: penalty.resetsStreak ? 0 : s.flame,
-      day: penalty.restartsChallenge ? 1 : s.day,
     });
   },
 
@@ -733,6 +718,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       xp: st.xp,
       tasksDone: st.tasksDone,
       dayComplete: st.dayComplete,
+      // The server decides whether a broken streak is still today's news.
+      // Set here rather than only by applyMissedDay(), because the penalty
+      // happens at local midnight with the app closed: without this the
+      // banner never appeared for the case it exists for.
+      missedDay: st.missedDay,
       ...(rolledOver
         ? {
             deferred: [],
