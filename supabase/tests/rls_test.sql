@@ -368,5 +368,74 @@ begin
   end;
 end $$;
 
+-- ---------------- extra: delete_account leaves nothing behind ----------------
+-- Guideline 5.1.1(v). Ada has by this point a profile, a private profile, a
+-- challenge with a frozen day and a completion, a journal entry, a meal, a
+-- check-in, a milestone, a workout log, a squad she created, feed rows and
+-- five pings. Ben blocks her first, because that is the direction with no
+-- cascade of its own — blocked_users.blocked pointed at a user who no longer
+-- had a row anywhere else.
+set role authenticated;
+call test_login('00000000-0000-0000-0000-00000000000b');
+insert into public.blocked_users (blocker, blocked)
+  values (auth.uid(), '00000000-0000-0000-0000-00000000000a');
+
+call test_login('00000000-0000-0000-0000-00000000000a');
+select public.delete_account();
+
+reset role;
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-00000000000a';
+  n integer;
+  bad text := '';
+begin
+  select count(*) into n from public.profiles        where id = v_uid;         if n > 0 then bad := bad || ' profiles'; end if;
+  select count(*) into n from public.profile_private where id = v_uid;         if n > 0 then bad := bad || ' profile_private'; end if;
+  select count(*) into n from public.challenges      where owner = v_uid;      if n > 0 then bad := bad || ' challenges'; end if;
+  select count(*) into n from public.journal_entries where owner = v_uid;      if n > 0 then bad := bad || ' journal_entries'; end if;
+  select count(*) into n from public.meals           where owner = v_uid;      if n > 0 then bad := bad || ' meals'; end if;
+  select count(*) into n from public.metric_checkins where owner = v_uid;      if n > 0 then bad := bad || ' metric_checkins'; end if;
+  select count(*) into n from public.milestones      where owner = v_uid;      if n > 0 then bad := bad || ' milestones'; end if;
+  select count(*) into n from public.workout_logs    where owner = v_uid;      if n > 0 then bad := bad || ' workout_logs'; end if;
+  select count(*) into n from public.squad_members   where user_id = v_uid;    if n > 0 then bad := bad || ' squad_members'; end if;
+  select count(*) into n from public.feed_items      where author = v_uid;     if n > 0 then bad := bad || ' feed_items'; end if;
+  select count(*) into n from public.content_reports where reporter = v_uid;   if n > 0 then bad := bad || ' content_reports'; end if;
+  select count(*) into n from public.pings
+    where from_user = v_uid or to_user = v_uid;                                if n > 0 then bad := bad || ' pings'; end if;
+  select count(*) into n from public.blocked_users
+    where blocker = v_uid or blocked = v_uid;                                  if n > 0 then bad := bad || ' blocked_users'; end if;
+
+  -- Cascades from challenges. Asserted rather than assumed: the ON DELETE
+  -- CASCADE is the only thing clearing them, and it is one DDL edit away
+  -- from not being there.
+  select count(*) into n from public.challenge_days cd
+    where not exists (select 1 from public.challenges c where c.id = cd.challenge_id);
+  if n > 0 then bad := bad || ' challenge_days(orphan)'; end if;
+  select count(*) into n from public.task_completions tc
+    where not exists (select 1 from public.challenges c where c.id = tc.challenge_id);
+  if n > 0 then bad := bad || ' task_completions(orphan)'; end if;
+
+  if bad <> '' then
+    raise exception 'FAIL: rows survived delete_account in:%', bad;
+  end if;
+  raise notice 'PASS: delete_account leaves no application row referencing the user';
+end $$;
+
+-- A squad someone else is still running is not the deleted user's to take
+-- away — even though she created it.
+do $$
+declare n integer;
+begin
+  select count(*) into n from public.squads;
+  if n <> 1 then
+    raise exception 'FAIL: delete_account removed a squad another member still runs';
+  end if;
+  select count(*) into n from public.squad_members
+    where user_id = '00000000-0000-0000-0000-00000000000b';
+  if n <> 1 then raise exception 'FAIL: the remaining member lost their squad'; end if;
+  raise notice 'PASS: a squad another member still runs survives the delete';
+end $$;
+
 reset role;
 select 'ALL PROOFS PASSED' as result;

@@ -278,7 +278,7 @@ export class MockDataService implements IDataService {
     this.state.why = why;
   }
 
-  deleteAccount(): void {
+  async deleteAccount(): Promise<void> {
     this.state = buildScenario('day1');
     this.blocked = [];
     this.reports = [];

@@ -255,7 +255,12 @@ interface AppState extends ScenarioState {
   undoPendingChanges: () => void;
   /** Dev: simulate the local-midnight rollover. */
   advanceDay: () => void;
-  deleteAccount: () => void;
+  /**
+   * Guideline 5.1.1(v) deletion. Rejects if the server refused, and clears
+   * nothing in that case — the account still exists and the screen must not
+   * pretend otherwise.
+   */
+  deleteAccount: () => Promise<void>;
   setScreenState: (state: ScreenStateKind) => void;
   setFinishFeeling: (feeling: string | null) => void;
   setFinishFeelingText: (text: string) => void;
@@ -940,8 +945,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  deleteAccount: () => {
-    DataService.deleteAccount();
+  deleteAccount: async () => {
+    // Throws if the server refused; everything below is the success path.
+    await DataService.deleteAccount();
     AsyncStorage.multiRemove([UNIT_PREF_KEY, CHECKINS_KEY]).catch(() => {});
     const st = fromScenario('day1');
     set({

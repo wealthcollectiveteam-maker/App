@@ -62,12 +62,15 @@ export function OutlineButton({
   tone = 'accent',
   style,
   small,
+  disabled,
 }: {
   label: string;
   onPress?: () => void;
   tone?: 'accent' | 'neutral' | 'ghost';
   style?: ViewStyle;
   small?: boolean;
+  /** Dimmed and unpressable — for an action already in flight. */
+  disabled?: boolean;
 }) {
   const borderColor =
     tone === 'accent'
@@ -84,12 +87,15 @@ export function OutlineButton({
   return (
     <Pressable
       onPress={onPress}
+      disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityState={{ disabled: !!disabled }}
       style={({ pressed, hovered }: any) => [
         styles.button,
         small && styles.buttonSmall,
         { borderColor },
+        disabled && { opacity: 0.5 },
         (hovered || pressed) &&
           tone === 'accent' && { backgroundColor: colors.accentTint },
         (hovered || pressed) &&

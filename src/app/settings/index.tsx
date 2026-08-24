@@ -63,6 +63,7 @@ export default function SettingsScreen() {
   const [whyDraft, setWhyDraft] = useState(why);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteText, setDeleteText] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   // Opens the hosted policy in a SFSafariViewController sheet rather than
   // leaving for Safari, so the user comes straight back to Settings.
@@ -351,19 +352,32 @@ export default function SettingsScreen() {
                 }}
               />
               <OutlineButton
-                label="Delete forever"
+                label={deleting ? 'Deleting…' : 'Delete forever'}
                 small
+                disabled={deleting}
                 onPress={() => {
                   if (deleteText.trim().toUpperCase() !== 'DELETE') {
                     toast('Type DELETE to confirm');
                     return;
                   }
-                  // deleteAccount() wipes the rows and then ends the
-                  // session; the gate sends us to the sign-in screen.
-                  deleteAccount();
-                  setConfirmingDelete(false);
-                  setDeleteText('');
-                  toast('Account deleted');
+                  // "Account deleted" used to be said before the server had
+                  // been asked. A refused delete then left the user signed in
+                  // with a blank screen and their data untouched, under a
+                  // toast that had already congratulated them. It waits now,
+                  // and only the resolved case claims anything.
+                  setDeleting(true);
+                  deleteAccount()
+                    .then(() => {
+                      // The session ends inside deleteAccount(); the gate
+                      // takes it from here to the sign-in screen.
+                      setConfirmingDelete(false);
+                      setDeleteText('');
+                      toast('Account deleted');
+                    })
+                    .catch(() => {
+                      toast('Couldn’t delete your account — nothing changed');
+                    })
+                    .finally(() => setDeleting(false));
                 }}
               />
             </View>

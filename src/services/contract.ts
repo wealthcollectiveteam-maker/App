@@ -168,7 +168,13 @@ export interface IDataService {
   /** Unblock by id — display names are neither unique nor always readable. */
   unblockUser(id: string): BlockedUser[];
   getBlockedUsers(): BlockedUser[];
-  deleteAccount(): void;
+  /**
+   * Guideline 5.1.1(v) account deletion. Resolves only once the server has
+   * accepted the delete and the session has been ended; THROWS otherwise, so
+   * no caller can report success for a delete that did not happen. Local
+   * state is cleared on the same success, never before it.
+   */
+  deleteAccount(): Promise<void>;
   // Workout timer — client-owned state; only the finished session syncs.
   startTimer(timer: ActiveTimer): Promise<void>;
   pauseTimer(timer: ActiveTimer): Promise<void>;

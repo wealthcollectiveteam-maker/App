@@ -1171,39 +1171,34 @@ export class SupabaseDataService implements IDataService {
     return this.getBlockedUsers();
   }
 
-  deleteAccount(): void {
-    const userId = this.userId;
-    this.state.journal = [];
-    this.state.meals = [];
-    this.state.milestones = [];
-    this.metricCheckins = [];
-    this.workoutLogs = [];
-    this.savedMeals = [];
-    this.blocked = [];
-    AsyncStorage.multiRemove([TIMER_STORAGE_KEY, SAVED_MEALS_KEY]).catch(() => {});
+  /**
+   * Deletes the account's rows, then ends the session.
+   *
+   * NOT optimistic, unlike every other write here, and deliberately so. It
+   * used to wipe the local mirror first and fire the RPC into the background:
+   * a refused delete — offline, expired JWT — left the user signed in and
+   * looking at a blank day 1 while all their data sat untouched on the
+   * server, under a toast that had already said "Account deleted". Nothing
+   * local is cleared until the server has accepted it.
+   *
+   * D5: delete_account() deletes ROWS. It cannot delete the auth.users record
+   * (that needs the service role), and it does not end the session, so the
+   * sign-out below is what stops the user holding a valid JWT for a profile
+   * that no longer exists — every subsequent RPC would either fail or quietly
+   * recreate state for a deleted account. It runs only AFTER the RPC, which
+   * needs that JWT.
+   *
+   * api.deleteAccount() is not an async function, so sb() throwing when the
+   * backend is unconfigured throws SYNCHRONOUSLY — hence the await on a
+   * wrapped call rather than a bare one.
+   */
+  async deleteAccount(): Promise<void> {
+    if (!this.userId) return;
+    const result = await Promise.resolve().then(() => api.deleteAccount());
+    if (result.error) throw toBackendError(result.error, 'delete account');
+    this.reset();
     NutritionService.clearCache().catch(() => {});
-    if (!userId) return;
-    // Cascades from challenges/auth.users clear the rest.
-    // Same sync-throw hazard as write(): api.deleteAccount() is not an async
-    // function, so sb() throwing would escape a bare .catch() entirely.
-    //
-    // D5: delete_account() deletes ROWS — it cannot delete the auth.users
-    // record (that needs the service role), and it does not end the session.
-    // Without this sign-out the user is left holding a valid JWT for a
-    // profile that no longer exists: every subsequent RPC either fails or,
-    // worse, silently recreates state for a deleted account. Sign out only
-    // AFTER the RPC returns — the RPC needs that JWT to run.
-    this.write(
-      () =>
-        Promise.resolve(api.deleteAccount()).then(async (result) => {
-          if (!result.error) {
-            this.reset();
-            await AuthService.signOut();
-          }
-          return result;
-        }),
-      () => {},
-    );
+    await AuthService.signOut();
   }
 
   // ===================== timer (device-local) ============================
