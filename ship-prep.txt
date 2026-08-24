@@ -1,0 +1,63 @@
+Read CLAUDE.md first.
+
+Ship prep. Everything here must be inside the binary, because none of it can be
+changed over the air later. Nothing in this session touches design, haptics, or
+transitions — those ship afterwards via expo-updates, which is the point.
+
+Work in order. Typecheck and report after each.
+
+1. EXPO-UPDATES — the most important item here
+
+Configure expo-updates so JavaScript changes ship to installed builds without a
+rebuild or a new App Review.
+
+- `runtimeVersion: { "policy": "appVersion" }` in app.json
+- Confirm the updates URL and channel are set for the production and preview profiles
+- Verify the production build profile actually picks it up
+
+Then tell me, in plain terms, the exact command I run to push a JS-only update to
+people who already have the app, and what happens on their phone when I do — do they
+get it on next launch, or the launch after.
+
+Get this right. Every UI change after launch depends on it.
+
+2. ICON AND SPLASH
+
+`assets/icon.png`, `assets/adaptive-icon.png`, `assets/splash-icon.png` are in the repo.
+Wire them in app.json: `icon`, `android.adaptiveIcon.foregroundImage`, and the
+expo-splash-screen plugin's `image` with backgroundColor `#151724`. Do not resize or
+re-encode them. Remove any older icon files that are now unreferenced.
+
+3. PRIVACY POLICY
+
+A Privacy Policy row in Settings that opens the hosted URL with expo-web-browser.
+Leave the URL as one clearly-marked constant — I will supply it.
+
+Then grep the whole repo and confirm no personal email address and no personal name
+remains anywhere. Public contact is rankedappfitness@gmail.com only.
+
+4. APP STORE READINESS AUDIT — report, do not guess
+
+Go through what Apple actually checks and tell me what is missing:
+
+- **In-app account deletion** (5.1.1(v)) — confirm deleteAccount is reachable from the
+  UI, actually deletes server-side, and signs the user out.
+- **HealthKit permitted-use strings** (5.1.3) — confirm the Info.plist wording is
+  present and matches what the app really does.
+- **Sign in with Apple** — we use first-party email OTP, no third-party social login,
+  so I believe this is NOT required. Confirm that reading is right.
+- **Demo account for App Review.** This is the one I expect to bite us. The app is
+  login-gated behind an emailed OTP, and a reviewer cannot receive that email. Apple
+  rejects apps they cannot get into. Research what Supabase offers here — I believe
+  Auth settings allow configuring a fixed test email + code that bypasses delivery.
+  Report exactly how to set that up, or the best alternative, and what I put in the
+  App Review notes.
+- Anything else that will get this rejected. Be specific about the guideline number.
+
+CONSTRAINTS
+
+Do not touch the design system, screens, animations, or haptics. Do not bump Expo off
+54. Do not change the bundle ID. `npx tsc --noEmit` and `npx expo lint` clean.
+
+After: short report — what changed, the exact OTA update command and its behaviour,
+and the full readiness audit with anything missing called out plainly.
