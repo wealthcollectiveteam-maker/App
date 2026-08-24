@@ -1,0 +1,109 @@
+PHASE 10A — Challenge length + custom tasks
+
+Two features in one pass because they touch the same setup flow. Do not start
+Phase 10B (squads) — that is a separate prompt.
+
+Read CLAUDE.md first. All standing constraints still apply.
+
+=============================================================
+FEATURE 1 — Challenge length: 75, 45, or 30 days
+=============================================================
+
+Right now 75 is hardcoded. It becomes a per-challenge value.
+
+1.1 Migration 0008
+  - challenges gets: duration_days int not null default 75,
+    check (duration_days in (30, 45, 75))
+  - Existing rows keep 75. Verify by counting rows after, not by assuming.
+  - Find EVERY place the server clamps, completes, or scores against 75 —
+    the missed-day engine (evaluate_all_challenges), the day-N clamp we added
+    so a finished run isn't destroyed, completion detection, any view or RPC.
+    Replace each with c.duration_days read live. Grep the whole schema for
+    the literal 75 and report every hit with a verdict: changed, or left alone
+    and why.
+
+1.2 Choosing it at setup
+  - Setup gains a length step: 75 / 45 / 30, with a one-line descriptor each.
+    75 is the default selection.
+  - Length and tier are independent. A 30-day HARD is valid. Tier defaults do
+    not change based on length.
+
+1.3 Changing it mid-run — exact semantics, do not improvise
+  New RPC set_challenge_duration(p_challenge_id uuid, p_duration int),
+  SECURITY DEFINER, caller must own the challenge, p_duration in (30,45,75).
+
+  Rules:
+  - It moves the finish line. It NEVER rewrites, re-scores, or deletes any
+    existing challenge_days row. Day snapshots stay immutable — that trigger
+    stays exactly as it is.
+  - If p_duration > current day number: nothing else happens, the run continues
+    with a longer target.
+  - If p_duration <= current day number: the challenge completes today.
+    completed_at is set to today. Return a flag saying this happened so the UI
+    can confirm BEFORE calling: "This finishes your challenge today. Continue?"
+  - Record duration_previous and duration_changed_at on the challenge so the
+    change is visible rather than silent.
+
+  Entry point: Settings → the challenge section. Not buried.
+
+1.4 Copy
+  Grep the app for hardcoded "75" in user-facing strings, route names, and
+  component props. Every one becomes the live duration. Report each hit.
+
+=============================================================
+FEATURE 2 — Custom tasks
+=============================================================
+
+2.1 At setup
+  After the tier step, a step to add your own tasks.
+  - Up to 5 custom tasks.
+  - Each: title (required, max 40 chars) and optional timer minutes.
+  - Skippable — most people will add none.
+  - These MUST be in day 1's snapshot. Setup happens before day 1 is frozen,
+    so this is not an "edits start tomorrow" case. Prove it (see 2.4).
+
+2.2 They count
+  A custom task counts exactly like a tier task. Miss one and the day is a
+  miss. The "x of y done" count includes them. There is ONE class of task and
+  one definition of a completed day — do not introduce an optional tier.
+
+2.3 On the check-in swipe deck
+  Custom tasks render in the deck identically to tier tasks: same card, same
+  swipe, same timer affordance when timer minutes are set, same position in
+  the "TASK 03/07" counter.
+
+  IMPORTANT: the deck reads the day snapshot. If custom tasks land in the
+  snapshot but do not appear in the deck, the deck is filtering by a known
+  set of task keys somewhere. Find that filter and fix it rather than
+  special-casing custom tasks around it.
+
+2.4 Proof — required, and this is the part I care about
+  Verify at the database boundary, not through the UI:
+  - Sign up a fresh test user, pick 45 days, MEDIUM, add 2 custom tasks
+    (one with a timer, one without).
+  - Query challenge_days for day 1 directly and show me the snapshot JSON.
+    All 5 MEDIUM tasks plus both custom tasks must be in it.
+  - Then drive the check-in deck in a real browser and show me the counter
+    going from "0 OF 7 DONE / TASK 01/07" to at least "2 OF 7 DONE", with one
+    of the swipes being a custom task.
+  - Complete all 7 and show the day scored as complete.
+  - Then simulate past day 45 on a 45-day challenge and show it completes
+    rather than scoring day 46 as a miss.
+
+Do not tell me any of this works without showing me the query output and the
+counter values. Every real defect on this project so far has been invisible to
+a passing test — the last one shipped a dead bundle with a green build.
+
+=============================================================
+Constraints (unchanged)
+=============================================================
+- Bundle ID com.aly786.rankedfitness. Expo SDK 54. Do not change either.
+- Never commit .env. Never stage it.
+- Anon/publishable key only in the app. Never service_role or sb_secret_.
+- Squadmates must never read another member's metrics, nutrition, journal
+  entries, or workout logs. If you touch anything squad-adjacent, re-prove it
+  with impersonated JWTs, not through the UI.
+- HealthKit values are device-memory only. Never transmitted, stored, or logged.
+- Day snapshots remain immutable.
+
+When done: commit, tell me what to push, and stop. Do not start Phase 10B.
