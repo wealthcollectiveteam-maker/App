@@ -215,9 +215,27 @@ export type FeedKind = 'ping-in' | 'ping-out' | 'complete' | 'proof' | 'change';
 export interface FeedItem {
   id: string;
   kind: FeedKind;
+  /** Display name, or a fallback when RLS will not resolve one. */
   who: string;
+  /**
+   * The author's user id, which is what blocking is actually keyed to.
+   *
+   * `who` is not identity: profiles_select only exposes yourself and current
+   * squadmates, so someone you blocked and then stopped sharing a squad with
+   * reads as the literal string "Squadmate" — and a name-keyed filter matched
+   * nothing and showed you their posts. Two squadmates can also share a
+   * display name. Absent on locally-composed rows (the mock, and this
+   * device's own optimistic entries), which are matched by name instead.
+   */
+  authorId?: string;
   text: string;
   timestamp: number;
+}
+
+/** A blocked user. Held as a pair because the id is the durable half. */
+export interface BlockedUser {
+  id: string;
+  name: string;
 }
 
 export interface LeaderRow {

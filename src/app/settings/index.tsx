@@ -271,16 +271,18 @@ export default function SettingsScreen() {
             No one blocked. Long-press a feed item to block or report.
           </Text>
         ) : (
-          blockedUsers.map((n, i) => (
-            <View key={n} style={[styles.prefRow, i > 0 && styles.rowBorder]}>
-              <Text style={[styles.rowLabel, { flex: 1 }]}>{n}</Text>
+          blockedUsers.map((b, i) => (
+            <View key={b.id} style={[styles.prefRow, i > 0 && styles.rowBorder]}>
+              <Text style={[styles.rowLabel, { flex: 1 }]}>{b.name}</Text>
               <OutlineButton
                 label="Unblock"
                 small
                 tone="neutral"
                 onPress={() => {
-                  unblockUser(n);
-                  toast(`${n} unblocked`);
+                  // By id: two blocked users can share a display name, and
+                  // one whose profile no longer resolves has none at all.
+                  unblockUser(b.id);
+                  toast(`${b.name} unblocked`);
                 }}
               />
             </View>

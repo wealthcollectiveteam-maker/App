@@ -11,6 +11,7 @@ import {
   TIERS,
 } from '@/constants/tiers';
 import type {
+  BlockedUser,
   BuiltinTaskKey,
   CustomTask,
   FeedItem,
@@ -133,7 +134,7 @@ interface AppState extends ScenarioState {
   finishFeelingText: string;
   profileName: string;
   notificationPrefs: NotificationPrefs;
-  blockedUsers: string[];
+  blockedUsers: BlockedUser[];
   /** Pings spent on `date` (local calendar day). Restores at local midnight. */
   pingsUsed: { date: string; count: number };
   /** Dev-forced screen state for QA of loading/error UI. */
@@ -197,8 +198,8 @@ interface AppState extends ScenarioState {
   joinSquad: (code: string) => void;
   leaveSquad: () => void;
   reportFeedItem: (id: string, reason: ReportReason) => void;
-  blockUser: (name: string) => void;
-  unblockUser: (name: string) => void;
+  blockUser: (user: { id?: string; name: string }) => void;
+  unblockUser: (id: string) => void;
   updateProfile: (name: string, why: string) => void;
   setNotificationPref: (key: keyof NotificationPrefs, value: boolean) => void;
   attachNutrition: (mealId: string, nutrition: MealNutrition) => void;
@@ -563,8 +564,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     DataService.reportContent(id, reason);
   },
 
-  blockUser: (name) => set({ blockedUsers: DataService.blockUser(name) }),
-  unblockUser: (name) => set({ blockedUsers: DataService.unblockUser(name) }),
+  blockUser: (user) => set({ blockedUsers: DataService.blockUser(user) }),
+  unblockUser: (id) => set({ blockedUsers: DataService.unblockUser(id) }),
 
   updateProfile: (name, why) => {
     const trimmedName = name.trim() || 'You';

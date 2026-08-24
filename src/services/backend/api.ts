@@ -457,6 +457,9 @@ export const BackendApi = {
         id: row.id,
         kind: toFeedKind(row.kind, mine),
         who: mine ? 'You' : (names.get(row.author) ?? 'Squadmate'),
+        // Identity, as opposed to the label above — the blocked filter keys
+        // on this, because a name that will not resolve is not a name.
+        authorId: row.author,
         text: row.text,
         timestamp: Date.parse(row.created_at),
       };

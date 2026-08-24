@@ -150,7 +150,11 @@ function ModerationSheet({
               label={`Block ${item.who}`}
               tone="neutral"
               onPress={() => {
-                blockUser(item.who);
+                // By id where the feed row carries one. Blocking by display
+                // name failed for exactly the person it mattered for: a
+                // squadmate whose profile RLS will not resolve reads as
+                // "Squadmate", and no roster row answers to that.
+                blockUser({ id: item.authorId, name: item.who });
                 toast(`${item.who} blocked`);
                 close();
               }}
@@ -320,7 +324,16 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
 
   if (!squad) return <SoloState />;
 
-  const visibleFeed = feed.filter((f) => !blockedUsers.includes(f.who));
+  // Keyed on the author id, with the name only as a fallback for rows this
+  // device composed itself (and for the mock, which has no ids). A blocked
+  // user whose name RLS will not resolve renders as "Squadmate" and slipped
+  // straight through a name-keyed filter; two squadmates sharing a display
+  // name hid each other.
+  const blockedIds = new Set(blockedUsers.map((b) => b.id));
+  const blockedNames = new Set(blockedUsers.map((b) => b.name));
+  const visibleFeed = feed.filter((f) =>
+    f.authorId ? !blockedIds.has(f.authorId) : !blockedNames.has(f.who),
+  );
   const outOfPings = pingsLeft === 0;
 
   return (

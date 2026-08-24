@@ -1,5 +1,6 @@
 import type {
   ActiveTimer,
+  BlockedUser,
   CustomTask,
   DailyNutritionTotals,
   FeedItem,
@@ -158,9 +159,15 @@ export interface IDataService {
   onWriteRejected(listener: (write: RejectedWrite) => void): () => void;
   // UGC moderation + compliance
   reportContent(feedItemId: string, reason: ReportReason): void;
-  blockUser(name: string): string[];
-  unblockUser(name: string): string[];
-  getBlockedUsers(): string[];
+  /**
+   * Block a squadmate. `id` is the feed row's author id where there is one;
+   * the name is a fallback for locally-composed rows and for the mock. An
+   * id that cannot be established is an error, not a silent no-op.
+   */
+  blockUser(user: { id?: string; name: string }): BlockedUser[];
+  /** Unblock by id — display names are neither unique nor always readable. */
+  unblockUser(id: string): BlockedUser[];
+  getBlockedUsers(): BlockedUser[];
   deleteAccount(): void;
   // Workout timer — client-owned state; only the finished session syncs.
   startTimer(timer: ActiveTimer): Promise<void>;

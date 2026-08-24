@@ -4,6 +4,7 @@ import { XP } from '@/constants/challenge';
 import { tierStandardTarget } from '@/constants/tiers';
 import type {
   ActiveTimer,
+  BlockedUser,
   CustomTask,
   DailyNutritionTotals,
   FinalResults,
@@ -782,8 +783,8 @@ export class SupabaseDataService implements IDataService {
     };
   }
 
-  getBlockedUsers(): string[] {
-    return this.blocked.map((b) => b.name);
+  getBlockedUsers(): BlockedUser[] {
+    return this.blocked;
   }
 
   getMetricHistory(): MetricCheckin[] {
@@ -1130,15 +1131,23 @@ export class SupabaseDataService implements IDataService {
     return member?.id ?? null;
   }
 
-  blockUser(name: string): string[] {
-    const id = this.resolveMemberId(name);
+  /**
+   * The feed row's author id where there is one, falling back to the roster
+   * lookup for a row this device composed itself. The name alone was not
+   * enough: a squadmate whose profile RLS will not resolve renders as
+   * "Squadmate", and resolveMemberId() answered null for them — so blocking
+   * the one person you most wanted to block failed with "No squadmate named
+   * Squadmate".
+   */
+  blockUser(user: { id?: string; name: string }): BlockedUser[] {
+    const id = user.id ?? this.resolveMemberId(user.name);
     if (!id) {
-      this.fail(new BackendError('unknown', `No squadmate named ${name}`));
+      this.fail(new BackendError('unknown', `No squadmate named ${user.name}`));
       return this.getBlockedUsers();
     }
     const previous = this.blocked;
     if (!previous.some((b) => b.id === id)) {
-      this.blocked = [...previous, { id, name }];
+      this.blocked = [...previous, { id, name: user.name }];
     }
     this.write(
       () => api.blockUser(this.requireUser(), id),
@@ -1149,18 +1158,16 @@ export class SupabaseDataService implements IDataService {
     return this.getBlockedUsers();
   }
 
-  unblockUser(name: string): string[] {
+  unblockUser(id: string): BlockedUser[] {
     const previous = this.blocked;
-    const target = previous.find((b) => b.name === name);
-    this.blocked = previous.filter((b) => b.name !== name);
-    if (target) {
-      this.write(
-        () => api.unblockUser(this.requireUser(), target.id),
-        () => {
-          this.blocked = previous;
-        },
-      );
-    }
+    if (!previous.some((b) => b.id === id)) return this.getBlockedUsers();
+    this.blocked = previous.filter((b) => b.id !== id);
+    this.write(
+      () => api.unblockUser(this.requireUser(), id),
+      () => {
+        this.blocked = previous;
+      },
+    );
     return this.getBlockedUsers();
   }
 

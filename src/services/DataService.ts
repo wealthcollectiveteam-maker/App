@@ -4,6 +4,7 @@ import { tierStandardTarget } from '@/constants/tiers';
 import { buildScenario } from '@/data/mock';
 import type {
   ActiveTimer,
+  BlockedUser,
   CustomTask,
   DailyNutritionTotals,
   FinalResults,
@@ -46,7 +47,7 @@ const nextId = (prefix: string) => `${prefix}-${Date.now()}-${uid++}`;
 export class MockDataService implements IDataService {
   private state: ScenarioState = buildScenario('day12');
   private feeling: { feeling: string | null; text: string } | null = null;
-  private blocked: string[] = [];
+  private blocked: BlockedUser[] = [];
   private reports: { feedItemId: string; reason: ReportReason }[] = [];
   private pings: { toName: string; message: string; at: number }[] = [];
 
@@ -252,17 +253,22 @@ export class MockDataService implements IDataService {
     this.reports.push({ feedItemId, reason });
   }
 
-  blockUser(name: string): string[] {
-    if (!this.blocked.includes(name)) this.blocked = [...this.blocked, name];
+  // The mock's feed rows carry no author id, so the display name IS the
+  // identity here — the one place where that is safely true.
+  blockUser(user: { id?: string; name: string }): BlockedUser[] {
+    const id = user.id ?? user.name;
+    if (!this.blocked.some((b) => b.id === id)) {
+      this.blocked = [...this.blocked, { id, name: user.name }];
+    }
     return this.blocked;
   }
 
-  unblockUser(name: string): string[] {
-    this.blocked = this.blocked.filter((n) => n !== name);
+  unblockUser(id: string): BlockedUser[] {
+    this.blocked = this.blocked.filter((b) => b.id !== id);
     return this.blocked;
   }
 
-  getBlockedUsers(): string[] {
+  getBlockedUsers(): BlockedUser[] {
     return this.blocked;
   }
 
