@@ -1,7 +1,11 @@
+import { InstrumentSerif_400Regular_Italic } from '@expo-google-fonts/instrument-serif';
 import {
   Inter_400Regular,
   Inter_500Medium,
   Inter_600SemiBold,
+  Inter_700Bold,
+  Inter_900Black,
+  Inter_900Black_Italic,
   useFonts,
 } from '@expo-google-fonts/inter';
 import * as Linking from 'expo-linking';
@@ -34,10 +38,16 @@ export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
   const route = segments.join('/');
+  // Two families. Inter carries every structural weight; Instrument Serif
+  // Italic is loaded for quotes and descriptors only.
   const [loaded] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
     Inter_600SemiBold,
+    Inter_700Bold,
+    Inter_900Black,
+    Inter_900Black_Italic,
+    InstrumentSerif_400Regular_Italic,
   });
 
   const status = useSessionStore((s) => s.status);

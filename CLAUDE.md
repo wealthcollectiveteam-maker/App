@@ -30,7 +30,12 @@ Supabase project ref `dmlgdqufkrtrjgbofpkd`. Migrations in `supabase/migrations/
 
 ## Design
 
-Nocturne dark system, tokens in `constants/theme.ts`. **No hardcoded colors anywhere else.** A redesign to near-black with solid-blue fills and skewed parallelogram controls is specced but not yet built — do not start it unless asked.
+Ground is near-black. Accent blue is a FILL, not only an outline — primary actions
+are solid blue. Skewed parallelogram shapes are the signature form: badges, timer
+controls, ping buttons, save controls. Two type families only: a grotesque (Inter)
+for everything structural, and a serif italic reserved for quotes and descriptors.
+Uppercase micro-labels carry wide letter-spacing. Headings are heavy and tight.
+All colour comes from `src/theme/tokens.ts`. No hardcoded hex anywhere else.
 
 ## How to work here
 

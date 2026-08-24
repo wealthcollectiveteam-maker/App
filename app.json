@@ -7,7 +7,7 @@
     "icon": "./assets/icon.png",
     "scheme": "rankedfitness",
     "userInterfaceStyle": "dark",
-    "backgroundColor": "#161826",
+    "backgroundColor": "#0A0B0D",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -22,7 +22,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#151724",
+        "backgroundColor": "#0A0B0D",
         "foregroundImage": "./assets/adaptive-icon.png"
       },
       "predictiveBackGestureEnabled": false,
@@ -40,7 +40,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#151724",
+          "backgroundColor": "#0A0B0D",
           "image": "./assets/splash-icon.png",
           "imageWidth": 200
         }
