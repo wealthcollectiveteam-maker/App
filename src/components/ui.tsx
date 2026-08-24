@@ -203,7 +203,7 @@ const styles = StyleSheet.create({
   },
   segmented: {
     flexDirection: 'row',
-    gap: 18,
+    gap: 14,
     alignItems: 'flex-end',
   },
   segment: {
@@ -213,8 +213,8 @@ const styles = StyleSheet.create({
   },
   segmentLabel: {
     fontFamily: font.semibold,
-    fontSize: 11,
-    letterSpacing: microTracking(11),
+    fontSize: 10.5,
+    letterSpacing: microTracking(10.5),
     textTransform: 'uppercase',
     color: colors.textLow,
   },

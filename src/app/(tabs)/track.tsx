@@ -431,7 +431,9 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    alignItems: 'baseline',
+    // flex-end, not baseline: the tab underline is a View, which has no
+    // baseline to align to.
+    alignItems: 'flex-end',
     justifyContent: 'space-between',
     flexWrap: 'wrap',
     gap: 12,
@@ -439,7 +441,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontFamily: font.bold,
-    fontSize: 34,
+    fontSize: 32,
     letterSpacing: -1,
     color: colors.textHi,
   },
