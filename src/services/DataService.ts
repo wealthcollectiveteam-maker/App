@@ -1,11 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { CHALLENGE } from '@/constants/challenge';
-import { TASK_BASES, TIERS } from '@/constants/tiers';
+import { tierStandardTarget, tierTaskKeys } from '@/constants/tiers';
 import { buildScenario } from '@/data/mock';
 import type {
   ActiveTimer,
-  BuiltinTaskKey,
   CustomTask,
   DailyNutritionTotals,
   FinalResults,
@@ -155,8 +154,7 @@ export class MockDataService implements IDataService {
   }
 
   getFinalResults(): FinalResults {
-    const tier = TIERS[this.state.tier];
-    const workoutTasks = tier.taskKeys.filter((k) =>
+    const workoutTasks = tierTaskKeys(this.state.tier).filter((k) =>
       k.startsWith('workout'),
     ).length;
     return {
@@ -574,10 +572,11 @@ export class MockDataService implements IDataService {
   }
 
   updateTaskTarget(taskKey: TaskKey, value: number, currentTier: Tier): void {
-    const base = TASK_BASES[taskKey as BuiltinTaskKey];
-    if (!base?.unit) return;
-    const standard = TIERS[currentTier].standards[taskKey as BuiltinTaskKey];
-    if (value === standard) {
+    // The tier standard in force decides both whether this task HAS an
+    // editable quantity and what "back to standard" means.
+    const standard = tierStandardTarget(currentTier, taskKey);
+    if (!standard) return;
+    if (value === standard.value) {
       delete this.targetOverrides[taskKey];
     } else {
       this.targetOverrides[taskKey] = value;

@@ -1,0 +1,124 @@
+Read CLAUDE.md first.
+
+Device review of the redesign. One real design problem, one bug, and some polish.
+
+============================================================
+1. TIER CHANGES ARE INVISIBLE — the important one
+============================================================
+
+I switched Hard to Medium and today's task list did not change. I assumed it was
+broken. It is not — the day-start snapshot means the change lands tomorrow, which is
+correct and deliberate.
+
+The failure is that nothing said so.
+
+Fix: whenever a pending change exists — tier, tasks, or targets — the app says it
+plainly, without me hunting for it.
+
+- **My Challenge** shows a persistent line at the top: `MEDIUM STARTS TOMORROW — today
+  is still HARD, 6 tasks.` Include the new task count so the consequence is concrete.
+- **Home** shows a quiet one-line note under the task list when a change is pending.
+  Not a banner, not dismissible — just a fact, in textMid.
+- The **tier badge in the header** shows today's actual tier, never the pending one.
+  Today's truth belongs in the header; tomorrow's belongs in the note.
+- Pending changes must be **cancellable**, and cancelling says so.
+
+Derive all of this from the pending-change state that already exists. Do not add a
+second source of truth.
+
+============================================================
+2. THE TIERS SHOULD DIFFER IN SUBSTANCE, NOT JUST COUNT
+============================================================
+
+Right now the tiers differ by how many tasks they carry. They should differ the way
+the real variants of this challenge differ — in what the tasks actually demand.
+
+Set these as the tier defaults. Treat them as defaults a user can then edit in My
+Challenge, not as immutable rules.
+
+**HARD — 6 tasks.** The traditional 75 Hard.
+  Workout 1 — 45 min
+  Workout 2 — 45 min, outdoors
+  Gallon of water
+  Read 10 pages — non-fiction
+  Follow the diet — no cheat meals, no alcohol
+  Progress photo
+
+**MEDIUM — 5 tasks.** Serious, sustainable.
+  Workout — 45 min
+  Move again — 30 min, any form
+  3 litres of water
+  Read 10 pages
+  Follow the diet — one planned cheat meal a week
+
+**SOFT — 4 tasks.** Real, but survivable alongside a life.
+  Workout — 45 min, one rest day a week
+  3 litres of water
+  Read 10 pages
+  Eat well — alcohol only on social occasions
+
+Requirements:
+
+- These live in the tier config as data, with the descriptor text alongside each task.
+  The descriptor is what makes a tier feel different — "no cheat meals, no alcohol"
+  versus "one planned cheat meal a week" is the entire distinction between Hard and
+  Medium, and it must be visible on the task row and the check-in card.
+- Editing any target still relabels to CUSTOM exactly as it does today. Do not touch
+  `displayTierLabel()`.
+- Existing challenges keep the task set frozen in their snapshots. This changes what a
+  **new** day inherits, never what a past day recorded. Confirm that explicitly — an
+  active challenge must not silently gain or lose a task tonight.
+- The tier picker cards show the real task list for each tier, so the choice is
+  informed rather than a number.
+
+Report what an existing Hard challenge sees tomorrow after this lands. If the answer is
+"the tasks change underneath them," stop and tell me before doing it.
+
+============================================================
+3. BUG — a timer runs for a task that is already complete
+============================================================
+
+Home shows Workout 1 struck through, completed 3:11 AM, while the mini-bar counts down
+"Workout 1 — 45 min · 25:06".
+
+Completing a task by any route — checkbox, swipe, or Health suggestion — must cancel
+its running timer, dismiss its notifications, and clear the mini-bar. Check the reverse
+too: what happens if a timer finishes for a task already completed by hand.
+
+============================================================
+4. THE COMPLETED CHECK-IN SCREEN IS MOSTLY EMPTY
+============================================================
+
+With all tasks done, the card fills most of the screen to hold three lines. It is the
+emptiest moment in an app whose whole job is to make finishing feel earned.
+
+Either the card shrinks to its content, or the space earns itself. My preference,
+strongest first:
+
+  - Today's completed tasks as a satisfying list — what you actually did
+  - The Wall, so a finished day immediately shows the day it filled
+  - Tomorrow's task set
+
+Pick one, keep it calm, and do not invent a new component if The Wall already exists.
+
+============================================================
+5. SMALL THINGS
+============================================================
+
+- `0-DAY SQUAD STREAK` reads like a bug. On zero, say `SQUAD STARTS TODAY`. Same for a
+  personal streak of 0.
+- `WHY I STARTED` renders as bare quote marks when empty. Either setup is not saving
+  the why — check that first, it may be a real bug — or the empty state needs copy and
+  a way to add one.
+- Home's squad strip is very sparse for the space it occupies. Tighten it, or let it
+  carry each member's progress the way the Squad tab does.
+
+============================================================
+CONSTRAINTS
+============================================================
+
+No changes to the snapshot model, completion logic, RLS, or service contracts. Expo
+stays on 54. Bundle ID unchanged. `npx tsc --noEmit` and `npx expo lint` clean.
+
+After: a short report — what changed, what an existing challenge sees tomorrow, and
+anything unverified without a device.

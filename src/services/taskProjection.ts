@@ -1,4 +1,12 @@
-import { buildTierTask, TASK_BASES, taskLabel, TIERS } from '@/constants/tiers';
+import {
+  buildTierTask,
+  TASK_BASES,
+  taskLabel,
+  tierStandardTarget,
+  tierTaskDef,
+  tierTaskKeys,
+  TIERS,
+} from '@/constants/tiers';
 import type {
   BuiltinTaskKey,
   CustomTask,
@@ -52,10 +60,16 @@ export interface SnapshotTask {
  *
  * `customs` supplies a custom task's sub-line, which the snapshot does not
  * store; it is matched by the `custom-<id>` key.
+ *
+ * `tier` supplies the DESCRIPTOR, which the snapshot does not store either:
+ * it is per-tier copy ("no cheat meals" vs "one planned cheat meal a week"),
+ * and copy is presentation. Pass the tier in force for that day; without it
+ * the neutral base descriptor is used rather than a wrong tier's.
  */
 export function taskFromSnapshot(
   raw: SnapshotTask,
   customs: CustomTask[] = [],
+  tier?: Tier,
 ): TaskDef {
   const target = raw.target ?? null;
   const base = TASK_BASES[raw.key as BuiltinTaskKey] as
@@ -65,8 +79,8 @@ export function taskFromSnapshot(
   if (base) {
     return {
       key: raw.key,
-      label: taskLabel(raw.key as BuiltinTaskKey, raw.shortName, target?.value ?? null),
-      sub: base.sub,
+      label: taskLabel(raw.key as BuiltinTaskKey, raw.shortName, target),
+      sub: (tier && tierTaskDef(tier, raw.key)?.sub) || base.sub,
       proof: raw.proof,
       target,
       tierStandard: raw.tierStandard ?? null,
@@ -116,7 +130,7 @@ export function composeTaskSet(
   day: number,
   { customTasks, targetOverrides }: TaskConfigInputs,
 ): TaskDef[] {
-  const tierTasks = TIERS[tier].taskKeys.map((key) =>
+  const tierTasks = tierTaskKeys(tier).map((key) =>
     buildTierTask(tier, key, targetOverrides[key]),
   );
   const customs = customTasks
@@ -141,18 +155,20 @@ export function pendingTargetChanges(
   ]) as Set<BuiltinTaskKey>;
   const changes: TargetChange[] = [];
   for (const key of keys) {
-    const base = TASK_BASES[key];
-    if (!base?.unit) continue;
-    const standard = TIERS[currentTier].standards[key];
-    const from = overridesAtDayStart[key] ?? standard;
-    const to = targetOverrides[key] ?? standard;
-    if (from != null && to != null && from !== to) {
+    // The UNIT is the tier's (Hard counts gallons, Medium litres); only the
+    // VALUE is overridable, so a change is only meaningful against the tier
+    // standard that is actually in force.
+    const standard = tierStandardTarget(currentTier, key);
+    if (!standard) continue;
+    const from = overridesAtDayStart[key] ?? standard.value;
+    const to = targetOverrides[key] ?? standard.value;
+    if (from !== to) {
       changes.push({
         taskKey: key,
-        name: base.shortName,
+        name: TASK_BASES[key]?.shortName ?? key,
         fromValue: from,
         toValue: to,
-        unit: base.unit,
+        unit: standard.unit,
       });
     }
   }
@@ -161,10 +177,8 @@ export function pendingTargetChanges(
 
 export function tierStandards(tier: Tier): Partial<Record<TaskKey, TaskTarget>> {
   const out: Partial<Record<TaskKey, TaskTarget>> = {};
-  for (const key of TIERS[tier].taskKeys) {
-    const base = TASK_BASES[key];
-    const value = TIERS[tier].standards[key];
-    if (base.unit && value != null) out[key] = { value, unit: base.unit };
+  for (const t of TIERS[tier].tasks) {
+    if (t.standard) out[t.key] = t.standard;
   }
   return out;
 }

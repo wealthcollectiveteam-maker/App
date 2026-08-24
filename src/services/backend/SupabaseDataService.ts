@@ -1,10 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { CHALLENGE, XP } from '@/constants/challenge';
-import { TIERS } from '@/constants/tiers';
+import { tierStandardTarget, tierTaskKeys } from '@/constants/tiers';
 import type {
   ActiveTimer,
-  BuiltinTaskKey,
   CustomTask,
   DailyNutritionTotals,
   FinalResults,
@@ -351,7 +350,11 @@ export class SupabaseDataService implements IDataService {
     // lands because a custom task's sub-line lives on custom_tasks, not in
     // the frozen snapshot.
     this.daySnapshots = day
-      ? { [day.day]: day.task_snapshot.map((t) => taskFromSnapshot(t, this.customTasks)) }
+      ? {
+          [day.day]: day.task_snapshot.map((t) =>
+            taskFromSnapshot(t, this.customTasks, this.state.tier),
+          ),
+        }
       : {};
 
     // ---- OPTIONAL ----
@@ -660,7 +663,7 @@ export class SupabaseDataService implements IDataService {
   }
 
   getFinalResults(): FinalResults {
-    const workoutTasks = TIERS[this.state.tier].taskKeys.filter((k) =>
+    const workoutTasks = tierTaskKeys(this.state.tier).filter((k) =>
       k.startsWith('workout'),
     ).length;
     return {
@@ -1372,7 +1375,7 @@ export class SupabaseDataService implements IDataService {
         if (!day) return;
         this.state.day = day.day;
         this.daySnapshots[day.day] = day.task_snapshot.map((t) =>
-          taskFromSnapshot(t, this.customTasks),
+          taskFromSnapshot(t, this.customTasks, tier),
         );
         this.overridesAtDayStart = { ...this.targetOverrides };
         this.pendingTier = null;
@@ -1392,9 +1395,11 @@ export class SupabaseDataService implements IDataService {
   }
 
   updateTaskTarget(taskKey: TaskKey, value: number, currentTier: Tier): void {
-    const standard = TIERS[currentTier].standards[taskKey as BuiltinTaskKey];
+    // Mirrors set_target_override(): back to the tier standard clears the
+    // override rather than storing a redundant row.
+    const standard = tierStandardTarget(currentTier, taskKey);
     const previous = { ...this.targetOverrides };
-    if (value === standard) delete this.targetOverrides[taskKey];
+    if (value === standard?.value) delete this.targetOverrides[taskKey];
     else this.targetOverrides[taskKey] = value;
     this.write(
       () => api.setTargetOverride(taskKey, value),

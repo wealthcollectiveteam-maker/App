@@ -17,7 +17,12 @@ import { ScreenState } from '@/components/ScreenState';
 import { Card, OutlineButton } from '@/components/ui';
 import { WorkoutSuggestion } from '@/components/WorkoutSuggestion';
 import { CHALLENGE } from '@/constants/challenge';
-import { missedDayCopy, targetText } from '@/constants/tiers';
+import {
+  hasPendingChanges,
+  missedDayCopy,
+  pendingChangeLine,
+  targetText,
+} from '@/constants/tiers';
 import type { TaskDef } from '@/data/types';
 import { useStartTimer } from '@/hooks/useStartTimer';
 import {
@@ -104,6 +109,7 @@ function HomeTaskRow({ task }: { task: TaskDef }) {
   return (
     <TaskRow
       label={task.label}
+      sub={task.sub}
       done={done}
       meta={done ? doneAt : undefined}
       right={done ? undefined : <TaskMeta task={task} />}
@@ -119,9 +125,14 @@ function HomeTaskRow({ task }: { task: TaskDef }) {
   );
 }
 
-/** Initials strip: your own tile carries the accent underline. */
+/**
+ * The squad, at a glance: each member's own progress bar, the way the Squad
+ * tab shows it. A row of bare initials spent the same height saying only
+ * who was in the squad — which is the one thing you already knew.
+ */
 function SquadStrip() {
   const squad = useAppStore((s) => s.squad);
+  const taskCount = useAppStore((s) => s.todayTasks.length);
   const router = useRouter();
 
   if (!squad) {
@@ -149,21 +160,38 @@ function SquadStrip() {
       accessibilityLabel="Open the squad tab"
       style={styles.strip}
     >
-      <Micro color={colors.textMid}>Squad</Micro>
-      <View style={styles.stripTiles}>
-        {squad.members.map((m) => (
-          <InitialsTile
-            key={m.id}
-            initials={m.initials}
-            active={m.isSelf}
-            size={40}
-          />
-        ))}
+      <View style={styles.stripHeader}>
+        <Micro color={colors.textMid}>Squad</Micro>
+        <View style={styles.stripStreak}>
+          {/* "0-day squad streak" reads as a bug. On zero it is a fact
+              about today, not a broken counter. */}
+          <Micro color={colors.accent400}>
+            {squad.streak > 0 ? `${squad.streak}-day` : 'Starts today'}
+          </Micro>
+          <View style={styles.diamond} />
+        </View>
       </View>
-      <View style={styles.stripStreak}>
-        <Micro color={colors.accent400}>{squad.streak}-day</Micro>
-        <View style={styles.diamond} />
-      </View>
+
+      {squad.members.map((m) => {
+        // Each member against their OWN task count — squadmates run their
+        // own tiers, so the viewer's denominator is not theirs.
+        const total = m.isSelf ? taskCount : m.tasksToday || taskCount;
+        const done = Math.min(m.doneToday, total);
+        return (
+          <View key={m.id} style={styles.stripRow}>
+            <InitialsTile initials={m.initials} active={m.isSelf} size={32} />
+            <View style={{ flex: 1, gap: 6 }}>
+              <Text style={styles.stripName} numberOfLines={1}>
+                {m.name}
+              </Text>
+              <SegmentBar done={done} total={total} height={4} />
+            </View>
+            <Text style={styles.stripCount} maxFontSizeMultiplier={1.4}>
+              {done}/{total}
+            </Text>
+          </View>
+        );
+      })}
     </Pressable>
   );
 }
@@ -171,12 +199,17 @@ function SquadStrip() {
 export default function HomeScreen() {
   const day = useAppStore((s) => s.day);
   const why = useAppStore((s) => s.why);
+  const tier = useAppStore((s) => s.tier);
+  const pending = useAppStore((s) => s.pendingChanges);
   const dayComplete = useAppStore((s) => s.dayComplete);
   const tasks = useAppStore(selectTasks);
   const doneCount = useAppStore(selectDoneCount);
   const workoutSuggestions = useAppStore(useShallow(selectWorkoutSuggestions));
   const router = useRouter();
   const allDone = doneCount === tasks.length;
+  const pendingNote = hasPendingChanges(pending)
+    ? pendingChangeLine(pending, tier)
+    : null;
 
   return (
     <ScreenState>
@@ -229,6 +262,11 @@ export default function HomeScreen() {
             </View>
           ))}
         </View>
+
+        {/* Quiet, not a banner and not dismissible: today's list is frozen,
+            so a pending edit has to say so somewhere the user is already
+            looking. Derived from the same pending state My Challenge reads. */}
+        {pendingNote && <Text style={styles.pendingNote}>{pendingNote}</Text>}
 
         <HealthPromptCards />
 
@@ -296,18 +334,33 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
   },
   strip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
+    gap: 12,
     borderWidth: 1,
     borderColor: colors.line,
     paddingHorizontal: 14,
     paddingVertical: 14,
   },
-  stripTiles: {
-    flex: 1,
+  stripHeader: {
     flexDirection: 'row',
-    gap: 8,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  stripRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  stripName: {
+    fontFamily: font.medium,
+    fontSize: 14,
+    color: colors.textHi,
+  },
+  stripCount: {
+    fontFamily: font.semibold,
+    fontSize: 13,
+    color: colors.textMid,
+    fontVariant: ['tabular-nums'],
   },
   stripStreak: {
     flexDirection: 'row',
@@ -324,6 +377,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  pendingNote: {
+    fontFamily: font.regular,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.textMid,
+    marginTop: 14,
   },
   soloTitle: {
     fontFamily: font.bold,

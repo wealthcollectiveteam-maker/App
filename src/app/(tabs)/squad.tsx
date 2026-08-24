@@ -335,8 +335,12 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
               {squad.name}
             </Text>
             <View style={styles.squadStreakRow}>
+              {/* Zero is not a streak of length zero, it is a squad that
+                  has not finished a day together yet — say that. */}
               <Micro color={colors.accent400}>
-                {squad.streak}-day squad streak
+                {squad.streak > 0
+                  ? `${squad.streak}-day squad streak`
+                  : 'Squad starts today'}
               </Micro>
               <View style={styles.diamond} />
             </View>

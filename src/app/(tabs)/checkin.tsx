@@ -198,29 +198,56 @@ function TopCard({
   );
 }
 
-function AllDone({ total }: { total: number }) {
+/**
+ * The finished-day card.
+ *
+ * It used to hold three lines in the height of a full task card — the
+ * emptiest moment in an app whose whole job is to make finishing feel
+ * earned. The space now carries what you actually did today: every task,
+ * with the time you checked it off. Read straight from the frozen snapshot
+ * and the completion map, so it invents nothing.
+ */
+function AllDone({ tasks }: { tasks: TaskDef[] }) {
   const dayComplete = useAppStore((s) => s.dayComplete);
+  const tasksDone = useAppStore((s) => s.tasksDone);
   const day = useAppStore((s) => s.day);
   const router = useRouter();
 
   return (
     <View style={styles.allDone}>
-      <Text style={styles.allDoneFigure} maxFontSizeMultiplier={1.3}>
-        {String(total).padStart(2, '0')}
-      </Text>
-      <Micro color={colors.accent400}>
-        {dayComplete ? `Day ${day} locked in` : 'All done today'}
-      </Micro>
-      <Serif style={{ marginTop: 12, textAlign: 'center' }}>
-        {dayComplete
-          ? 'Flame fed. See you tomorrow.'
-          : 'Seal the day and feed the flame.'}
-      </Serif>
+      <View style={styles.allDoneHead}>
+        <Text style={styles.allDoneFigure} maxFontSizeMultiplier={1.3}>
+          {String(tasks.length).padStart(2, '0')}
+        </Text>
+        <View style={{ flex: 1 }}>
+          <Micro color={colors.accent400}>
+            {dayComplete ? `Day ${day} locked in` : 'All done today'}
+          </Micro>
+          <Serif style={{ marginTop: 8 }}>
+            {dayComplete
+              ? 'Flame fed. See you tomorrow.'
+              : 'Seal the day and feed the flame.'}
+          </Serif>
+        </View>
+      </View>
+
+      <View style={styles.doneList}>
+        {tasks.map((t) => (
+          <View key={t.key} style={styles.doneRow}>
+            <Check size={14} weight="bold" color={colors.accent400} />
+            <Text style={styles.doneLabel} numberOfLines={2}>
+              {t.label}
+            </Text>
+            <Text style={styles.doneTime}>{tasksDone[t.key]}</Text>
+          </View>
+        ))}
+      </View>
+
       {!dayComplete && (
         <PrimaryButton
           label="Lock in →"
           onPress={() => router.push('/celebration')}
-          style={{ marginTop: 22, alignSelf: 'stretch' }}
+          style={{ marginTop: 20 }}
         />
       )}
     </View>
@@ -255,7 +282,7 @@ export default function CheckinScreen() {
           </Micro>
         </View>
 
-        <View style={styles.deck}>
+        <View style={[styles.deck, !topTask && styles.deckDone]}>
           {topTask ? (
             <>
               {queue[2] && <View style={[styles.underCard, styles.under2]} />}
@@ -275,7 +302,7 @@ export default function CheckinScreen() {
               />
             </>
           ) : (
-            <AllDone total={total} />
+            <AllDone tasks={tasks} />
           )}
         </View>
 
@@ -337,6 +364,9 @@ const styles = StyleSheet.create({
   deck: {
     // Sizes to the card, so nothing clips when the system font grows.
     minHeight: 380,
+  },
+  deckDone: {
+    minHeight: 0,
   },
   topCard: {
     flexDirection: 'row',
@@ -462,18 +492,50 @@ const styles = StyleSheet.create({
     color: colors.line,
   },
   allDone: {
-    minHeight: 380,
-    alignItems: 'center',
-    justifyContent: 'center',
+    // Sizes to its content now that there is content: no fixed height to
+    // leave three lines floating in a screen's worth of surface.
     backgroundColor: colors.surface,
-    paddingHorizontal: 24,
+    padding: 24,
+  },
+  allDoneHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 18,
   },
   allDoneFigure: {
     fontFamily: font.black,
-    fontSize: 84,
-    lineHeight: 88,
+    fontSize: 76,
+    lineHeight: 80,
     letterSpacing: -4,
     color: colors.accent,
+    fontVariant: ['tabular-nums'],
+  },
+  doneList: {
+    marginTop: 22,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+  },
+  doneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 44,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+  },
+  doneLabel: {
+    flex: 1,
+    fontFamily: font.medium,
+    fontSize: 14.5,
+    color: colors.textMid,
+    textDecorationLine: 'line-through',
+  },
+  doneTime: {
+    fontFamily: font.semibold,
+    fontSize: 11,
+    letterSpacing: microTracking(11),
+    textTransform: 'uppercase',
+    color: colors.textLow,
     fontVariant: ['tabular-nums'],
   },
   chips: {

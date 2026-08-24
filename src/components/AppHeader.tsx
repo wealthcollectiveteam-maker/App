@@ -71,22 +71,27 @@ export function AppHeader({ showStreak = false }: { showStreak?: boolean }) {
 
       <View style={styles.right}>
         <Skew label={tierLabel} filled size="sm" />
-        {showStreak && (
-          <View style={styles.streak}>
-            <Micro size={11} color={colors.textMid}>
-              Streak
+        {showStreak &&
+          // A streak of 00 reads like a counter that failed. Before the
+          // first sealed day there is no streak to show, so the header says
+          // what is actually true instead.
+          (flame > 0 ? (
+            <View style={styles.streak}>
+              <Micro size={11} color={colors.textMid}>
+                Streak
+              </Micro>
+              <Text
+                style={styles.streakFigure}
+                maxFontSizeMultiplier={1.4}
+              >
+                {String(flame).padStart(2, '0')}
+              </Text>
+            </View>
+          ) : (
+            <Micro size={10} color={colors.textLow}>
+              Streak starts today
             </Micro>
-            <Text
-              style={[
-                styles.streakFigure,
-                { color: flame > 0 ? colors.textHi : colors.textLow },
-              ]}
-              maxFontSizeMultiplier={1.4}
-            >
-              {String(flame).padStart(2, '0')}
-            </Text>
-          </View>
-        )}
+          ))}
       </View>
 
       <BottomSheet visible={devOpen} onClose={() => setDevOpen(false)}>
@@ -210,6 +215,7 @@ const styles = StyleSheet.create({
     fontFamily: font.black,
     fontSize: 15,
     letterSpacing: microTracking(15),
+    color: colors.textHi,
     fontVariant: ['tabular-nums'],
   },
   scenarioRow: {

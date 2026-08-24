@@ -12,13 +12,19 @@ import {
   Text,
   TextInput,
   View,
+  type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BottomSheet } from '@/components/BottomSheet';
+import { Micro, Serif } from '@/components/primitives';
 import { Card, Kicker, OutlineButton } from '@/components/ui';
 import {
+  buildTierTask,
+  cancelledChangeLine,
+  hasPendingChanges,
   isAboveStandard,
+  pendingChangeLine,
   targetText,
   TASK_BASES,
   TIERS,
@@ -261,6 +267,31 @@ function TargetEditorSheet({
   );
 }
 
+/**
+ * A tier's actual task list, at its standard targets, with the descriptor
+ * that makes it that tier. Rendered straight from the tier config — the
+ * picker shows the choice, not a number.
+ */
+function TierTaskList({ tier, style }: { tier: Tier; style?: ViewStyle }) {
+  return (
+    <View style={style}>
+      {TIERS[tier].tasks.map((t) => (
+        <View key={t.key} style={styles.tierTaskRow}>
+          <View style={styles.tierTaskDot} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.tierTaskLabel}>
+              {buildTierTask(tier, t.key).label}
+            </Text>
+            <Serif size={13} style={{ color: colors.textLow }}>
+              {t.sub}
+            </Serif>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 /** Confirmation for a tier change — significant, effective tomorrow. */
 function TierConfirmSheet({
   target,
@@ -280,12 +311,15 @@ function TierConfirmSheet({
         Change tier — {TIERS[tier].label} to {def.label}
       </Kicker>
       <Text style={styles.tierConfirmText}>
-        {def.taskKeys.length} tier tasks instead of{' '}
-        {TIERS[tier].taskKeys.length}. A missed day will now mean:{' '}
+        {def.tasks.length} tier tasks instead of {TIERS[tier].tasks.length}. A
+        missed day will now mean:{' '}
         {def.missedDay.restartsChallenge
           ? 'the challenge restarts at Day 1.'
           : 'the streak resets; the day count continues.'}
       </Text>
+      {/* The list itself, not its length — the tiers differ in what they
+          demand, and that is the part worth confirming against. */}
+      <TierTaskList tier={target} style={{ marginTop: 12 }} />
       <Text style={styles.tierConfirmMeta}>
         Takes effect tomorrow. Your streak and day count carry over —
         historical days keep the tier they were completed under.
@@ -331,6 +365,14 @@ function TaskRow({
         >
           {task.label}
         </Text>
+        {/* The descriptor, not the quantity: it is what a tier actually
+            asks of you, and the only visible difference between two tiers
+            that carry the same task key. */}
+        {task.sub ? (
+          <Serif size={13} style={{ color: colors.textLow }}>
+            {task.sub}
+          </Serif>
+        ) : null}
         {meta ? <Text style={styles.taskMeta}>{meta}</Text> : null}
       </View>
       {onEdit && <OutlineButton label="Edit" small tone="neutral" onPress={onEdit} />}
@@ -359,11 +401,10 @@ export default function MyChallengeScreen() {
   const [targetTask, setTargetTask] = useState<TaskDef | null>(null);
   const tierLabelNow = useAppStore(selectTierLabel);
 
-  const hasPending =
-    pending.addedTomorrow.length > 0 ||
-    pending.removedTomorrow.length > 0 ||
-    pending.pendingTier != null ||
-    pending.targetChanges.length > 0;
+  // One predicate and one sentence, both derived from the pending-change
+  // state the service already owns. No screen invents its own version.
+  const hasPending = hasPendingChanges(pending);
+  const pendingLine = pendingChangeLine(pending, tier);
 
   const customByKey = new Map(customTasks.map((c) => [`custom-${c.id}`, c]));
 
@@ -396,6 +437,34 @@ export default function MyChallengeScreen() {
         <Text style={styles.title}>My Challenge</Text>
         <View style={{ width: 20 }} />
       </View>
+
+      {/* Persistent, never dismissible, and the FIRST thing on the screen.
+          The day-start snapshot is why a tier switch does not land today;
+          this is what says so, instead of leaving it to be discovered. */}
+      {hasPending && pendingLine && (
+        <View style={styles.pendingBar}>
+          <View style={styles.pendingRule} />
+          <View style={styles.pendingBody}>
+            <Micro color={colors.accent400}>
+              Starts {tomorrowDateLabel()}
+            </Micro>
+            <Text style={styles.pendingText}>{pendingLine}</Text>
+            <OutlineButton
+              label="Cancel changes"
+              small
+              tone="neutral"
+              onPress={() => {
+                // Read the summary BEFORE undoing — afterwards there is
+                // nothing left to describe.
+                const said = cancelledChangeLine(pending, tier);
+                undoPendingChanges();
+                toast(said);
+              }}
+              style={{ marginTop: 12, alignSelf: 'flex-start' }}
+            />
+          </View>
+        </View>
+      )}
 
       <Card>
         <View style={styles.summaryRow}>
@@ -532,11 +601,12 @@ export default function MyChallengeScreen() {
                   {isPendingTier ? '  ·  from tomorrow' : ''}
                 </Text>
                 <Text style={styles.taskMeta}>
-                  {def.taskKeys.length} tasks ·{' '}
+                  {def.tasks.length} tasks ·{' '}
                   {def.missedDay.restartsChallenge
                     ? 'a miss restarts at Day 1'
                     : 'a miss resets the streak'}
                 </Text>
+                <TierTaskList tier={t} style={{ marginTop: 10 }} />
               </View>
               {(active || isPendingTier) && (
                 <View style={styles.tierTag}>
@@ -572,38 +642,6 @@ export default function MyChallengeScreen() {
             ))}
           </Card>
         </>
-      )}
-
-      {hasPending && (
-        <Card style={styles.pendingBar}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.pendingText}>
-              {pending.todayCount} tasks today → {pending.tomorrowCount}{' '}
-              tasks tomorrow.
-            </Text>
-            <Text style={styles.pendingMeta}>
-              Starts {tomorrowDateLabel()}
-              {pending.pendingTier
-                ? ` · tier → ${TIERS[pending.pendingTier].label}`
-                : ''}
-              {pending.targetChanges
-                .map(
-                  (c) =>
-                    ` · ${c.name} → ${targetText({ value: c.toValue, unit: c.unit })}`,
-                )
-                .join('')}
-            </Text>
-          </View>
-          <OutlineButton
-            label="Undo changes"
-            small
-            tone="neutral"
-            onPress={() => {
-              undoPendingChanges();
-              toast('Pending changes cleared');
-            }}
-          />
-        </Card>
       )}
 
       <TaskFormSheet
@@ -683,7 +721,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     minHeight: 44,
-    paddingVertical: 4,
+    paddingVertical: 8,
+  },
+  tierTaskRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingVertical: 3,
+  },
+  tierTaskDot: {
+    width: 4,
+    height: 4,
+    marginTop: 7,
+    backgroundColor: colors.accent,
+    transform: [{ rotate: '45deg' }],
+  },
+  tierTaskLabel: {
+    fontFamily: font.medium,
+    fontSize: 13.5,
+    color: colors.text,
   },
   taskLabel: {
     fontFamily: font.regular,
@@ -738,22 +794,23 @@ const styles = StyleSheet.create({
   },
   pendingBar: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 20,
-    borderWidth: 1,
-    borderColor: colors.accent800,
+    backgroundColor: colors.surface,
+    marginBottom: 16,
+  },
+  pendingRule: {
+    width: 2,
+    backgroundColor: colors.accent,
+  },
+  pendingBody: {
+    flex: 1,
+    padding: space.cardPad,
   },
   pendingText: {
     fontFamily: font.medium,
-    fontSize: 13,
+    fontSize: 15,
+    lineHeight: 21,
     color: colors.text,
-  },
-  pendingMeta: {
-    fontFamily: font.regular,
-    fontSize: 11.5,
-    color: colors.accent300,
-    marginTop: 2,
+    marginTop: 8,
   },
   formWarning: {
     fontFamily: font.regular,

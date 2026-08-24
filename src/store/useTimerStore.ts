@@ -211,6 +211,19 @@ export const useTimerStore = create<TimerState>((set, get) => {
         elapsedActiveSeconds(active),
         active.durationSeconds,
       );
+      // The reverse of the cancel-on-completion case below: the countdown
+      // reached zero for a task that is ALREADY checked off (a hand
+      // completion the subscription could not reach — the app was killed
+      // mid-timer and hydrate() restored an expired one). There is no XP to
+      // award and completeTask() would no-op, so claiming "+20 XP" would be
+      // a lie. Clear it down quietly instead.
+      if (useAppStore.getState().tasksDone[active.taskKey]) {
+        cancelTimerNotifications().catch(() => {});
+        DataService.cancelTimer().catch(() => {});
+        set({ active: null, completing: false, lastCompleted: null });
+        toast('Already checked off — timer cleared');
+        return;
+      }
       // Same completion path as a swipe: XP, feed entry, streak effect —
       // but local only. completeTimedTask() below is the backend write for
       // this path because it carries the elapsed duration, and complete_task()
@@ -234,4 +247,34 @@ export const useTimerStore = create<TimerState>((set, get) => {
 
     clearLastCompleted: () => set({ lastCompleted: null }),
   };
+});
+
+/**
+ * A completed task can have no running timer.
+ *
+ * Completion arrives by four routes — the Home checkbox, the check-in
+ * swipe, the Apple Health suggestion, and the timer itself — and every one
+ * of them funnels through useAppStore.completeTask. Subscribing to the
+ * completion map covers all four (and any route added later) with one rule,
+ * instead of four call sites that each have to remember the timer exists.
+ *
+ * The dependency runs one way only: the timer store already imports the app
+ * store, and this keeps it that way — the app store knows nothing about
+ * timers.
+ */
+useAppStore.subscribe((state, previous) => {
+  if (state.tasksDone === previous.tasksDone) return;
+  const timer = useTimerStore.getState();
+  const active = timer.active;
+  if (!active) return;
+  // completeActive() sets `completing` before it marks the task done; it is
+  // already tearing the timer down and owns the backend write that carries
+  // the elapsed duration.
+  if (timer.completing) return;
+  if (!state.tasksDone[active.taskKey]) return;
+  if (previous.tasksDone[active.taskKey]) return;
+  // Cancels the four scheduled notifications by id, clears the persisted
+  // timer, and empties the mini-bar — all three of which the user was
+  // otherwise left staring at beside a struck-through task.
+  timer.cancel();
 });

@@ -378,12 +378,20 @@ export function StatBox({
  */
 export function TaskRow({
   label,
+  sub,
   done,
   meta,
   right,
   onPress,
 }: {
   label: string;
+  /**
+   * The task's descriptor. Per-tier copy ("no cheat meals, no alcohol" vs
+   * "one planned cheat meal a week") and the only thing on the row that says
+   * what the tier actually demands — so it belongs on the row, not only in
+   * the check-in card.
+   */
+  sub?: string;
   done: boolean;
   /** Right-aligned text meta (a completion time, "64 oz left"). */
   meta?: string;
@@ -407,17 +415,20 @@ export function TaskRow({
       >
         {done && <Check size={15} weight="bold" color={colors.bg} />}
       </View>
-      <Text
-        style={[
-          styles.taskLabel,
-          done && {
-            textDecorationLine: 'line-through',
-            color: colors.textMid,
-          },
-        ]}
-      >
-        {label}
-      </Text>
+      <View style={{ flex: 1 }}>
+        <Text
+          style={[
+            styles.taskLabel,
+            done && {
+              textDecorationLine: 'line-through',
+              color: colors.textMid,
+            },
+          ]}
+        >
+          {label}
+        </Text>
+        {sub && !done ? <Serif size={13.5} style={styles.taskSub}>{sub}</Serif> : null}
+      </View>
       {meta ? <Text style={styles.taskMeta}>{meta}</Text> : right}
     </Pressable>
   );
@@ -667,6 +678,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 14,
     minHeight: 56,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: colors.line,
   },
@@ -679,10 +691,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   taskLabel: {
-    flex: 1,
     fontFamily: font.medium,
     fontSize: 16,
     color: colors.textHi,
+  },
+  taskSub: {
+    color: colors.textLow,
+    marginTop: 1,
   },
   taskMeta: {
     fontFamily: font.semibold,
