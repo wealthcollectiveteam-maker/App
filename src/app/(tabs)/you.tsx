@@ -126,7 +126,7 @@ export default function YouScreen() {
               />
             </View>
             <Serif size={13} style={{ marginTop: 8, color: colors.textLow }}>
-              {toNext} XP to LVL {level + 1} — flair ring grows
+              {toNext} XP to LVL {level + 1}
             </Serif>
           </View>
         </View>
