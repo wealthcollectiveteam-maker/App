@@ -183,6 +183,76 @@ export function tierStandards(tier: Tier): Partial<Record<TaskKey, TaskTarget>> 
   return out;
 }
 
+const LITRES_PER_GALLON = 3.785411784;
+
+/** One day of the challenge as the final tally reads it. */
+export interface TalliedDay {
+  day: number;
+  tasks: { key: TaskKey; target: TaskTarget | null }[];
+}
+
+/**
+ * The Day 75 figures, counted from what the user ACTUALLY completed.
+ *
+ * These were `75 × the tier standard` — the totals of a flawless run,
+ * printed for everyone regardless of what they did. A user who missed
+ * fourteen reading days was still shown 750 pages. The numbers now come from
+ * the frozen day snapshots (which carry each day's real target, including
+ * every edit made along the way) crossed with the completions actually
+ * recorded against them.
+ *
+ * `pagesRead` and `water` are still what the app can honestly claim: the
+ * target for a task the user confirmed done, not a measured quantity —
+ * nothing here ever counted a page or a millilitre. That is why a day only
+ * contributes when its task was completed, and contributes its own target
+ * rather than a nominal one.
+ *
+ * Water is accumulated in litres and reported in `waterUnit`, so a challenge
+ * that changed tier partway does not add gallons to litres.
+ */
+export function tallyFinalResults(
+  days: TalliedDay[],
+  completions: { day: number; taskKey: TaskKey }[],
+  waterUnit: TaskTarget['unit'],
+): { workouts: number; pagesRead: number; water: TaskTarget } {
+  const targetsByDay = new Map<number, Map<TaskKey, TaskTarget | null>>();
+  for (const d of days) {
+    targetsByDay.set(d.day, new Map(d.tasks.map((t) => [t.key, t.target])));
+  }
+
+  let workouts = 0;
+  let pagesRead = 0;
+  let litres = 0;
+
+  for (const done of completions) {
+    const day = targetsByDay.get(done.day);
+    // A completion with no snapshot is not countable — the day it belongs to
+    // is what says what the task was worth. Skipped rather than guessed.
+    if (!day || !day.has(done.taskKey)) continue;
+    const target = day.get(done.taskKey) ?? null;
+
+    if (done.taskKey.startsWith('workout')) {
+      workouts += 1;
+      continue;
+    }
+    if (done.taskKey === 'read' && target?.unit === 'pages') {
+      pagesRead += target.value;
+      continue;
+    }
+    if (done.taskKey === 'water' && target) {
+      if (target.unit === 'gallons') litres += target.value * LITRES_PER_GALLON;
+      else if (target.unit === 'litres') litres += target.value;
+    }
+  }
+
+  const water: TaskTarget =
+    waterUnit === 'gallons'
+      ? { value: Math.round(litres / LITRES_PER_GALLON), unit: 'gallons' }
+      : { value: Math.round(litres), unit: 'litres' };
+
+  return { workouts, pagesRead, water };
+}
+
 /** Default activity chips for the workout capture sheet. */
 export const DEFAULT_ACTIVITY_TYPES = [
   'Push',

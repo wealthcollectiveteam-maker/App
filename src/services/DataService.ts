@@ -1,7 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { CHALLENGE } from '@/constants/challenge';
-import { tierStandardTarget, tierTaskKeys } from '@/constants/tiers';
+import { tierStandardTarget } from '@/constants/tiers';
 import { buildScenario } from '@/data/mock';
 import type {
   ActiveTimer,
@@ -35,6 +34,7 @@ import {
   composeTaskSet,
   DEFAULT_ACTIVITY_TYPES,
   pendingTargetChanges,
+  tallyFinalResults,
   tierStandards,
 } from '@/services/taskProjection';
 
@@ -153,21 +153,31 @@ export class MockDataService implements IDataService {
     return this.state.milestones;
   }
 
-  getFinalResults(): FinalResults {
-    const workoutTasks = tierTaskKeys(this.state.tier).filter((k) =>
-      k.startsWith('workout'),
-    ).length;
-    // Every figure derives from the tier actually run, not from Hard's
-    // numbers with everyone else's totals quietly borrowed from them.
-    const water = tierStandardTarget(this.state.tier, 'water');
-    const read = tierStandardTarget(this.state.tier, 'read');
+  /**
+   * The same tally the backend runs, over the only history the mock has:
+   * today. The figures are therefore small — which is the honest answer for
+   * a dataset that is one day long, and better than the invented 75-day
+   * totals that used to stand in for it here.
+   */
+  async loadFinalResults(): Promise<FinalResults> {
+    const waterUnit =
+      tierStandardTarget(this.state.tier, 'water')?.unit ?? 'litres';
+    const tasks = this.getTodayTasks(this.state.tier, this.state.day);
+    const tally = tallyFinalResults(
+      [
+        {
+          day: this.state.day,
+          tasks: tasks.map((t) => ({ key: t.key, target: t.target ?? null })),
+        },
+      ],
+      (Object.keys(this.state.tasksDone) as TaskKey[]).map((taskKey) => ({
+        day: this.state.day,
+        taskKey,
+      })),
+      waterUnit,
+    );
     return {
-      workouts: CHALLENGE.days * workoutTasks,
-      pagesRead: CHALLENGE.days * (read?.value ?? 0),
-      water: {
-        value: CHALLENGE.days * (water?.value ?? 0),
-        unit: water?.unit ?? 'litres',
-      },
+      ...tally,
       day1PhotoUri: null,
       day75PhotoUri: this.state.proofs.photo ?? null,
     };

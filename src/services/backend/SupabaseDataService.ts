@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { CHALLENGE, XP } from '@/constants/challenge';
-import { tierStandardTarget, tierTaskKeys } from '@/constants/tiers';
+import { XP } from '@/constants/challenge';
+import { tierStandardTarget } from '@/constants/tiers';
 import type {
   ActiveTimer,
   CustomTask,
@@ -44,6 +44,7 @@ import {
   composeTaskSet,
   DEFAULT_ACTIVITY_TYPES,
   pendingTargetChanges,
+  tallyFinalResults,
   taskFromSnapshot,
   tierStandards,
 } from '@/services/taskProjection';
@@ -744,23 +745,40 @@ export class SupabaseDataService implements IDataService {
     return out;
   }
 
-  getFinalResults(): FinalResults {
-    const workoutTasks = tierTaskKeys(this.state.tier).filter((k) =>
-      k.startsWith('workout'),
-    ).length;
-    // Every figure derives from the tier actually run, not from Hard's
-    // numbers with everyone else's totals quietly borrowed from them.
-    const water = tierStandardTarget(this.state.tier, 'water');
-    const read = tierStandardTarget(this.state.tier, 'read');
+  /**
+   * What this user actually did over the whole challenge.
+   *
+   * Was `75 × the tier standard`: the totals of a flawless run, shown to
+   * everyone whatever they had done. Now every day's own frozen snapshot
+   * supplies the target that day was worth, and only tasks with a completion
+   * row against them count.
+   */
+  async loadFinalResults(): Promise<FinalResults> {
+    const waterUnit = tierStandardTarget(this.state.tier, 'water')?.unit ?? 'litres';
+    if (!this.challengeId) {
+      return {
+        workouts: 0,
+        pagesRead: 0,
+        water: { value: 0, unit: waterUnit },
+        day1PhotoUri: null,
+        day75PhotoUri: null,
+      };
+    }
+    const { days, completions } = await api.listChallengeHistory(this.challengeId);
+    const tally = tallyFinalResults(
+      days.map((d) => ({
+        day: d.day,
+        tasks: d.task_snapshot.map((t) => ({ key: t.key, target: t.target })),
+      })),
+      completions.map((c) => ({ day: c.day, taskKey: c.task_key as TaskKey })),
+      waterUnit,
+    );
     return {
-      workouts: CHALLENGE.days * workoutTasks,
-      pagesRead: CHALLENGE.days * (read?.value ?? 0),
-      water: {
-        value: CHALLENGE.days * (water?.value ?? 0),
-        unit: water?.unit ?? 'litres',
-      },
+      ...tally,
+      // Progress photos are captured nowhere yet — see the Day 75 screen,
+      // which renders empty slots. Both stay null until they are.
       day1PhotoUri: null,
-      day75PhotoUri: this.state.proofs.photo ?? null,
+      day75PhotoUri: null,
     };
   }
 

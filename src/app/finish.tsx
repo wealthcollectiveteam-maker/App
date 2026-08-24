@@ -7,8 +7,9 @@ import {
   ForkKnifeIcon as ForkKnife,
   MedalIcon as Medal,
 } from 'phosphor-react-native';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Platform,
   Pressable,
   ScrollView,
@@ -26,6 +27,8 @@ import {
   Kicker,
   OutlineButton,
 } from '@/components/ui';
+import { targetText } from '@/constants/tiers';
+import type { FinalResults } from '@/data/types';
 import { DataService } from '@/services';
 import { useAppStore } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
@@ -33,33 +36,46 @@ import { colors, font, radius, space } from '@/theme/tokens';
 
 const FEELINGS = ['Strong', 'Proud', 'Unstoppable', 'Relieved'];
 
-const BENEFITS = [
-  {
-    Icon: ForkKnife,
-    lead: 'Clean eating.',
-    body: 'Steadier energy, better sleep, no crash.',
-  },
-  {
-    Icon: Barbell,
-    lead: 'Two-a-days.',
-    body: '150 workouts. Your floor is higher now.',
-  },
-  {
-    Icon: Drop,
-    lead: 'Hydration.',
-    body: '75 gallons. The headaches are gone.',
-  },
-  {
-    Icon: BookOpen,
-    lead: 'Ten pages a day.',
-    body: '750 pages. A reading habit that stuck.',
-  },
-  {
-    Icon: Medal,
-    lead: 'Discipline.',
-    body: 'You kept a promise to yourself 75 days in a row. That\u2019s the real result.',
-  },
-];
+/**
+ * What the challenge changed — with the FIGURES taken from the same tally as
+ * the stat grid above them.
+ *
+ * They were literal strings: "150 workouts", "75 gallons", "750 pages". Those
+ * are Hard's numbers for a flawless run, and every user read them whatever
+ * tier they ran and whatever they had actually done. A line is dropped
+ * entirely when its figure is zero rather than congratulating someone on
+ * nothing.
+ */
+function benefits(results: FinalResults) {
+  return [
+    {
+      Icon: ForkKnife,
+      lead: 'Clean eating.',
+      body: 'Steadier energy, better sleep, no crash.',
+    },
+    results.workouts > 0 && {
+      Icon: Barbell,
+      lead: 'Training.',
+      body: `${results.workouts} sessions. Your floor is higher now.`,
+    },
+    results.water.value > 0 && {
+      Icon: Drop,
+      lead: 'Hydration.',
+      body: `${targetText(results.water)}. The headaches are gone.`,
+    },
+    results.pagesRead > 0 && {
+      Icon: BookOpen,
+      lead: 'Reading.',
+      body: `${results.pagesRead} pages. A habit that stuck.`,
+    },
+    {
+      Icon: Medal,
+      lead: 'Discipline.',
+      body: 'You kept a promise to yourself, every day. That’s the real result.',
+    },
+  ].filter((b) => typeof b === 'object');
+}
+
 
 function StepOne({ onNext }: { onNext: () => void }) {
   const feeling = useAppStore((s) => s.finishFeeling);
@@ -140,7 +156,41 @@ function PhotoSlot({ label }: { label: string }) {
 function StepTwo() {
   const router = useRouter();
   const feeling = useAppStore((s) => s.finishFeeling);
-  const results = DataService.getFinalResults();
+  // The one read in the app that spans the whole challenge: 75 days of
+  // snapshots and completions, counted server-side. It cannot come from the
+  // mirror, so the screen waits for it rather than rendering placeholder
+  // numbers that would be indistinguishable from real ones.
+  const [results, setResults] = useState<FinalResults | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    DataService.loadFinalResults()
+      .then((r) => {
+        if (live) setResults(r);
+      })
+      .catch(() => {
+        if (live) setFailed(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  if (!results) {
+    return (
+      <View style={[styles.stepTwo, styles.resultsPending]}>
+        {failed ? (
+          <Text style={styles.resultsFailed}>
+            Your totals didn{'’'}t load. Everything you did is safe —
+            check your connection and open this screen again.
+          </Text>
+        ) : (
+          <ActivityIndicator color={colors.accent400} />
+        )}
+      </View>
+    );
+  }
 
   return (
     <ScrollView
@@ -180,7 +230,7 @@ function StepTwo() {
 
       <Card style={{ marginTop: 12 }}>
         <Kicker style={{ marginBottom: 14 }}>What 75 days changed</Kicker>
-        {BENEFITS.map(({ Icon, lead, body }) => (
+        {benefits(results).map(({ Icon, lead, body }) => (
           <View key={lead} style={styles.benefitRow}>
             <Icon size={17} color={colors.accent400} />
             <Text style={styles.benefitText}>
@@ -230,6 +280,18 @@ export default function FinishFlow() {
 }
 
 const styles = StyleSheet.create({
+  resultsPending: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  resultsFailed: {
+    fontFamily: font.regular,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.neutral500,
+    textAlign: 'center',
+  },
   stepOne: {
     flexGrow: 1,
     alignItems: 'center',

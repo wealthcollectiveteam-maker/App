@@ -174,6 +174,45 @@ export const BackendApi = {
 
   sealDay: () => sb().rpc('seal_day'),
 
+  /**
+   * Every frozen day of a challenge and every completion recorded against
+   * it — the raw material for the Day 75 figures, which are counted from
+   * what was actually done rather than assumed from the tier.
+   *
+   * Both reads are owner-scoped by RLS (challenge_days_select and
+   * task_completions_select), and both tables are select-only for
+   * `authenticated`, so this cannot be turned into a write. Bounded by the
+   * challenge: 75 days of roughly six tasks.
+   */
+  listChallengeHistory: async (
+    challengeId: string,
+  ): Promise<{
+    days: { day: number; task_snapshot: SnapshotTask[] }[];
+    completions: { day: number; task_key: string }[];
+  }> => {
+    const [daysResult, completionsResult] = await Promise.all([
+      sb()
+        .from('challenge_days')
+        .select('day, task_snapshot')
+        .eq('challenge_id', challengeId)
+        .order('day', { ascending: true }),
+      sb()
+        .from('task_completions')
+        .select('day, task_key')
+        .eq('challenge_id', challengeId),
+    ]);
+    return {
+      days: (unwrap(daysResult, 'load challenge days') ?? []) as {
+        day: number;
+        task_snapshot: SnapshotTask[];
+      }[],
+      completions: (unwrap(completionsResult, 'load completions') ?? []) as {
+        day: number;
+        task_key: string;
+      }[],
+    };
+  },
+
   /** Today's completions, mapped to the store's { taskKey: timeLabel } shape. */
   listTodayCompletions: async (
     challengeId: string,

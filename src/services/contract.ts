@@ -99,7 +99,14 @@ export interface IDataService {
   getRecentMeals(): string[];
   addMilestone(title: string): Milestone;
   toggleMilestone(id: string, day: number): Milestone[];
-  getFinalResults(): FinalResults;
+  /**
+   * The Day 75 figures, counted from the day snapshots and the completions
+   * actually recorded — not from the tier's nominal totals. Async because it
+   * is the one read in the app that spans the whole challenge rather than
+   * today, so the mirror cannot answer it: it is opened once, on one screen,
+   * at the end.
+   */
+  loadFinalResults(): Promise<FinalResults>;
   saveCompletionFeeling(feeling: string | null, text: string): void;
   /**
    * Display name + "why I started". The name is the squad-visible surface
