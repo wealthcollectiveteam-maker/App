@@ -23,6 +23,7 @@ import { CHALLENGE_LENGTHS } from '@/constants/challenge';
 import { PRIVACY_POLICY_URL, isPlaceholderLegalUrl } from '@/constants/legal';
 import type {
   ChallengeLength,
+  SquadSummary,
   HealthPrefs,
   NotificationPrefs,
 } from '@/data/types';
@@ -138,6 +139,68 @@ function ChallengeLengthRow() {
   );
 }
 
+/**
+ * One squad, with the only destructive action Settings offers for it.
+ *
+ * The confirmation names the squad on purpose: with several memberships the
+ * rows differ by name alone, and "Leave squad?" over a list of four is a
+ * question about which the user cannot answer.
+ */
+function SquadRow({ squad, first }: { squad: SquadSummary; first: boolean }) {
+  const leaveSquad = useAppStore((s) => s.leaveSquad);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const leave = async () => {
+    setBusy(true);
+    try {
+      await leaveSquad(squad.id);
+      toast(`Left ${squad.name}`);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not leave that squad.');
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+    }
+  };
+
+  return (
+    <View style={[styles.prefRow, !first && styles.rowBorder]}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.rowLabel}>{squad.name}</Text>
+        <Text style={styles.rowSub}>
+          {confirming
+            ? `Leave ${squad.name}? Your challenge and history stay exactly as they are.`
+            : 'Leaving keeps your challenge — solo mode is first-class.'}
+        </Text>
+      </View>
+      {confirming ? (
+        <View style={styles.confirmRow}>
+          <OutlineButton
+            label={busy ? 'Leaving…' : 'Leave'}
+            small
+            tone="neutral"
+            onPress={leave}
+          />
+          <OutlineButton
+            label="Cancel"
+            small
+            tone="ghost"
+            onPress={() => setConfirming(false)}
+          />
+        </View>
+      ) : (
+        <OutlineButton
+          label="Leave"
+          small
+          tone="neutral"
+          onPress={() => setConfirming(true)}
+        />
+      )}
+    </View>
+  );
+}
+
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -146,8 +209,7 @@ export default function SettingsScreen() {
   const profileName = useAppStore((s) => s.profileName);
   const why = useAppStore((s) => s.why);
   const updateProfile = useAppStore((s) => s.updateProfile);
-  const squad = useAppStore((s) => s.squad);
-  const leaveSquad = useAppStore((s) => s.leaveSquad);
+  const squads = useAppStore((s) => s.squads);
   const blockedUsers = useAppStore((s) => s.blockedUsers);
   const unblockUser = useAppStore((s) => s.unblockUser);
   const deleteAccount = useAppStore((s) => s.deleteAccount);
@@ -367,27 +429,18 @@ export default function SettingsScreen() {
         />
       </Card>
 
-      {squad && (
+      {squads.length > 0 && (
         <>
-          <Kicker style={styles.sectionKicker}>Squad</Kicker>
+          <Kicker style={styles.sectionKicker}>
+            {squads.length > 1 ? 'Squads' : 'Squad'}
+          </Kicker>
           <Card>
-            <View style={styles.prefRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rowLabel}>{squad.name}</Text>
-                <Text style={styles.rowSub}>
-                  Leaving keeps your challenge — solo mode is first-class.
-                </Text>
-              </View>
-              <OutlineButton
-                label="Leave"
-                small
-                tone="neutral"
-                onPress={() => {
-                  leaveSquad();
-                  toast('Left the squad — running solo');
-                }}
-              />
-            </View>
+            {/* Every squad, not just the one on screen. A list that showed
+                only the active squad would leave the others unleavable from
+                here, which is the shape the single-squad model left behind. */}
+            {squads.map((q, i) => (
+              <SquadRow key={q.id} squad={q} first={i === 0} />
+            ))}
           </Card>
         </>
       )}

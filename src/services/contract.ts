@@ -18,6 +18,7 @@ import type {
   Scenario,
   ScenarioState,
   Squad,
+  SquadSummary,
   TaskDef,
   TaskKey,
   TaskTarget,
@@ -116,20 +117,36 @@ export interface IDataService {
    * name nobody else can see.
    */
   updateProfile(name: string, why: string): void;
-  // Squad membership (solo mode is squad === null)
+  // Squad membership. Solo mode is squads === [] and squad === null; a user
+  // may now hold several at once, and exactly one of them is ACTIVE.
   /**
-   * Returns a PROVISIONAL squad immediately — the server mints the invite
-   * code, so the local return value cannot contain it. The real row arrives
-   * later and reaches the UI through onRemoteChange + getSquadState().
+   * These four are async, unlike most of this contract, and deliberately so.
+   *
+   * Everything else here is optimistic — mutate the mirror, fire the write,
+   * roll back if the server refuses — because the cost of guessing wrong is
+   * a flicker. Squad membership is not like that. The invite code is minted
+   * by the server and cannot be guessed, which is exactly how a provisional
+   * placeholder once ended up rendered (and copied) as six dots; and joining,
+   * renaming and leaving all have refusals the client cannot predict — a
+   * used code, a squad you do not administer. So they wait for the answer.
    */
-  createSquad(name: string): Squad;
-  joinSquad(code: string): Squad;
-  leaveSquad(): void;
+  createSquad(name: string): Promise<Squad>;
+  joinSquad(code: string): Promise<Squad>;
+  renameSquad(squadId: string, name: string): Promise<void>;
+  leaveSquad(squadId: string): Promise<void>;
+  /** Switch which squad the tab is showing, loading its roster and feed. */
+  setActiveSquad(squadId: string): Promise<void>;
   /**
    * Squad-derived view state, straight from the service. Used to re-read
    * after the server has reconciled something the client could not predict.
+   *
+   * `squads` is every membership (the switcher); `squad` is the active one
+   * in full. They are separate because a roster per squad is a read per
+   * squad, and the switcher only needs names.
    */
   getSquadState(): {
+    squads: SquadSummary[];
+    activeSquadId: string | null;
     squad: Squad | null;
     feed: FeedItem[];
     leaderboardWeek: LeaderRow[];

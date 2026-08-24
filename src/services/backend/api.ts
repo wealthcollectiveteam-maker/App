@@ -110,6 +110,18 @@ export interface SquadStatusRow {
   tasks_today: number;
   tier_label: string;
   flame: number;
+  /** This member's own day and challenge length — see SquadMember. */
+  day: number;
+  duration_days: number;
+}
+
+/** One row of my_squads(): what the switcher needs, per squad. */
+export interface MySquadRow {
+  id: string;
+  name: string;
+  code: string;
+  is_creator: boolean;
+  member_count: number;
 }
 
 export interface ChallengeConfig {
@@ -426,30 +438,70 @@ export const BackendApi = {
     sb().rpc('undo_pending_changes'),
 
   // ---- squad ----
-  createSquad: async (name: string) =>
-    unwrap(await sb().rpc('create_squad', { p_name: name }), 'create squad') as string,
+  /**
+   * create_squad returns the row, not the uuid.
+   *
+   * The old signature handed back an id the UI has no use for, so the screen
+   * showed a provisional placeholder while the real invite code sat unread
+   * on the server — and rendered, and copied, six dots. The code comes back
+   * with the name now, so nothing has to be guessed or re-fetched.
+   */
+  createSquad: async (name: string): Promise<MySquadRow> => {
+    const rows = unwrap(
+      await sb().rpc('create_squad', { p_name: name }),
+      'create squad',
+    ) as { id: string; name: string; code: string }[] | null;
+    const row = rows?.[0];
+    if (!row) throw new Error('create squad returned nothing');
+    return { ...row, is_creator: true, member_count: 1 };
+  },
 
-  joinSquad: async (code: string) =>
-    unwrap(await sb().rpc('join_squad', { p_code: code }), 'join squad') as string,
+  joinSquad: async (code: string): Promise<MySquadRow> => {
+    const rows = unwrap(
+      await sb().rpc('join_squad', { p_code: code }),
+      'join squad',
+    ) as { id: string; name: string; code: string }[] | null;
+    const row = rows?.[0];
+    if (!row) throw new Error('join squad returned nothing');
+    return { ...row, is_creator: false, member_count: 0 };
+  },
 
-  leaveSquad: () => sb().rpc('leave_squad'),
+  renameSquad: async (squadId: string, name: string): Promise<MySquadRow> => {
+    const rows = unwrap(
+      await sb().rpc('rename_squad', { p_squad_id: squadId, p_name: name }),
+      'rename squad',
+    ) as { id: string; name: string; code: string }[] | null;
+    const row = rows?.[0];
+    if (!row) throw new Error('rename squad returned nothing');
+    return { ...row, is_creator: true, member_count: 0 };
+  },
+
+  /** Leaves ONE squad. There is no "leave" without saying which any more. */
+  leaveSquad: (squadId: string) =>
+    sb().rpc('leave_squad', { p_squad_id: squadId }),
+
+  /** Every squad the caller is in — the switcher's whole data source. */
+  mySquads: async (): Promise<MySquadRow[]> =>
+    (unwrap(await sb().rpc('my_squads'), 'load squads') ?? []) as MySquadRow[],
 
   /**
-   * Squad roster + per-member counts. get_squad_status() returns the
-   * sanctioned per-member surface (name, xp, done/total counts, tier label);
-   * the squad's own name/code/streak come from `squads`, which only members
-   * can read. Solo users get an empty array — there is no squad row.
+   * Squad roster + per-member counts for ONE squad.
+   *
+   * The squad is an argument now. It used to be inferred server-side from
+   * the caller's single membership, and `squads` was read with `.limit(1)`
+   * — both of which quietly picked an arbitrary squad the moment a user
+   * could be in two.
    */
-  getSquadStatus: async (): Promise<SquadStatusRow[]> => {
-    const [statusResult, squadsResult] = await Promise.all([
-      sb().rpc('get_squad_status'),
-      sb().from('squads').select('id, name, invite_code').limit(1),
+  getSquadStatus: async (squadId: string): Promise<SquadStatusRow[]> => {
+    const [statusResult, squadResult] = await Promise.all([
+      sb().rpc('get_squad_status', { p_squad_id: squadId }),
+      sb().from('squads').select('id, name, invite_code').eq('id', squadId).limit(1),
     ]);
     const rows = (unwrap(statusResult, 'load squad status') ?? []) as Omit<
       SquadStatusRow,
       'squad_id' | 'squad_name' | 'invite_code'
     >[];
-    const squad = unwrap(squadsResult, 'load squad')?.[0];
+    const squad = unwrap(squadResult, 'load squad')?.[0];
     if (!squad || rows.length === 0) return [];
     return rows.map((r) => ({
       ...r,
@@ -460,25 +512,15 @@ export const BackendApi = {
   },
 
   /**
-   * The signed-in user's squad row. getSquadStatus() needs BOTH the roster
-   * RPC and this row and returns [] if either is empty — but the invite
-   * code lives here alone, and a squad you cannot read the code for is a
-   * squad nobody can join.
+   * A ping is scoped to the squad it was sent FROM. Sharing some other squad
+   * with the recipient is not permission to post into this one.
    */
-  getMySquad: async (): Promise<{
-    id: string;
-    name: string;
-    invite_code: string;
-  } | null> => {
-    const data = unwrap(
-      await sb().from('squads').select('id, name, invite_code').limit(1),
-      'load squad',
-    );
-    return data?.[0] ?? null;
-  },
-
-  sendPing: (toUserId: string, message: string) =>
-    sb().rpc('send_ping', { p_to: toUserId, p_message: message }),
+  sendPing: (toUserId: string, message: string, squadId: string) =>
+    sb().rpc('send_ping', {
+      p_to: toUserId,
+      p_message: message,
+      p_squad_id: squadId,
+    }),
 
   postFeedItem: (
     squadId: string,

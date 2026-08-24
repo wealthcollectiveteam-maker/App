@@ -12,6 +12,7 @@ import {
 } from '@/constants/tiers';
 import type {
   BlockedUser,
+  SquadSummary,
   ChallengeLength,
   BuiltinTaskKey,
   CustomTask,
@@ -129,6 +130,15 @@ function rememberForRollback(key: string, before: Partial<AppState>): void {
 }
 
 interface AppState extends ScenarioState {
+  /**
+   * Every squad this user is in. `squad` on ScenarioState is the ACTIVE one
+   * in full — roster, feed, leaderboards — and this is the list the switcher
+   * renders. Two fields because a roster is a read per squad and the
+   * switcher only needs names: loading four rosters to draw four tabs would
+   * make the common case (one squad) pay for the rare one.
+   */
+  squads: SquadSummary[];
+  activeSquadId: string | null;
   scenario: Scenario;
   deferred: TaskKey[];
   finishFeeling: string | null;
@@ -194,9 +204,17 @@ interface AppState extends ScenarioState {
   toggleMilestone: (id: string) => void;
   /** Returns false when the daily ping allowance is spent. */
   sendPing: (toName: string, text: string) => boolean;
-  createSquad: (name: string) => void;
-  joinSquad: (code: string) => void;
-  leaveSquad: () => void;
+  /**
+   * All four are async and all four THROW. The screens await them and show
+   * the server's own message — "you are already in this squad", "only the
+   * squad creator can rename it" — because those refusals are the useful
+   * part and a swallowed one leaves a button that looks broken.
+   */
+  createSquad: (name: string) => Promise<void>;
+  joinSquad: (code: string) => Promise<void>;
+  renameSquad: (squadId: string, name: string) => Promise<void>;
+  leaveSquad: (squadId: string) => Promise<void>;
+  setActiveSquad: (squadId: string) => Promise<void>;
   reportFeedItem: (id: string, reason: ReportReason) => void;
   blockUser: (user: { id?: string; name: string }) => void;
   unblockUser: (id: string) => void;
@@ -316,6 +334,8 @@ const initialTaskConfig = taskConfigMirror(
 
 export const useAppStore = create<AppState>((set, get) => ({
   scenario: 'day1',
+  squads: [],
+  activeSquadId: null,
   deferred: [],
   finishFeeling: null,
   finishFeelingText: '',
@@ -549,11 +569,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     return true;
   },
 
-  createSquad: (name) => set({ squad: DataService.createSquad(name) }),
-  joinSquad: (code) => set({ squad: DataService.joinSquad(code) }),
-  leaveSquad: () => {
-    DataService.leaveSquad();
-    set({ squad: null });
+  createSquad: async (name) => {
+    await DataService.createSquad(name);
+    set(DataService.getSquadState());
+  },
+  joinSquad: async (code) => {
+    await DataService.joinSquad(code);
+    set(DataService.getSquadState());
+  },
+  renameSquad: async (squadId, name) => {
+    await DataService.renameSquad(squadId, name);
+    set(DataService.getSquadState());
+  },
+  leaveSquad: async (squadId) => {
+    await DataService.leaveSquad(squadId);
+    set(DataService.getSquadState());
+  },
+  setActiveSquad: async (squadId) => {
+    await DataService.setActiveSquad(squadId);
+    set(DataService.getSquadState());
   },
 
   reportFeedItem: (id, reason) => {
@@ -772,6 +806,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const st = DataService.loadScenario('day1');
     set({
       deferred: [],
+      ...DataService.getSquadState(),
       finishFeeling: null,
       finishFeelingText: '',
       pingsUsed: { date: localDateKey(), count: 0 },
@@ -794,6 +829,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     AsyncStorage.removeItem(CHECKINS_KEY).catch(() => {});
     set({
       scenario: 'day1',
+      squads: [],
+      activeSquadId: null,
       deferred: [],
       finishFeeling: null,
       finishFeelingText: '',

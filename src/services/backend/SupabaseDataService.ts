@@ -4,6 +4,7 @@ import { CHALLENGE, XP } from '@/constants/challenge';
 import { tierStandardTarget } from '@/constants/tiers';
 import type {
   ChallengeLength,
+  SquadSummary,
   ActiveTimer,
   BlockedUser,
   CustomTask,
@@ -32,7 +33,11 @@ import type {
 } from '@/data/types';
 import type { FoodDetail, FoodSearchResult } from '@/lib/fdc';
 import { normalizeInviteCode } from '@/lib/inviteCode';
-import { api, type SquadStatusRow } from '@/services/backend/api';
+import {
+  api,
+  type MySquadRow,
+  type SquadStatusRow,
+} from '@/services/backend/api';
 import { AuthService } from '@/services/backend/AuthService';
 import { getSupabase } from '@/services/backend/supabaseClient';
 import {
@@ -56,6 +61,17 @@ const SAVED_MEALS_KEY = 'ranked.savedMeals.v1';
 
 let uid = 0;
 const localId = (prefix: string) => `${prefix}-${Date.now()}-${uid++}`;
+
+/** my_squads() / create_squad() row -> the shape the switcher renders. */
+function toSummary(row: MySquadRow): SquadSummary {
+  return {
+    id: row.id,
+    name: row.name,
+    code: row.code,
+    isCreator: row.is_creator,
+    memberCount: row.member_count,
+  };
+}
 
 const initials = (name: string) =>
   name
@@ -131,6 +147,7 @@ export class SupabaseDataService implements IDataService {
   private overridesAtDayStart: Partial<Record<TaskKey, number>> = {};
   private pendingTier: Tier | null = null;
   private squadId: string | null = null;
+  private squads: SquadSummary[] = [];
 
   /** Surfaced to the UI so a rejected optimistic write is never silent. */
   onError: ((error: BackendError) => void) | null = null;
@@ -187,6 +204,8 @@ export class SupabaseDataService implements IDataService {
 
   getSquadState() {
     return {
+      squads: this.squads,
+      activeSquadId: this.squadId,
       squad: this.state.squad,
       feed: this.state.feed,
       leaderboardWeek: this.state.leaderboardWeek,
@@ -350,7 +369,7 @@ export class SupabaseDataService implements IDataService {
     const personal = Promise.all([
       this.optional('profile', api.getProfile(userId), failed),
       this.optional('your why', api.getProfilePrivate(userId), failed),
-      this.optional('squad', api.getSquadStatus(), failed),
+      this.optional('squads', api.mySquads(), failed),
       this.optional('journal', api.listJournal(userId), failed),
       this.optional('meals', api.listMeals(userId), failed),
       this.optional('milestones', api.listMilestones(userId), failed),
@@ -418,17 +437,18 @@ export class SupabaseDataService implements IDataService {
     if (blocked) this.blocked = blocked;
 
     if (squadStatus === null) {
-      // The roster did not load. That is not the same as having no squad,
-      // so nothing here is cleared — the squad tab keeps its empty state.
+      // The list did not load. That is not the same as having no squad, so
+      // nothing here is cleared — the squad tab keeps its empty state.
     } else if (squadStatus.length) {
-      this.squadId = squadStatus[0].squad_id;
-      this.applySquadStatus(squadStatus);
-      const feed = await this.optional(
-        'squad feed',
-        api.listFeed(squadStatus[0].squad_id, userId),
-        failed,
-      );
-      if (feed) this.state.feed = feed;
+      this.squads = squadStatus.map(toSummary);
+      // Which squad to open on. A remembered choice only counts if the user
+      // is still IN it — they may have left it on another device, and
+      // opening onto a squad they are no longer a member of would render an
+      // empty roster with no way to explain itself.
+      const remembered = await this.readRememberedSquad(userId);
+      const active =
+        this.squads.find((q) => q.id === remembered) ?? this.squads[0];
+      await this.loadSquad(active, userId, failed);
     } else {
       // Solo is a first-class state, not a degraded one.
       this.squadId = null;
@@ -563,15 +583,15 @@ export class SupabaseDataService implements IDataService {
    * least the name and the invite code from the squad row itself. Anything
    * rather than leaving the user holding a squad with no code to share.
    */
-  private async fillSquadFromRow(): Promise<void> {
-    const row = await api.getMySquad();
-    if (!row) return;
-    this.squadId = row.id;
+  private fillSquadFromSummary(summary: SquadSummary): void {
+    this.squadId = summary.id;
     this.state.squad = {
-      name: row.name,
-      code: row.invite_code,
-      streak: this.state.squad?.streak ?? 0,
-      members: this.state.squad?.members ?? [],
+      id: summary.id,
+      name: summary.name,
+      code: summary.code,
+      isCreator: summary.isCreator,
+      streak: 0,
+      members: [],
     };
   }
 
@@ -587,11 +607,17 @@ export class SupabaseDataService implements IDataService {
       // Per member, from get_squad_status — a squadmate on Soft has four
       // tasks whatever tier the viewer runs.
       tasksToday: r.tasks_today,
+      // Also per member: they choose their own length and may change it.
+      day: r.day,
+      durationDays: r.duration_days,
       isSelf: r.user_id === this.userId,
     }));
     this.state.squad = {
+      id: first.squad_id,
       name: first.squad_name,
       code: first.invite_code,
+      isCreator:
+        this.squads.find((q) => q.id === first.squad_id)?.isCreator ?? false,
       // A squad's streak is only as long as its shortest individual one.
       streak: Math.min(...rows.map((r) => r.flame)),
       members,
@@ -621,7 +647,7 @@ export class SupabaseDataService implements IDataService {
     const squadId = this.squadId;
     const refresh = () => {
       api
-        .getSquadStatus()
+        .getSquadStatus(squadId)
         .then((rows) => {
           if (rows?.length) this.applySquadStatus(rows);
           return api.listFeed(squadId, this.userId);
@@ -722,8 +748,13 @@ export class SupabaseDataService implements IDataService {
       this.fail(new BackendError('unknown', `No squadmate named ${toName}`));
       return;
     }
+    const squadId = this.squadId;
+    if (!squadId) {
+      this.fail(new BackendError('unknown', 'No squad to ping into'));
+      return;
+    }
     this.write(
-      () => api.sendPing(id, message),
+      () => api.sendPing(id, message, squadId),
       () => {},
     );
   }
@@ -1035,94 +1066,130 @@ export class SupabaseDataService implements IDataService {
 
   // ===================== squad ===========================================
 
-  createSquad(name: string): Squad {
-    // Server generates the invite code, so this one cannot be faked
-    // optimistically: show the user's own row immediately, then reconcile.
-    const provisional: Squad = {
-      name,
-      // Empty, not dots: the code does not exist yet. A placeholder that
-      // LOOKS like a code is what shipped — it rendered as six dots and
-      // copied six dots to the clipboard, because the store never heard
-      // that the real one had arrived.
-      code: '',
-      streak: 0,
-      members: [
-        {
-          id: this.userId ?? 'you',
-          name: 'You',
-          initials: 'YO',
-          level: Math.floor(this.state.xp / XP.perLevel) + 1,
-          doneToday: 0,
-          tasksToday: this.daySnapshots[this.state.day]?.length ?? 0,
-          isSelf: true,
-        },
-      ],
-    };
-    this.state.squad = provisional;
-    api
-      .createSquad(name)
-      .then(() => api.getSquadStatus())
-      .then((rows) => {
-        if (rows?.length) {
-          this.squadId = rows[0].squad_id;
-          this.applySquadStatus(rows);
-          return undefined;
-        }
-        return this.fillSquadFromRow();
-      })
-      .catch((error) => {
-        this.state.squad = null;
-        this.fail(error);
-      })
-      // Either way the store must re-read: the real code and roster on
-      // success, the collapse back to solo on failure.
-      .finally(() => this.emitRemoteChange());
-    return provisional;
+  /**
+   * WHERE THE SWITCHER'S SELECTION LIVES.
+   *
+   * AsyncStorage, keyed by user id. Per-user rather than one global key
+   * because two accounts on one device must not inherit each other's
+   * choice — signing in as somebody else would otherwise open onto a squad
+   * this account may not even be in.
+   *
+   * It is a display preference, not state the server should own: which of
+   * your squads you were last looking at is not a fact about the squad, and
+   * round-tripping it would make switching tabs a write. Losing it is
+   * harmless — hydrate() falls back to the first squad.
+   */
+  private static rememberKey(userId: string): string {
+    return `ranked.activeSquad.${userId}`;
   }
 
-  joinSquad(code: string): Squad {
-    const provisional: Squad = {
-      name: 'Joining…',
-      code: normalizeInviteCode(code),
-      streak: 0,
-      members: [],
-    };
-    this.state.squad = provisional;
-    api
-      .joinSquad(normalizeInviteCode(code))
-      .then(() => api.getSquadStatus())
-      .then((rows) => {
-        if (rows?.length) {
-          this.squadId = rows[0].squad_id;
-          this.applySquadStatus(rows);
-          return undefined;
-        }
-        return this.fillSquadFromRow();
-      })
-      .catch((error) => {
-        this.state.squad = null;
-        this.fail(error);
-      })
-      // "Joining…" with an empty roster is a placeholder too.
-      .finally(() => this.emitRemoteChange());
-    return provisional;
+  private async readRememberedSquad(userId: string): Promise<string | null> {
+    try {
+      return await AsyncStorage.getItem(SupabaseDataService.rememberKey(userId));
+    } catch {
+      return null;
+    }
   }
 
-  leaveSquad(): void {
-    const previous = this.state.squad;
-    const previousId = this.squadId;
+  private rememberSquad(squadId: string | null): void {
+    const userId = this.userId;
+    if (!userId) return;
+    const key = SupabaseDataService.rememberKey(userId);
+    const write = squadId
+      ? AsyncStorage.setItem(key, squadId)
+      : AsyncStorage.removeItem(key);
+    write.catch(() => {});
+  }
+
+  /** Load one squad's roster and feed, and make it the active one. */
+  private async loadSquad(
+    summary: SquadSummary,
+    userId: string,
+    failed?: string[],
+  ): Promise<void> {
+    this.squadId = summary.id;
+    this.rememberSquad(summary.id);
+    // Filled from the summary first so the tab has a name and a code even if
+    // the roster read fails or comes back empty — get_squad_status inner-joins
+    // profiles, and one missing profile row empties it.
+    this.fillSquadFromSummary(summary);
+
+    const rows = failed
+      ? await this.optional('squad', api.getSquadStatus(summary.id), failed)
+      : await api.getSquadStatus(summary.id).catch(() => null);
+    if (rows?.length) this.applySquadStatus(rows);
+
+    const feed = failed
+      ? await this.optional('squad feed', api.listFeed(summary.id, userId), failed)
+      : await api.listFeed(summary.id, userId).catch(() => null);
+    this.state.feed = feed ?? [];
+  }
+
+  private clearSquadState(): void {
+    this.squadId = null;
     this.state.squad = null;
     this.state.feed = [];
     this.state.leaderboardWeek = [];
     this.state.leaderboardAllTime = [];
-    this.squadId = null;
-    this.write(
-      () => api.leaveSquad(),
-      () => {
-        this.state.squad = previous;
-        this.squadId = previousId;
-      },
+  }
+
+  async createSquad(name: string): Promise<Squad> {
+    const row = await api.createSquad(name);
+    const summary = toSummary(row);
+    this.squads = [...this.squads, summary];
+    await this.loadSquad(summary, this.requireUser());
+    this.emitRemoteChange();
+    // Non-null: loadSquad always fills it from the summary at minimum.
+    return this.state.squad as Squad;
+  }
+
+  async joinSquad(code: string): Promise<Squad> {
+    const row = await api.joinSquad(normalizeInviteCode(code));
+    const summary = toSummary(row);
+    this.squads = [...this.squads, summary];
+    await this.loadSquad(summary, this.requireUser());
+    this.emitRemoteChange();
+    return this.state.squad as Squad;
+  }
+
+  async renameSquad(squadId: string, name: string): Promise<void> {
+    const row = await api.renameSquad(squadId, name);
+    this.squads = this.squads.map((q) =>
+      q.id === squadId ? { ...q, name: row.name } : q,
     );
+    if (this.state.squad?.id === squadId) {
+      this.state.squad = { ...this.state.squad, name: row.name };
+    }
+    this.emitRemoteChange();
+  }
+
+  async leaveSquad(squadId: string): Promise<void> {
+    const { error } = await api.leaveSquad(squadId);
+    if (error) throw toBackendError(error, 'leave squad');
+    this.squads = this.squads.filter((q) => q.id !== squadId);
+    if (this.squadId !== squadId) {
+      this.emitRemoteChange();
+      return;
+    }
+    // The squad that was on screen is the one that just went. Fall through to
+    // whichever remains, or to solo — which is a first-class state, not a
+    // degraded one.
+    this.clearSquadState();
+    const next = this.squads[0];
+    if (next) {
+      await this.loadSquad(next, this.requireUser());
+    } else {
+      this.rememberSquad(null);
+    }
+    this.emitRemoteChange();
+  }
+
+  async setActiveSquad(squadId: string): Promise<void> {
+    if (squadId === this.squadId) return;
+    const summary = this.squads.find((q) => q.id === squadId);
+    if (!summary) return;
+    await this.loadSquad(summary, this.requireUser());
+    this.emitRemoteChange();
   }
 
   // ===================== moderation / compliance =========================

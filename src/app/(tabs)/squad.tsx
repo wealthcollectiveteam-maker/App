@@ -1,6 +1,6 @@
 import * as Clipboard from 'expo-clipboard';
 import { UsersThreeIcon as UsersThree } from 'phosphor-react-native';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -28,7 +28,12 @@ import {
 } from '@/components/ui';
 import { PINGS } from '@/constants/challenge';
 import { PING_QUIPS } from '@/data/mock';
-import type { FeedItem, ReportReason, SquadMember } from '@/data/types';
+import type {
+  FeedItem,
+  ReportReason,
+  Squad,
+  SquadMember,
+} from '@/data/types';
 import { normalizeInviteCode } from '@/lib/inviteCode';
 import {
   relativeTime,
@@ -237,6 +242,42 @@ function SoloState() {
   const createSquad = useAppStore((s) => s.createSquad);
   const joinSquad = useAppStore((s) => s.joinSquad);
   const [code, setCode] = useState('');
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  // Both paths await the server and report what it said. The invite code is
+  // minted server-side and the refusals — a used code, a bad one — are only
+  // knowable there, so guessing optimistically is what produced a header
+  // showing six dots.
+  const create = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      toast('Give your squad a name first');
+      return;
+    }
+    setBusy(true);
+    try {
+      await createSquad(trimmed);
+      toast(`${trimmed} created`);
+      setName('');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not create that squad.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const join = async () => {
+    setBusy(true);
+    try {
+      await joinSquad(code);
+      setCode('');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not join that squad.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <View style={{ gap: 14 }}>
@@ -247,16 +288,25 @@ function SoloState() {
           The challenge counts the same solo. Add a squad when you want
           witnesses.
         </Text>
+        {/* The name is asked for, not invented. Every squad this app has
+            ever created was called "Group 1", because nothing asked and the
+            client sent a literal. The server now refuses a nameless squad
+            outright, so this field is the only way one gets made. */}
+        <TextInput
+          value={name}
+          onChangeText={setName}
+          placeholder="Name your squad"
+          placeholderTextColor={colors.textLow}
+          style={styles.squadNameInput}
+          maxLength={30}
+          editable={!busy}
+          onSubmitEditing={create}
+        />
         <OutlineButton
-          label="Create a squad"
-          onPress={() => {
-            createSquad('Group 1');
-            // The server mints the code; it appears in the header a moment
-            // later. Naming one here would be inventing it — the old toast
-            // read out the mock's code on every real build.
-            toast('Squad created — your invite code is on the way');
-          }}
-          style={{ marginTop: 18, alignSelf: 'stretch' }}
+          label={busy ? 'Creating…' : 'Create a squad'}
+          disabled={busy}
+          onPress={create}
+          style={{ marginTop: 12, alignSelf: 'stretch' }}
         />
       </Card>
       <View>
@@ -277,22 +327,150 @@ function SoloState() {
           <OutlineButton
             label="Join"
             small
+            disabled={busy}
             onPress={() => {
               // Normalised on the way in as well as on the way out: this
               // arrives pasted out of a text message, in any case, with
               // whatever whitespace came with it.
-              const c = normalizeInviteCode(code);
-              if (!c) return;
-              joinSquad(c);
-              // Which squad it is comes back from the server.
-              toast('Joining squad…');
-              setCode('');
+              if (!normalizeInviteCode(code)) return;
+              join();
             }}
             style={{ minHeight: 42 }}
           />
         </View>
       </View>
     </View>
+  );
+}
+
+/**
+ * Squad settings: rename, and leave. Both live next to the invite code
+ * because that is where the squad's own identity is on screen — a squad you
+ * administer from the app's Settings tab is a squad you have to go looking
+ * for.
+ *
+ * Rename is CREATOR ONLY, and the control is absent rather than disabled for
+ * everyone else: a greyed-out field invites a tap that can only ever fail.
+ * The server refuses regardless — that is where the rule actually lives —
+ * so this is presentation, not enforcement.
+ */
+function SquadSettingsSheet({
+  squad,
+  visible,
+  onClose,
+}: {
+  squad: Squad;
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const renameSquad = useAppStore((s) => s.renameSquad);
+  const leaveSquad = useAppStore((s) => s.leaveSquad);
+  const [draft, setDraft] = useState(squad.name);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  // The sheet outlives the squad it was opened for when the user switches,
+  // so the draft follows the squad rather than whatever was typed last.
+  useEffect(() => {
+    setDraft(squad.name);
+    setConfirming(false);
+  }, [squad.id, squad.name]);
+
+  const rename = async () => {
+    const trimmed = draft.trim();
+    if (!trimmed || trimmed === squad.name) return;
+    setBusy(true);
+    try {
+      await renameSquad(squad.id, trimmed);
+      toast(`Renamed to ${trimmed}`);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not rename that squad.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const leave = async () => {
+    setBusy(true);
+    try {
+      await leaveSquad(squad.id);
+      toast(`Left ${squad.name}`);
+      onClose();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not leave that squad.');
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+    }
+  };
+
+  return (
+    <BottomSheet visible={visible} onClose={onClose}>
+      <Kicker style={{ marginBottom: 12 }}>{squad.name}</Kicker>
+
+      {squad.isCreator ? (
+        <>
+          <Micro color={colors.textMid}>Name</Micro>
+          <View style={styles.sendRow}>
+            <TextInput
+              value={draft}
+              onChangeText={setDraft}
+              style={styles.input}
+              maxLength={30}
+              editable={!busy}
+              onSubmitEditing={rename}
+              accessibilityLabel="Squad name"
+            />
+            <OutlineButton
+              label={busy ? '…' : 'Save'}
+              small
+              onPress={rename}
+              style={{ minHeight: 42 }}
+            />
+          </View>
+        </>
+      ) : (
+        <Text style={styles.settingsNote}>
+          Only whoever created this squad can rename it.
+        </Text>
+      )}
+
+      <View style={styles.settingsDivider} />
+
+      {confirming ? (
+        <>
+          {/* Names the squad. With several memberships the only thing that
+              tells these apart is the name, so "Leave squad?" is a question
+              the user cannot safely answer. */}
+          <Text style={styles.settingsNote}>
+            Leave {squad.name}? Your challenge, streak and history stay
+            exactly as they are — a squad is social only.
+          </Text>
+          <View style={styles.settingsActions}>
+            <OutlineButton
+              label={busy ? 'Leaving…' : `Leave ${squad.name}`}
+              small
+              tone="neutral"
+              onPress={leave}
+            />
+            <OutlineButton
+              label="Cancel"
+              small
+              tone="ghost"
+              onPress={() => setConfirming(false)}
+            />
+          </View>
+        </>
+      ) : (
+        <OutlineButton
+          label="Leave squad"
+          small
+          tone="neutral"
+          onPress={() => setConfirming(true)}
+          style={{ alignSelf: 'flex-start' }}
+        />
+      )}
+    </BottomSheet>
   );
 }
 
@@ -303,6 +481,9 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
   const taskCount = useAppStore(selectTaskCount);
   const pingsLeft = useAppStore(selectPingsLeft);
   const [moderating, setModerating] = useState<FeedItem | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const squads = useAppStore((s) => s.squads);
+  const setActiveSquad = useAppStore((s) => s.setActiveSquad);
 
   // Copies the value from STATE. Nothing here reads the rendered view, and
   // the code is plain Text, not an input — a secure/managed field is how a
@@ -338,6 +519,19 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
 
   return (
     <View style={{ gap: 14 }}>
+      {/* Only when there IS a choice. With one squad a switcher is a control
+          that does nothing, and one squad is the common case — it does not
+          pay for the rare one. */}
+      {squads.length > 1 && (
+        <SegmentedControl
+          segments={squads.map((q) => q.name)}
+          value={squad.name}
+          onChange={(name) => {
+            const next = squads.find((q) => q.name === name);
+            if (next) setActiveSquad(next.id).catch(() => {});
+          }}
+        />
+      )}
       <Card>
         <View style={styles.squadHeader}>
           {/* Flexible so a long squad name can never squeeze the code out
@@ -372,12 +566,15 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
                 >
                   {squad.code}
                 </Text>
-                <OutlineButton
-                  label="Copy"
-                  small
-                  onPress={copyCode}
-                  style={{ marginTop: 8 }}
-                />
+                <View style={styles.codeActions}>
+                  <OutlineButton label="Copy" small onPress={copyCode} />
+                  <OutlineButton
+                    label="Settings"
+                    small
+                    tone="ghost"
+                    onPress={() => setSettingsOpen(true)}
+                  />
+                </View>
               </>
             ) : (
               <Text style={styles.inviteCodePending}>Getting code…</Text>
@@ -385,6 +582,12 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
           </View>
         </View>
       </Card>
+
+      <SquadSettingsSheet
+        squad={squad}
+        visible={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
 
       <View>
         <View style={styles.membersHeader}>
@@ -402,7 +605,19 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
           <View key={m.id} style={styles.memberRow}>
             <InitialsTile initials={m.initials} active={m.isSelf} size={44} />
             <View style={{ flex: 1, gap: 8 }}>
-              <Text style={styles.memberName}>{m.name}</Text>
+              <View style={styles.memberNameRow}>
+                <Text style={styles.memberName}>{m.name}</Text>
+                {/* Day N of M, per member. Challenge length is a personal
+                    choice that can change mid-run, so a bare "Day 12" says
+                    nothing about how far through someone is — and if a
+                    squadmate shortens their challenge, this is where the
+                    squad sees it. Visibility, not enforcement. */}
+                {m.durationDays > 0 && (
+                  <Text style={styles.memberDay}>
+                    Day {m.day} / {m.durationDays}
+                  </Text>
+                )}
+              </View>
               {/* This member's OWN task count, never the viewer's. */}
               <SegmentBar done={Math.min(m.doneToday, total)} total={total} />
             </View>
@@ -588,6 +803,27 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     transform: [{ rotate: '45deg' }],
   },
+  settingsNote: {
+    fontFamily: font.regular,
+    fontSize: 12.5,
+    color: colors.textLow,
+    lineHeight: 17,
+  },
+  settingsDivider: {
+    height: 1,
+    backgroundColor: colors.line,
+    marginVertical: 16,
+  },
+  settingsActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  codeActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
   inviteCode: {
     // Monospace on purpose: this gets read out loud, and 0/O and 1/I have
     // to be tellable apart.
@@ -625,6 +861,18 @@ const styles = StyleSheet.create({
     minHeight: 68,
     borderBottomWidth: 1,
     borderBottomColor: colors.line,
+  },
+  memberNameRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  memberDay: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: colors.textLow,
+    fontVariant: ['tabular-nums'],
   },
   memberName: {
     fontFamily: font.bold,
@@ -679,6 +927,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textMid,
     paddingVertical: 10,
+  },
+  squadNameInput: {
+    alignSelf: 'stretch',
+    marginTop: 18,
+    borderWidth: 1,
+    borderColor: colors.line,
+    paddingHorizontal: 14,
+    minHeight: 44,
+    fontFamily: font.medium,
+    fontSize: 15,
+    color: colors.textHi,
   },
   soloTitle: {
     fontFamily: font.bold,

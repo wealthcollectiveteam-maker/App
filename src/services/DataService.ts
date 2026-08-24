@@ -3,6 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { tierStandardTarget } from '@/constants/tiers';
 import { buildScenario } from '@/data/mock';
 import type {
+  SquadMember,
+  SquadSummary,
   ChallengeLength,
   ActiveTimer,
   BlockedUser,
@@ -189,46 +191,112 @@ export class MockDataService implements IDataService {
     this.feeling = { feeling, text };
   }
 
-  createSquad(name: string): Squad {
+  /**
+   * The mock keeps a real LIST, so the switcher has something to switch
+   * between without a backend. Codes are minted the same way the server
+   * does — six characters — because a code the UI cannot render is a
+   * different screen from the one this fixture is meant to show.
+   */
+  private squads: SquadSummary[] = [];
+  private activeSquadId: string | null = null;
+
+  private mintCode(): string {
+    return Math.random().toString(36).slice(2, 8).toUpperCase();
+  }
+
+  private selfMember(): SquadMember {
+    return {
+      id: 'you',
+      name: 'You',
+      initials: 'YO',
+      level: 1,
+      day: this.state.day,
+      durationDays: this.state.durationDays,
+      doneToday: 0,
+      tasksToday: this.daySnapshots[this.state.day]?.length ?? 0,
+      isSelf: true,
+    };
+  }
+
+  private activate(summary: SquadSummary, members: SquadMember[]): Squad {
+    this.activeSquadId = summary.id;
     const squad: Squad = {
-      name,
-      code: 'K7X2FD',
+      id: summary.id,
+      name: summary.name,
+      code: summary.code,
+      isCreator: summary.isCreator,
       streak: 0,
-      members: [
-        {
-          id: 'you',
-          name: 'You',
-          initials: 'YO',
-          level: 1,
-          doneToday: 0,
-          tasksToday: this.daySnapshots[this.state.day]?.length ?? 0,
-          isSelf: true,
-        },
-      ],
+      members,
     };
     this.state.squad = squad;
     return squad;
   }
 
-  joinSquad(code: string): Squad {
-    // Mock: any code joins the demo squad.
-    const squad: Squad = {
-      name: 'Group 1',
-      code: normalizeInviteCode(code),
-      streak: 9,
-      members: [
-        { id: 'you', name: 'You', initials: 'YO', level: 1, doneToday: 0, tasksToday: 6, isSelf: true },
-        { id: 'maya', name: 'Maya', initials: 'MA', level: 4, doneToday: 1, tasksToday: 6, isSelf: false },
-        { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, doneToday: 0, tasksToday: 5, isSelf: false },
-        { id: 'sam', name: 'Sam', initials: 'SA', level: 2, doneToday: 0, tasksToday: 4, isSelf: false },
-      ],
+  async createSquad(name: string): Promise<Squad> {
+    const summary: SquadSummary = {
+      id: `squad-${this.squads.length + 1}`,
+      name: name.trim(),
+      code: this.mintCode(),
+      isCreator: true,
+      memberCount: 1,
     };
-    this.state.squad = squad;
-    return squad;
+    this.squads = [...this.squads, summary];
+    return this.activate(summary, [this.selfMember()]);
+  }
+
+  async joinSquad(code: string): Promise<Squad> {
+    const normalized = normalizeInviteCode(code);
+    if (this.squads.some((q) => q.code === normalized)) {
+      throw new Error('you are already in this squad');
+    }
+    const summary: SquadSummary = {
+      id: `squad-${this.squads.length + 1}`,
+      name: 'Early Risers',
+      code: normalized,
+      isCreator: false,
+      memberCount: 4,
+    };
+    this.squads = [...this.squads, summary];
+    return this.activate(summary, [
+      this.selfMember(),
+      { id: 'maya', name: 'Maya', initials: 'MA', level: 4, day: 12, durationDays: 75, doneToday: 1, tasksToday: 6, isSelf: false },
+      { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, day: 12, durationDays: 45, doneToday: 0, tasksToday: 5, isSelf: false },
+      { id: 'sam', name: 'Sam', initials: 'SA', level: 2, day: 12, durationDays: 30, doneToday: 0, tasksToday: 4, isSelf: false },
+    ]);
+  }
+
+  async renameSquad(squadId: string, name: string): Promise<void> {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error('a squad needs a name');
+    this.squads = this.squads.map((q) =>
+      q.id === squadId ? { ...q, name: trimmed } : q,
+    );
+    if (this.state.squad?.id === squadId) {
+      this.state.squad = { ...this.state.squad, name: trimmed };
+    }
+  }
+
+  async leaveSquad(squadId: string): Promise<void> {
+    this.squads = this.squads.filter((q) => q.id !== squadId);
+    if (this.activeSquadId !== squadId) return;
+    const next = this.squads[0];
+    this.activeSquadId = next?.id ?? null;
+    this.state.squad = next
+      ? { ...this.state.squad!, id: next.id, name: next.name, code: next.code, isCreator: next.isCreator }
+      : null;
+    if (!next) this.state.feed = [];
+  }
+
+  async setActiveSquad(squadId: string): Promise<void> {
+    const summary = this.squads.find((q) => q.id === squadId);
+    if (!summary) return;
+    this.activate(summary, this.state.squad?.members ?? [this.selfMember()]);
   }
 
   getSquadState() {
     return {
+      squads: this.squads,
+      activeSquadId: this.activeSquadId,
       squad: this.state.squad,
       feed: this.state.feed,
       leaderboardWeek: this.state.leaderboardWeek,
@@ -244,10 +312,6 @@ export class MockDataService implements IDataService {
   /** No server, so nothing is ever refused. */
   onWriteRejected(_listener: (write: RejectedWrite) => void): () => void {
     return () => {};
-  }
-
-  leaveSquad(): void {
-    this.state.squad = null;
   }
 
   reportContent(feedItemId: string, reason: ReportReason): void {

@@ -38,8 +38,9 @@ end $$;
 create or replace procedure l_set_day(p_challenge uuid, p_day integer)
 language plpgsql as $$
 begin
+  -- The challenge's own timezone, for the same reason t_set_day uses it.
   update public.challenges
-     set start_date = current_date - (p_day - 1),
+     set start_date = (now() at time zone timezone)::date - (p_day - 1),
          last_evaluated_day = 1
    where id = p_challenge;
 end $$;

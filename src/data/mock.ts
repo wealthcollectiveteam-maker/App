@@ -14,7 +14,14 @@ const now = Date.now();
 const mins = (n: number) => now - n * 60_000;
 
 function squad(members: Squad['members']): Squad {
-  return { name: 'Group 1', code: 'K7X2FD', streak: 9, members };
+  return {
+    id: 'squad-mock-1',
+    name: 'Early Risers',
+    code: 'K7X2FD',
+    isCreator: true,
+    streak: 9,
+    members,
+  };
 }
 
 const WHY = 'Because I said I would.';
@@ -67,10 +74,10 @@ export function buildScenario(scenario: Scenario): ScenarioState {
           { id: 'm3', title: 'Finish 2 books', done: false },
         ],
         squad: squad([
-          { id: 'you', name: 'You', initials: 'YO', level: 1, doneToday: 0, tasksToday: 6, isSelf: true },
-          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, doneToday: 1, tasksToday: 6, isSelf: false },
-          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, doneToday: 0, tasksToday: 5, isSelf: false },
-          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, doneToday: 0, tasksToday: 4, isSelf: false },
+          { id: 'you', name: 'You', initials: 'YO', level: 1, day: 1, durationDays: 75, doneToday: 0, tasksToday: 6, isSelf: true },
+          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, day: 12, durationDays: 75, doneToday: 1, tasksToday: 6, isSelf: false },
+          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, day: 12, durationDays: 45, doneToday: 0, tasksToday: 5, isSelf: false },
+          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, day: 12, durationDays: 30, doneToday: 0, tasksToday: 4, isSelf: false },
         ]),
         feed: [],
         leaderboardWeek: lb.week,
@@ -122,10 +129,10 @@ export function buildScenario(scenario: Scenario): ScenarioState {
           { id: 'm3', title: 'Finish 2 books', done: false },
         ],
         squad: squad([
-          { id: 'you', name: 'You', initials: 'YO', level: 3, doneToday: 4, tasksToday: 6, isSelf: true },
-          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, doneToday: 6, tasksToday: 6, isSelf: false },
-          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, doneToday: 3, tasksToday: 5, isSelf: false },
-          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, doneToday: 2, tasksToday: 4, isSelf: false },
+          { id: 'you', name: 'You', initials: 'YO', level: 3, day: 1, durationDays: 75, doneToday: 4, tasksToday: 6, isSelf: true },
+          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, day: 12, durationDays: 75, doneToday: 6, tasksToday: 6, isSelf: false },
+          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, day: 12, durationDays: 45, doneToday: 3, tasksToday: 5, isSelf: false },
+          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, day: 12, durationDays: 30, doneToday: 2, tasksToday: 4, isSelf: false },
         ]),
         feed: [
           { id: 'f4', kind: 'ping-in', who: 'Maya', text: '"Water won\u2019t drink itself."', timestamp: mins(38) },
@@ -167,10 +174,10 @@ export function buildScenario(scenario: Scenario): ScenarioState {
           { id: 'm3', title: 'Finish 2 books', done: false },
         ],
         squad: squad([
-          { id: 'you', name: 'You', initials: 'YO', level: 3, doneToday: 0, tasksToday: 6, isSelf: true },
-          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, doneToday: 2, tasksToday: 6, isSelf: false },
-          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, doneToday: 1, tasksToday: 5, isSelf: false },
-          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, doneToday: 0, tasksToday: 4, isSelf: false },
+          { id: 'you', name: 'You', initials: 'YO', level: 3, day: 1, durationDays: 75, doneToday: 0, tasksToday: 6, isSelf: true },
+          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, day: 12, durationDays: 75, doneToday: 2, tasksToday: 6, isSelf: false },
+          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, day: 12, durationDays: 45, doneToday: 1, tasksToday: 5, isSelf: false },
+          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, day: 12, durationDays: 30, doneToday: 0, tasksToday: 4, isSelf: false },
         ]),
         feed: [
           { id: 'f2', kind: 'ping-in', who: 'Maya', text: '"Lock in. Now."', timestamp: mins(25) },
@@ -226,10 +233,10 @@ export function buildScenario(scenario: Scenario): ScenarioState {
           { id: 'm3', title: 'Finish 2 books', done: true, meta: 'Hit on Day 68' },
         ],
         squad: squad([
-          { id: 'you', name: 'You', initials: 'YO', level: 12, doneToday: 6, tasksToday: 6, isSelf: true },
-          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, doneToday: 5, tasksToday: 6, isSelf: false },
-          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, doneToday: 4, tasksToday: 5, isSelf: false },
-          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, doneToday: 3, tasksToday: 4, isSelf: false },
+          { id: 'you', name: 'You', initials: 'YO', level: 12, day: 1, durationDays: 75, doneToday: 6, tasksToday: 6, isSelf: true },
+          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, day: 12, durationDays: 75, doneToday: 5, tasksToday: 6, isSelf: false },
+          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, day: 12, durationDays: 45, doneToday: 4, tasksToday: 5, isSelf: false },
+          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, day: 12, durationDays: 30, doneToday: 3, tasksToday: 4, isSelf: false },
         ]),
         feed: [
           { id: 'f2', kind: 'complete', who: 'You', text: `locked in Day 75 — ${tierTaskCount('hard')} of ${tierTaskCount('hard')}.`, timestamp: mins(20) },

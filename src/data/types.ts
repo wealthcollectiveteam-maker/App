@@ -222,6 +222,14 @@ export interface SquadMember {
   name: string;
   initials: string;
   level: number;
+  /**
+   * Which day of their OWN challenge this member is on, and how long that
+   * challenge runs for. Both are per-member: squadmates pick their own
+   * lengths and may shorten them mid-run, and the roster is where that
+   * becomes visible. Visibility, not enforcement — nothing reads these back.
+   */
+  day: number;
+  durationDays: number;
   doneToday: number;
   /**
    * How many tasks THIS member's day holds. Squadmates run their own tiers,
@@ -280,9 +288,26 @@ export interface LeaderRow {
   tierLabel: string;
 }
 
-export interface Squad {
+/**
+ * A squad as it appears in the SWITCHER: enough to name it and to know
+ * whether this user may administer it, without loading a roster for every
+ * squad they belong to.
+ */
+export interface SquadSummary {
+  id: string;
   name: string;
   code: string;
+  /** Only the creator may rename. The server is what enforces it. */
+  isCreator: boolean;
+  memberCount: number;
+}
+
+export interface Squad {
+  /** Needed now that a user can hold several — every RPC takes it. */
+  id: string;
+  name: string;
+  code: string;
+  isCreator: boolean;
   streak: number;
   members: SquadMember[];
 }

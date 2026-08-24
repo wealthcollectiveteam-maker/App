@@ -197,7 +197,7 @@ export function DevScenarioSheet({ children }: { children: React.ReactNode }) {
         <Pressable
           onPress={() => {
             if (squad) {
-              leaveSquad();
+              leaveSquad(squad.id);
             } else {
               joinSquad('K7X2FD');
             }

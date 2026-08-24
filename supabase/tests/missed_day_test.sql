@@ -53,8 +53,16 @@ end $$;
 create or replace procedure t_set_day(p_challenge uuid, p_day integer)
 language plpgsql as $$
 begin
+  -- Anchored on the CHALLENGE's timezone, not the server's date.
+  --
+  -- This read `current_date - (p_day - 1)`, which is the server's own day.
+  -- challenge_day() computes `(now() at time zone c.timezone)::date`, so for
+  -- any challenge not in the server's zone the two disagreed for exactly as
+  -- long as the calendars were on different dates — an hour a day for the
+  -- Europe/London fixture below, during which proof 3 failed with "medium
+  -- moved the day count (day = 5)" and nothing was wrong with the engine.
   update public.challenges
-     set start_date = current_date - (p_day - 1),
+     set start_date = (now() at time zone timezone)::date - (p_day - 1),
          last_evaluated_day = 1
    where id = p_challenge;
 end $$;
