@@ -1,0 +1,99 @@
+PHASE 10B — Squads: naming, joining, leaving, multiple
+
+Run this only after Phase 10A is committed and pushed.
+Read CLAUDE.md first. All standing constraints still apply.
+
+Four defects and one model change.
+
+=============================================================
+1 — Squads have no name
+=============================================================
+Creating a squad produces "Group 1". Nobody ever gets asked for a name.
+
+- Find where "Group 1" (or whatever generates it) comes from and remove the
+  default entirely. A squad without a name should be impossible to create.
+- create_squad takes a name: required, 1–30 characters, trimmed.
+- IMPORTANT: when you change create_squad's signature, keep the fix from
+  earlier — it must return the invite CODE, not just the uuid. That exact bug
+  (returning the id while the UI showed a hardcoded placeholder) already
+  shipped once. Return a row with id, name and code, and make the client read
+  the code off the response rather than holding a provisional value.
+
+=============================================================
+2 — Rename
+=============================================================
+- New RPC rename_squad(p_squad_id uuid, p_name text), SECURITY DEFINER.
+- Creator only. Anyone else gets a clean permission error, not a silent no-op.
+- Prove the refusal with an impersonated JWT for a non-creator member.
+- UI: squad settings, next to the invite code.
+
+=============================================================
+3 — Multiple squads at once
+=============================================================
+A user can be in more than one squad simultaneously — a gym squad and a work
+squad both showing their progress.
+
+- Check squad_members for a unique constraint or index on user_id. If one
+  exists it has to go. Report exactly what you found there before changing it.
+- join_squad(p_code) must now succeed while the caller is already in another
+  squad. Still refuse: joining the same squad twice, and a bad code.
+- The Squad tab needs a switcher when the user is in more than one — a
+  segmented control or dropdown. With exactly one squad, no switcher appears;
+  do not make the common case worse to serve the rare one.
+- Decide and tell me where the switcher's selection is remembered, and make it
+  survive a reload.
+
+=============================================================
+4 — Leave
+=============================================================
+New RPC leave_squad(p_squad_id uuid), SECURITY DEFINER. Handle all three cases
+explicitly — do not leave any of them to chance:
+
+  a) Ordinary member leaves → membership row removed. Their personal challenge
+     and all their history are untouched. The squad is social only.
+  b) Creator leaves while others remain → ownership transfers to the
+     earliest-joined remaining member. The squad does not become unrenameable
+     and orphaned.
+  c) Last member leaves → the squad is deleted, along with its rows in every
+     dependent table. Check what cascades and what does not, and say so.
+
+Cascade warning: delete_account() once raised for every user with a frozen day
+because challenge_days' immutability trigger refused cascade DELETEs. Check
+whether any trigger blocks squad cascades the same way BEFORE you ship this,
+and prove a squad with feed items, pings and two members deletes cleanly.
+
+UI: "Leave squad" in squad settings, behind a confirmation naming the squad.
+
+=============================================================
+5 — Show duration on the roster
+=============================================================
+Challenge length is now per-user and changeable mid-run. Show it on the squad
+roster as "Day 12 / 45" rather than "Day 12". If someone shortens their
+challenge, their squad sees it. That is the point — visibility, not enforcement.
+
+=============================================================
+6 — Re-prove isolation
+=============================================================
+This phase touches membership, which is what the RLS policies key off. Re-run
+the impersonated-JWT proof in the SQL editor and give me the table:
+
+  - A reads B's journal / meals / metrics / workout logs   → expect 0 rows each
+  - A reads the roster and profiles of a shared squad      → expect real counts
+  - A reads the roster of a squad they are NOT in          → expect 0 rows
+  - A inserts a row owned by B                             → expect 42501
+  - A renames a squad they did not create                  → expect refusal
+  - anon write privileges on public schema                 → expect 0
+
+The third row is new and matters more now that people can be in several
+squads. Do not check it through the UI.
+
+=============================================================
+Constraints (unchanged)
+=============================================================
+- Bundle ID com.aly786.rankedfitness. Expo SDK 54. Do not change either.
+- Never commit .env. Never stage it.
+- Anon/publishable key only. Never service_role or sb_secret_.
+- HealthKit values are device-memory only.
+- Day snapshots remain immutable.
+
+When done: commit, tell me what to push, and stop.
