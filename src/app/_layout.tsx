@@ -132,6 +132,14 @@ export default function RootLayout() {
         completeActive();
       }
       useAppStore.getState().refreshHealth().catch(() => {});
+      // Ask the server what day it is again. Nothing else does, so an app
+      // left open across local midnight kept showing yesterday's day number
+      // and yesterday's ticks, and a session that had been offline had no
+      // way back short of a relaunch. Silent on failure — the mirror keeps
+      // what it has rather than degrading to an empty day 1.
+      if (useSessionStore.getState().status === 'signedIn') {
+        useAppStore.getState().refreshDay().catch(() => {});
+      }
     });
     return () => sub.remove();
     // eslint-disable-next-line react-hooks/exhaustive-deps

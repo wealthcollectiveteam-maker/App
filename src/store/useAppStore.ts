@@ -30,7 +30,7 @@ import type {
   TaskKey,
   Tier,
 } from '@/data/types';
-import { DataService } from '@/services';
+import { DataService, supabaseService } from '@/services';
 import {
   getHealthService,
   isHealthSimulated,
@@ -219,6 +219,12 @@ interface AppState extends ScenarioState {
   setUnitPreference: (pref: UnitPreference) => void;
   /** Load persisted preference + check-ins (call once at app start). */
   hydratePersisted: () => Promise<void>;
+  /**
+   * Ask the server what day it is and pull today back into step with it.
+   * Called on every foreground. Silent on failure by design — see the
+   * service's refreshToday().
+   */
+  refreshDay: () => Promise<void>;
   /**
    * Adopt the backend mirror after a sign-in or a cold launch that restored
    * a session. DataService has already hydrated; this copies that state in.
@@ -693,6 +699,43 @@ export const useAppStore = create<AppState>((set, get) => ({
   setUnitPreference: (pref) => {
     set({ unitPreference: pref });
     AsyncStorage.setItem(UNIT_PREF_KEY, pref).catch(() => {});
+  },
+
+  refreshDay: async () => {
+    if (!supabaseService) return;
+    try {
+      await supabaseService.refreshToday();
+    } catch {
+      // Keep showing what the mirror already holds. A failed refresh must
+      // never be able to blank a real challenge.
+      return;
+    }
+    const st = supabaseService.snapshot;
+    const s = get();
+    const rolledOver = st.day !== s.day;
+    if (rolledOver) {
+      // Yesterday's pending rollbacks describe a day that no longer exists;
+      // applying one later would put yesterday's ticks back on screen.
+      rollbacks.clear();
+    }
+    set({
+      day: st.day,
+      tier: st.tier,
+      flame: st.flame,
+      bestFlame: st.bestFlame,
+      perfectDays: st.perfectDays,
+      xp: st.xp,
+      tasksDone: st.tasksDone,
+      dayComplete: st.dayComplete,
+      ...(rolledOver
+        ? {
+            deferred: [],
+            healthPromptDismissed: {},
+            healthWorkoutsConsumed: [],
+          }
+        : {}),
+      ...taskConfigMirror(st.tier, st.day),
+    });
   },
 
   hydratePersisted: async () => {

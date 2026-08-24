@@ -440,6 +440,51 @@ export class SupabaseDataService implements IDataService {
   }
 
   /**
+   * Re-read the day the SERVER thinks it is, plus everything keyed to it.
+   *
+   * Two things need this and neither one is exotic. The local date rolls over
+   * while the app is simply left open — nothing else in the app ever asks the
+   * server for the day again, so an app open at midnight kept showing
+   * yesterday's number and yesterday's ticked tasks until it was force-quit.
+   * And a session that came back from no signal had no way to catch up on
+   * what it missed short of a relaunch.
+   *
+   * Throws on failure, and the caller's job is to do NOTHING with that: the
+   * mirror keeps whatever it already had. A refresh that degraded to
+   * `day = 1, flame = 0` on a flaky connection would tell a user on day 40
+   * that their streak was gone, which is the one thing this must never do.
+   */
+  async refreshToday(): Promise<void> {
+    if (!this.userId) return;
+    const day = await api.getOrFreezeToday();
+    if (!day) return;
+    const [completions, config, profile] = await Promise.all([
+      api.listTodayCompletions(day.challenge_id, day.day),
+      api.getChallengeConfig(day.challenge_id, day.day),
+      api.getProfile(this.userId),
+    ]);
+
+    this.challengeId = day.challenge_id;
+    this.state.day = day.day;
+    this.state.dayComplete = !!day.sealed_at;
+    this.state.tasksDone = completions;
+    this.state.tier = config?.tier ?? this.state.tier;
+    this.state.flame = config?.flame ?? this.state.flame;
+    this.state.bestFlame = config?.bestFlame ?? this.state.bestFlame;
+    this.state.perfectDays = config?.perfectDays ?? this.state.perfectDays;
+    this.customTasks = config?.customTasks ?? this.customTasks;
+    this.targetOverrides = config?.targetOverrides ?? this.targetOverrides;
+    this.overridesAtDayStart = { ...this.targetOverrides };
+    this.pendingTier = config?.pendingTier ?? null;
+    if (profile) this.state.xp = profile.xp;
+
+    // Only today's snapshot is replaced. Past days stay as they were frozen.
+    this.daySnapshots[day.day] = day.task_snapshot.map((t) =>
+      taskFromSnapshot(t, this.customTasks, this.state.tier),
+    );
+  }
+
+  /**
    * An optional read. Failure costs one surface, not the session.
    *
    * NOT silence — that is the D7 bug, where a failed read was
