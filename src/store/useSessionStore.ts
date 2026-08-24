@@ -1,7 +1,7 @@
 import * as Linking from 'expo-linking';
 import { create } from 'zustand';
 
-import type { Tier } from '@/data/types';
+import type { ChallengeLength, SetupCustomTask, Tier } from '@/data/types';
 import { isLiveBackend, supabaseService } from '@/services';
 import { AuthService } from '@/services/backend/AuthService';
 import {
@@ -66,7 +66,13 @@ interface SessionState {
    * First run, in this order: display name, then tier, then why, and only
    * then the challenge. Throws so the setup screen can show the reason.
    */
-  finishSetup: (name: string, tier: Tier, why: string) => Promise<void>;
+  finishSetup: (
+    name: string,
+    tier: Tier,
+    why: string,
+    durationDays: ChallengeLength,
+    customTasks: SetupCustomTask[],
+  ) => Promise<void>;
   signOut: () => Promise<void>;
   retry: () => Promise<void>;
 }
@@ -195,7 +201,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  finishSetup: async (name, tier, why) => {
+  finishSetup: async (name, tier, why, durationDays, customTasks) => {
     const userId = get().userId;
     if (!userId) {
       set({ status: 'signedOut' });
@@ -208,7 +214,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!tier) throw new Error('Choose a tier before starting.');
     await ensureProfile(userId, name);
     await saveWhy(userId, why);
-    await createFirstChallenge(tier);
+    await createFirstChallenge(tier, durationDays, customTasks);
     await get().completeSignIn(userId);
   },
 

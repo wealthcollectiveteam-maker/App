@@ -1,5 +1,12 @@
 export type Tier = 'hard' | 'medium' | 'soft';
 
+/**
+ * How many days a challenge runs for. Constrained to these three by
+ * `challenges.duration_days`'s check constraint, so a widened union here
+ * would compile and then be refused by the server.
+ */
+export type ChallengeLength = 30 | 45 | 75;
+
 export type Scenario = 'day1' | 'day12' | 'missed' | 'day75';
 
 export type BuiltinTaskKey =
@@ -12,6 +19,20 @@ export type BuiltinTaskKey =
 
 /** Tier task keys plus user-defined `custom-<id>` keys. */
 export type TaskKey = BuiltinTaskKey | (string & {});
+
+/**
+ * A custom task as it exists during SETUP — before the challenge, and so
+ * before the task, has an id. It carries only what the user typed.
+ *
+ * Distinct from CustomTask below on purpose: that one describes a row that
+ * already exists and knows which days it is active for. At setup there is no
+ * such question, because the answer is always day 1.
+ */
+export interface SetupCustomTask {
+  name: string;
+  /** Optional countdown length. Absent = no timer affordance. */
+  timerMinutes?: number;
+}
 
 /**
  * A user-defined daily task. Never hard-deleted once it has been active —
@@ -296,6 +317,8 @@ export interface NotificationPrefs {
 export interface ScenarioState {
   tier: Tier;
   day: number;
+  /** The finish line, per challenge. Never assume 75. */
+  durationDays: ChallengeLength;
   flame: number;
   bestFlame: number;
   perfectDays: number;

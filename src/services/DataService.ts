@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { tierStandardTarget } from '@/constants/tiers';
 import { buildScenario } from '@/data/mock';
 import type {
+  ChallengeLength,
   ActiveTimer,
   BlockedUser,
   CustomTask,
@@ -548,6 +549,17 @@ export class MockDataService implements IDataService {
 
   changeTier(tier: Tier | null): void {
     this.pendingTier = tier;
+  }
+
+  /**
+   * The mock has no server to own the clock, so it applies the same rule the
+   * RPC does: a new length at or behind the current day ends the run today.
+   */
+  async setChallengeDuration(
+    days: ChallengeLength,
+  ): Promise<{ completed: boolean }> {
+    this.state.durationDays = days;
+    return { completed: days <= this.state.day };
   }
 
   private pendingTargetChanges(currentTier: Tier): TargetChange[] {

@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getLocales } from 'expo-localization';
 import { create } from 'zustand';
 
-import { PINGS, XP } from '@/constants/challenge';
+import { MAX_CUSTOM_TASKS, PINGS, XP } from '@/constants/challenge';
 import type { UnitPreference } from '@/lib/units';
 import {
   displayTierLabel,
@@ -279,8 +279,6 @@ function taskConfigMirror(tier: Tier, day: number) {
     pendingChanges: DataService.getPendingChanges(tier, day),
   };
 }
-
-const MAX_CUSTOM_TASKS = 4;
 
 const DEFAULT_PREFS: NotificationPrefs = {
   pings: true,
@@ -711,6 +709,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     set({
       day: st.day,
+      durationDays: st.durationDays,
       tier: st.tier,
       flame: st.flame,
       bestFlame: st.bestFlame,

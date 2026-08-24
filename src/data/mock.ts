@@ -1,5 +1,6 @@
 import { tierTaskCount } from '@/constants/tiers';
 
+import { CHALLENGE } from '@/constants/challenge';
 import type { LeaderRow, Scenario, ScenarioState, Squad } from './types';
 
 export const PING_QUIPS = [
@@ -48,6 +49,7 @@ export function buildScenario(scenario: Scenario): ScenarioState {
       return {
         tier: 'hard',
         day: 1,
+        durationDays: CHALLENGE.defaultDays,
         flame: 0,
         bestFlame: 0,
         perfectDays: 0,
@@ -80,6 +82,7 @@ export function buildScenario(scenario: Scenario): ScenarioState {
       return {
         tier: 'hard',
         day: 12,
+        durationDays: CHALLENGE.defaultDays,
         flame: 11,
         bestFlame: 11,
         perfectDays: 11,
@@ -139,6 +142,7 @@ export function buildScenario(scenario: Scenario): ScenarioState {
       return {
         tier: 'medium',
         day: 13,
+        durationDays: CHALLENGE.defaultDays,
         flame: 0,
         bestFlame: 12,
         perfectDays: 12,
@@ -181,6 +185,7 @@ export function buildScenario(scenario: Scenario): ScenarioState {
       return {
         tier: 'hard',
         day: 75,
+        durationDays: CHALLENGE.defaultDays,
         flame: 75,
         bestFlame: 75,
         perfectDays: 75,

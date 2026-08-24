@@ -1,4 +1,5 @@
 import type {
+  ChallengeLength,
   ActiveTimer,
   BlockedUser,
   CustomTask,
@@ -222,6 +223,19 @@ export interface IDataService {
   ): CustomTask[];
   removeCustomTask(id: string, day: number): CustomTask[];
   changeTier(tier: Tier | null): void;
+  /**
+   * Move the finish line to 30, 45 or 75 days.
+   *
+   * Async and server-owned, unlike every other task-config edit here,
+   * because the answer the caller needs back is one only the server can
+   * give: whether shortening the run ENDED it. A challenge on day 52 asked
+   * to become 45 days long has no future left to run, and the app must be
+   * able to say so afterwards as well as warn beforehand.
+   *
+   * It never rewrites history. No day snapshot is touched, re-scored or
+   * deleted — the only thing that changes is where the run stops.
+   */
+  setChallengeDuration(days: ChallengeLength): Promise<{ completed: boolean }>;
   getPendingChanges(currentTier: Tier, day: number): PendingChanges;
   undoPendingChanges(day: number): void;
   /** Applies pending changes and freezes the new day's snapshot. */

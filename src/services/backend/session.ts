@@ -1,6 +1,6 @@
 import { getCalendars } from 'expo-localization';
 
-import type { Tier } from '@/data/types';
+import type { ChallengeLength, SetupCustomTask, Tier } from '@/data/types';
 import { api } from '@/services/backend/api';
 import { toBackendError } from '@/services/contract';
 
@@ -79,14 +79,40 @@ export async function checkAccount(): Promise<AccountState> {
  * task snapshot immediately — so the first screen the user sees is a real
  * day 1 with a real task list, not an empty projection.
  */
-export async function createFirstChallenge(tier: Tier): Promise<void> {
-  // Re-checked rather than assumed: challenges.owner is UNIQUE, so a retry
-  // after a half-failed setup (challenge written, snapshot not) would come
-  // back as a duplicate-key error the user could do nothing about.
+export async function createFirstChallenge(
+  tier: Tier,
+  durationDays: ChallengeLength,
+  customTasks: SetupCustomTask[] = [],
+): Promise<void> {
+  // Re-checked rather than assumed: an owner may hold at most one LIVE
+  // challenge (0007's partial unique index), so a retry after a half-failed
+  // setup — challenge written, snapshot not — would come back as a
+  // duplicate-key error the user could do nothing about.
   if ((await checkAccount()) === 'needs-challenge') {
     const timezone = deviceTimezone();
-    await api.createChallenge(tier, startDateFor(timezone), timezone ?? 'UTC');
+    await api.createChallenge(
+      tier,
+      startDateFor(timezone),
+      timezone ?? 'UTC',
+      durationDays,
+    );
   }
+
+  // THE ORDERING IS THE FEATURE. Custom tasks go in BETWEEN creating the
+  // challenge and freezing day 1, because compose_task_set() reads
+  // custom_tasks at the moment the snapshot is taken. Freeze first and they
+  // are not in day 1 — they would be a normal edit, live tomorrow, and the
+  // user would spend their first day looking at a task list missing the
+  // tasks they had just typed in.
+  //
+  // Sequential rather than Promise.all: the server caps the count, and a
+  // parallel burst would race that check. Five writes at setup is nothing.
+  for (const task of customTasks) {
+    const name = task.name.trim();
+    if (!name) continue;
+    await api.addSetupCustomTask(name, task.timerMinutes);
+  }
+
   await api.getOrFreezeToday();
 }
 

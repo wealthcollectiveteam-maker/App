@@ -1,4 +1,5 @@
 import type {
+  ChallengeLength,
   CustomTask,
   FeedItem,
   FeedKind,
@@ -11,6 +12,7 @@ import type {
   Tier,
   WorkoutLog,
 } from '@/data/types';
+import { CHALLENGE } from '@/constants/challenge';
 import { toBackendError } from '@/services/contract';
 import type { SnapshotTask } from '@/services/taskProjection';
 
@@ -112,6 +114,8 @@ export interface SquadStatusRow {
 
 export interface ChallengeConfig {
   tier: Tier;
+  /** challenges.duration_days — 30, 45 or 75. */
+  durationDays: ChallengeLength;
   flame: number;
   /** Longest streak so far — challenges.best_flame. Drives the badges. */
   bestFlame: number;
@@ -158,15 +162,57 @@ function toFeedKind(kind: string, mine: boolean): FeedKind {
 
 export const BackendApi = {
   // ---- challenge / day snapshots (server-owned) ----
-  createChallenge: async (baseTier: Tier, startDate: string, timezone: string) =>
+  createChallenge: async (
+    baseTier: Tier,
+    startDate: string,
+    timezone: string,
+    durationDays: ChallengeLength,
+  ) =>
     unwrap(
       await sb().rpc('create_challenge', {
         p_base_tier: baseTier,
         p_start_date: startDate,
         p_timezone: timezone,
+        p_duration_days: durationDays,
       }),
       'create challenge',
     ) as string,
+
+  /**
+   * A custom task that is part of day 1 rather than an edit to it.
+   *
+   * MUST be called after createChallenge and BEFORE getOrFreezeToday: the
+   * server refuses once challenge_days holds a day 1, because at that point
+   * the snapshot is frozen and "edits start tomorrow" applies again. The
+   * ordering in createFirstChallenge() is what makes this the one call that
+   * can land in day 1.
+   */
+  addSetupCustomTask: async (name: string, timerMinutes?: number) =>
+    unwrap(
+      await sb().rpc('add_setup_custom_task', {
+        p_name: name,
+        p_timer_minutes: timerMinutes ?? null,
+      }),
+      'add setup task',
+    ) as string,
+
+  /**
+   * Move the finish line. Returns whether doing so ENDED the challenge —
+   * which it does whenever the new length is already behind the current day.
+   */
+  setChallengeDuration: async (
+    challengeId: string,
+    duration: ChallengeLength,
+  ) => {
+    const rows = unwrap(
+      await sb().rpc('set_challenge_duration', {
+        p_challenge_id: challengeId,
+        p_duration: duration,
+      }),
+      'set challenge duration',
+    ) as { completed: boolean; ended_on_day: number | null }[] | null;
+    return rows?.[0] ?? { completed: false, ended_on_day: null };
+  },
 
   /**
    * Freezes (or returns) the server's snapshot for the server's current day.
@@ -269,7 +315,7 @@ export const BackendApi = {
     ] = await Promise.all([
         sb()
           .from('challenges')
-          .select('base_tier, flame, best_flame, missed_notice_day')
+          .select('base_tier, flame, best_flame, missed_notice_day, duration_days')
           .eq('id', challengeId)
           .single(),
         sb().from('custom_tasks').select('*').eq('challenge_id', challengeId),
@@ -309,6 +355,11 @@ export const BackendApi = {
 
     return {
       tier: (active?.tier ?? challenge?.base_tier ?? 'hard') as Tier,
+      // The finish line, read from the row. The fallback is the pre-0008
+      // default and matches the column's own default, so a row written before
+      // lengths existed reads as the 75 it has always been.
+      durationDays: (challenge?.duration_days ??
+        CHALLENGE.defaultDays) as ChallengeLength,
       flame: challenge?.flame ?? 0,
       bestFlame: challenge?.best_flame ?? 0,
       perfectDays: sealedResult.count ?? 0,

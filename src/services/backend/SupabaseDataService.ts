@@ -1,8 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { XP } from '@/constants/challenge';
+import { CHALLENGE, XP } from '@/constants/challenge';
 import { tierStandardTarget } from '@/constants/tiers';
 import type {
+  ChallengeLength,
   ActiveTimer,
   BlockedUser,
   CustomTask,
@@ -70,6 +71,7 @@ function emptyState(): ScenarioState {
   return {
     tier: 'hard',
     day: 1,
+    durationDays: CHALLENGE.defaultDays,
     flame: 0,
     bestFlame: 0,
     perfectDays: 0,
@@ -374,6 +376,7 @@ export class SupabaseDataService implements IDataService {
 
     this.state.tasksDone = completions;
     this.state.tier = config?.tier ?? 'hard';
+    this.state.durationDays = config?.durationDays ?? CHALLENGE.defaultDays;
     this.state.flame = config?.flame ?? 0;
     this.state.bestFlame = config?.bestFlame ?? 0;
     this.state.perfectDays = config?.perfectDays ?? 0;
@@ -475,6 +478,7 @@ export class SupabaseDataService implements IDataService {
     this.state.dayComplete = !!day.sealed_at;
     this.state.tasksDone = completions;
     this.state.tier = config?.tier ?? this.state.tier;
+    this.state.durationDays = config?.durationDays ?? this.state.durationDays;
     this.state.flame = config?.flame ?? this.state.flame;
     this.state.bestFlame = config?.bestFlame ?? this.state.bestFlame;
     this.state.perfectDays = config?.perfectDays ?? this.state.perfectDays;
@@ -1433,6 +1437,25 @@ export class SupabaseDataService implements IDataService {
         this.pendingTier = previous;
       },
     );
+  }
+
+  /**
+   * Not optimistic, unlike every other write in this class.
+   *
+   * The others mutate the mirror first and roll back if the server refuses,
+   * because the user needs the tap to feel instant and the only cost of
+   * being wrong is a brief flicker. This one is different: its answer is
+   * whether the CHALLENGE JUST ENDED, and guessing that wrong would put a
+   * finished run back on screen as a live one, or end one that is still
+   * going. So it awaits the server and mirrors what actually happened.
+   */
+  async setChallengeDuration(
+    days: ChallengeLength,
+  ): Promise<{ completed: boolean }> {
+    if (!this.challengeId) throw new Error('no challenge');
+    const result = await api.setChallengeDuration(this.challengeId, days);
+    this.state.durationDays = days;
+    return { completed: result.completed };
   }
 
   getPendingChanges(currentTier: Tier, day: number): PendingChanges {

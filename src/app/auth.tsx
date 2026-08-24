@@ -14,9 +14,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Micro, PrimaryButton, Serif } from '@/components/primitives';
 import { Card, OutlineButton } from '@/components/ui';
-import { CHALLENGE } from '@/constants/challenge';
+import {
+  CHALLENGE,
+  CHALLENGE_LENGTHS,
+  MAX_CUSTOM_TASKS,
+} from '@/constants/challenge';
 import { buildTierTask, missedDayLine, TIERS } from '@/constants/tiers';
-import type { Tier } from '@/data/types';
+import type { ChallengeLength, SetupCustomTask, Tier } from '@/data/types';
 import { AuthService } from '@/services/backend/AuthService';
 import { useSessionStore } from '@/store/useSessionStore';
 import { toast } from '@/store/useToastStore';
@@ -124,6 +128,146 @@ function TierCard({
   );
 }
 
+/**
+ * How long the challenge runs. Three options, one line each, and 75
+ * pre-selected — unlike the tier, which is deliberately unselected because a
+ * defaulted tier picks a task set and a penalty nobody agreed to. A length
+ * has no such consequence: 75 is what this app has always been, and the other
+ * two are a shorter version of the same thing.
+ */
+function LengthCard({
+  option,
+  selected,
+  onPress,
+}: {
+  option: (typeof CHALLENGE_LENGTHS)[number];
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityState={{ selected }}
+      accessibilityLabel={`${option.label} challenge`}
+      style={[styles.lengthCard, selected && styles.lengthCardSelected]}
+    >
+      <Text style={[styles.lengthDays, selected && { color: colors.accent200 }]}>
+        {option.days}
+      </Text>
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.lengthLabel, selected && { color: colors.text }]}>
+          {option.label}
+        </Text>
+        <Text style={styles.lengthDescriptor}>{option.descriptor}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+/**
+ * Custom tasks, added before day 1 is frozen.
+ *
+ * This is the ONE moment a custom task can join day 1: everywhere else in the
+ * app an edit takes effect tomorrow, because today's task set is a snapshot
+ * taken at day start. Setup runs before that snapshot exists, which is why
+ * the server gives it a separate entry point with its own precondition
+ * (add_setup_custom_task refuses once challenge_days holds a day 1).
+ *
+ * A task added here counts exactly like a tier task — there is one class of
+ * task and one definition of a completed day. That is the reason the copy
+ * says "counts like any other" rather than offering it as a bonus.
+ */
+function CustomTaskStep({
+  tasks,
+  onChange,
+  disabled,
+}: {
+  tasks: SetupCustomTask[];
+  onChange: (next: SetupCustomTask[]) => void;
+  disabled: boolean;
+}) {
+  const [draft, setDraft] = useState('');
+  const [minutes, setMinutes] = useState('');
+  const full = tasks.length >= MAX_CUSTOM_TASKS;
+
+  const add = () => {
+    const name = draft.trim();
+    if (!name || full) return;
+    const parsed = parseInt(minutes, 10);
+    onChange([
+      ...tasks,
+      {
+        name,
+        timerMinutes:
+          Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 600) : undefined,
+      },
+    ]);
+    setDraft('');
+    setMinutes('');
+  };
+
+  return (
+    <View style={{ marginTop: 26 }}>
+      <Micro color={colors.textMid}>Your own tasks — optional</Micro>
+      <Text style={styles.customIntro}>
+        Anything you add counts like any other task. Miss one and the day is a
+        miss.
+      </Text>
+
+      {tasks.map((t, i) => (
+        <View key={`${t.name}-${i}`} style={styles.customRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.customName}>{t.name}</Text>
+            {t.timerMinutes ? (
+              <Text style={styles.customMeta}>{t.timerMinutes} min timer</Text>
+            ) : null}
+          </View>
+          <Pressable
+            onPress={() => onChange(tasks.filter((_, n) => n !== i))}
+            hitSlop={10}
+            accessibilityLabel={`Remove ${t.name}`}
+            disabled={disabled}
+          >
+            <Text style={styles.customRemove}>REMOVE</Text>
+          </Pressable>
+        </View>
+      ))}
+
+      {full ? (
+        <Text style={styles.hint}>
+          That is the limit — {MAX_CUSTOM_TASKS} custom tasks.
+        </Text>
+      ) : (
+        <View style={styles.customForm}>
+          <TextInput
+            value={draft}
+            onChangeText={setDraft}
+            placeholder="Cold plunge"
+            placeholderTextColor={colors.textLow}
+            style={[styles.whyInput, { flex: 1 }]}
+            editable={!disabled}
+            maxLength={40}
+            onSubmitEditing={add}
+          />
+          <TextInput
+            value={minutes}
+            onChangeText={setMinutes}
+            placeholder="min"
+            placeholderTextColor={colors.textLow}
+            style={[styles.whyInput, styles.customMinutes]}
+            editable={!disabled}
+            keyboardType="number-pad"
+            maxLength={3}
+            onSubmitEditing={add}
+          />
+          <OutlineButton label="Add" small onPress={add} />
+        </View>
+      )}
+    </View>
+  );
+}
+
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
   const status = useSessionStore((s) => s.status);
@@ -138,6 +282,10 @@ export default function AuthScreen() {
   // chose: it fixes the task set and the missed-day penalty, and edits only
   // ever take effect tomorrow, so a wrong day 1 cannot be taken back.
   const [tier, setTier] = useState<Tier | null>(null);
+  // 75 IS pre-selected, unlike the tier — see LengthCard for why the two are
+  // treated differently.
+  const [length, setLength] = useState<ChallengeLength>(CHALLENGE.defaultDays);
+  const [customs, setCustoms] = useState<SetupCustomTask[]>([]);
   const [why, setWhy] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -199,7 +347,7 @@ export default function AuthScreen() {
     setBusy(true);
     setError(null);
     try {
-      await finishSetup(name, tier, why);
+      await finishSetup(name, tier, why, length, customs);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start your challenge.');
     } finally {
@@ -224,7 +372,7 @@ export default function AuthScreen() {
             system font (it would swallow the screen). */}
         <View style={styles.ghostWrap} pointerEvents="none">
           <Text style={styles.ghost75} allowFontScaling={false}>
-            {CHALLENGE.days}
+            {step === 'setup' ? length : CHALLENGE.defaultDays}
           </Text>
         </View>
 
@@ -326,8 +474,24 @@ export default function AuthScreen() {
             />
 
             <Micro color={colors.accent400} style={{ marginTop: 30 }}>
-              {CHALLENGE.days} days. No shortcuts. No mercy.
+              {length} days. No shortcuts. No mercy.
             </Micro>
+            <Text style={styles.pickTitle}>How long?</Text>
+
+            <View style={{ gap: 8, marginTop: 16 }}>
+              {CHALLENGE_LENGTHS.map((option) => (
+                <LengthCard
+                  key={option.days}
+                  option={option}
+                  selected={length === option.days}
+                  onPress={() => setLength(option.days)}
+                />
+              ))}
+            </View>
+
+            {/* Length and tier are independent: a 30-day HARD is a real
+                choice, and picking a shorter run does not soften the rules.
+                Nothing below reads `length`. */}
             <Text style={styles.pickTitle}>Pick your tier.</Text>
 
             <View style={{ gap: 10, marginTop: 20 }}>
@@ -340,6 +504,12 @@ export default function AuthScreen() {
                 />
               ))}
             </View>
+
+            <CustomTaskStep
+              tasks={customs}
+              onChange={setCustoms}
+              disabled={busy}
+            />
 
             <View style={styles.whyField}>
               <Micro color={colors.textMid}>Why?</Micro>
@@ -453,6 +623,82 @@ const styles = StyleSheet.create({
   codeInput: {
     fontSize: 24,
     letterSpacing: 8,
+    textAlign: 'center',
+  },
+  lengthCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    borderWidth: 1,
+    borderColor: colors.line,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+  },
+  lengthCardSelected: {
+    borderColor: colors.accent,
+    backgroundColor: colors.surface,
+  },
+  lengthDays: {
+    fontFamily: font.black,
+    fontSize: 30,
+    color: colors.textLow,
+    minWidth: 52,
+    fontVariant: ['tabular-nums'],
+  },
+  lengthLabel: {
+    fontFamily: font.semibold,
+    fontSize: 14,
+    color: colors.textMid,
+  },
+  lengthDescriptor: {
+    fontFamily: font.regular,
+    fontSize: 12,
+    color: colors.textLow,
+    marginTop: 3,
+  },
+  customIntro: {
+    fontFamily: font.regular,
+    fontSize: 12.5,
+    color: colors.textLow,
+    lineHeight: 17,
+    marginTop: 6,
+  },
+  customRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+    paddingVertical: 12,
+  },
+  customName: {
+    fontFamily: font.medium,
+    fontSize: 14.5,
+    color: colors.textHi,
+  },
+  customMeta: {
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    color: colors.textLow,
+    marginTop: 2,
+  },
+  customRemove: {
+    fontFamily: font.medium,
+    fontSize: 10,
+    letterSpacing: microTracking(10),
+    color: colors.textLow,
+  },
+  customForm: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 10,
+  },
+  customMinutes: {
+    flex: 0,
+    width: 62,
+    fontFamily: font.regular,
+    fontSize: 14,
     textAlign: 'center',
   },
   tierCard: {

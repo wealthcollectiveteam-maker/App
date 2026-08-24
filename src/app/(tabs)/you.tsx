@@ -12,7 +12,7 @@ import {
 } from '@/components/primitives';
 import { ScreenState } from '@/components/ScreenState';
 import { Card } from '@/components/ui';
-import { CHALLENGE, XP } from '@/constants/challenge';
+import { XP } from '@/constants/challenge';
 import {
   selectLevel,
   selectXpIntoLevel,
@@ -30,15 +30,24 @@ interface BadgeState {
   dayComplete: boolean;
 }
 
-/** Every threshold is derived from CHALLENGE.days — none is typed twice. */
-const HALFWAY = Math.ceil(CHALLENGE.days / 2);
-
-const BADGES: {
+/**
+ * The badge ladder for a challenge of `durationDays`.
+ *
+ * A function rather than a constant because two of the five thresholds are
+ * derived from the length, and the length is now per-challenge: on a 30-day
+ * run Halfway is day 15 and Finisher is day 30. As a module constant these
+ * were computed once, at import, from a 75 that no longer applies to
+ * everyone — a 30-day finisher would have been told they were a third of the
+ * way in. Neither threshold is typed twice; both still come from one number.
+ */
+function badgesFor(durationDays: number): {
   key: string;
   value: number;
   label: string;
   earned: (s: BadgeState) => boolean;
-}[] = [
+}[] {
+  const halfway = Math.ceil(durationDays / 2);
+  return [
   {
     key: 'dayone',
     value: 1,
@@ -59,20 +68,22 @@ const BADGES: {
   },
   {
     key: 'halfway',
-    value: HALFWAY,
+    value: halfway,
     label: 'Halfway',
-    earned: (s) => s.day >= HALFWAY,
+    earned: (s) => s.day >= halfway,
   },
   {
     key: 'finisher',
-    value: CHALLENGE.days,
+    value: durationDays,
     label: 'Finisher',
-    earned: (s) => s.day >= CHALLENGE.days && s.dayComplete,
+    earned: (s) => s.day >= durationDays && s.dayComplete,
   },
-];
+  ];
+}
 
 export default function YouScreen() {
   const day = useAppStore((s) => s.day);
+  const durationDays = useAppStore((s) => s.durationDays);
   const xp = useAppStore((s) => s.xp);
   const bestFlame = useAppStore((s) => s.bestFlame);
   const perfectDays = useAppStore((s) => s.perfectDays);
@@ -161,7 +172,7 @@ export default function YouScreen() {
         <Card style={{ marginTop: 12 }}>
           <Micro color={colors.textMid}>Badges</Micro>
           <View style={styles.badgeRow}>
-            {BADGES.map((b) => (
+            {badgesFor(durationDays).map((b) => (
               <DiamondBadge
                 key={b.key}
                 value={b.value}

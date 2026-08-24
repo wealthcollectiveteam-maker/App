@@ -10,7 +10,6 @@ import {
   ViewStyle,
 } from 'react-native';
 
-import { CHALLENGE } from '@/constants/challenge';
 import { colors, font, microTracking, space } from '@/theme/tokens';
 
 /** The signature slant. Everything skewed in the app uses this one angle. */
@@ -191,18 +190,24 @@ type WallCell = 'done' | 'today' | 'future';
 const WALL_COLUMNS = 15;
 
 /**
- * The Wall — one cell per challenge day, 15 across. Cell 75 carries its own
- * marker so the finish line is visible from day one.
+ * The Wall — one cell per challenge day, 15 across. The last cell carries its
+ * own marker so the finish line is visible from day one.
+ *
+ * `total` is a prop rather than a constant because the finish line is now
+ * per-challenge: a 30-day run is two rows of fifteen, a 75-day run is five.
  */
 export function TheWall({
   day,
   doneDays,
+  total,
   style,
 }: {
   /** Today's day number, 1-based. */
   day: number;
   /** How many days are complete. Days before `doneDays` render filled. */
   doneDays: number;
+  /** The challenge's length in days — the store's `durationDays`. */
+  total: number;
   style?: ViewStyle;
 }) {
   const [width, setWidth] = useState(0);
@@ -223,21 +228,21 @@ export function TheWall({
       <View style={styles.wallHeader}>
         <Text style={styles.microLabel}>The Wall</Text>
         <Text style={styles.wallCount}>
-          {day} / {CHALLENGE.days}
+          {day} / {total}
         </Text>
       </View>
 
       <View onLayout={onLayout} style={{ gap }}>
         {cell > 0 &&
           Array.from(
-            { length: Math.ceil(CHALLENGE.days / WALL_COLUMNS) },
+            { length: Math.ceil(total / WALL_COLUMNS) },
             (_, row) => (
               <View key={row} style={{ flexDirection: 'row', gap }}>
                 {Array.from({ length: WALL_COLUMNS }, (_, col) => {
                   const n = row * WALL_COLUMNS + col + 1;
-                  if (n > CHALLENGE.days) return null;
+                  if (n > total) return null;
                   const state = stateOf(n);
-                  const last = n === CHALLENGE.days;
+                  const last = n === total;
                   return (
                     <View
                       key={n}
@@ -285,7 +290,7 @@ export function TheWall({
         </View>
         <View style={styles.legendItem}>
           <View style={styles.legendDiamond} />
-          <Text style={styles.legendText}>Day {CHALLENGE.days}</Text>
+          <Text style={styles.legendText}>Day {total}</Text>
         </View>
       </View>
     </View>

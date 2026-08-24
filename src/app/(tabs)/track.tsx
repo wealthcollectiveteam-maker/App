@@ -41,6 +41,7 @@ import { colors, font, radius, space } from '@/theme/tokens';
 
 function JournalTab() {
   const day = useAppStore((s) => s.day);
+  const durationDays = useAppStore((s) => s.durationDays);
   const dayComplete = useAppStore((s) => s.dayComplete);
   const journal = useAppStore((s) => s.journal);
   const saveJournal = useAppStore((s) => s.saveJournal);
@@ -63,7 +64,7 @@ function JournalTab() {
   return (
     <View style={{ gap: 14 }}>
       <Card>
-        <TheWall day={day} doneDays={doneDays} />
+        <TheWall day={day} doneDays={doneDays} total={durationDays} />
       </Card>
 
       <Card>

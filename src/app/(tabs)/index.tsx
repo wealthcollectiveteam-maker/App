@@ -16,7 +16,6 @@ import {
 import { ScreenState } from '@/components/ScreenState';
 import { Card, OutlineButton } from '@/components/ui';
 import { WorkoutSuggestion } from '@/components/WorkoutSuggestion';
-import { CHALLENGE } from '@/constants/challenge';
 import {
   hasPendingChanges,
   missedDayCopy,
@@ -36,19 +35,20 @@ import { colors, font, space } from '@/theme/tokens';
 
 function StatusBanner() {
   const day = useAppStore((s) => s.day);
+  const durationDays = useAppStore((s) => s.durationDays);
   const tier = useAppStore((s) => s.tier);
   const missedDay = useAppStore((s) => s.missedDay);
   const dayComplete = useAppStore((s) => s.dayComplete);
   const router = useRouter();
 
-  if (day === CHALLENGE.days && dayComplete) {
+  if (day >= durationDays && dayComplete) {
     return (
       <View style={styles.banner}>
         <View style={styles.bannerRule} />
         <View style={styles.bannerBody}>
           <Micro color={colors.accent400}>Challenge complete</Micro>
           <Text style={styles.bannerTitle}>
-            {CHALLENGE.days} days. Every task. Never missed.
+            {durationDays} days. Every task. Never missed.
           </Text>
           <PrimaryButton
             label="See your results"
@@ -198,6 +198,7 @@ function SquadStrip() {
 
 export default function HomeScreen() {
   const day = useAppStore((s) => s.day);
+  const durationDays = useAppStore((s) => s.durationDays);
   const why = useAppStore((s) => s.why);
   const tier = useAppStore((s) => s.tier);
   const pending = useAppStore((s) => s.pendingChanges);
@@ -226,7 +227,7 @@ export default function HomeScreen() {
           </Text>
           <View style={styles.dayMeta}>
             <Micro color={colors.textMid}>
-              Of {CHALLENGE.days} days
+              Of {durationDays} days
             </Micro>
             <Micro color={colors.accent400} style={{ marginTop: 6 }}>
               {doneCount} of {tasks.length} today
