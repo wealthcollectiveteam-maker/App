@@ -1,0 +1,143 @@
+PHASE 12 — Four defects found on a real iPhone
+
+Read CLAUDE.md first. All standing constraints still apply.
+
+These were found by using the app on an iPhone, added to the Home Screen
+(standalone PWA). Every previous phase flagged iOS standalone as the one thing
+headless Chrome could not verify. This is that gap producing real bugs.
+
+Run this BEFORE phase 11. Number 3 is the priority — it is actively driving
+people away.
+
+=============================================================
+1 — Weekly check-in weight is hardcoded to kg
+=============================================================
+
+The weekly check-in card on /track shows a weight field labelled "kg" with no
+regard for the user's unit preference. That preference already exists, already
+persists, and is already respected elsewhere. This card ignores it.
+
+Consequence, observed live: a user entered 203 meaning pounds. It was stored as
+203 kilograms — 447 lb. Their metrics history is now wrong.
+
+Fix:
+  - The field's unit label follows the user's saved preference.
+  - Converting for storage and display uses whatever canonical unit the schema
+    already uses. Do NOT introduce a second convention — find the existing one
+    and follow it. Tell me which it is.
+  - Add a sanity guard on entry. A human adult weight outside roughly
+    30-300 kg / 66-660 lb should prompt "Did you mean X lb?" rather than being
+    silently accepted. This is the exact failure that already happened.
+  - Audit every other weight or measurement input in the app for the same bug
+    and report each with a verdict. If one input ignored the preference,
+    assume others might.
+  - Tell me how I can correct an already-saved wrong value from inside the app.
+    If there is no way to edit or delete a past check-in, say so — that is a
+    finding, not a detail.
+
+=============================================================
+2 — Layout is clipped at the bottom in standalone mode
+=============================================================
+
+On an iPhone with a home indicator, added to the Home Screen:
+  - Page content is cut off behind the tab bar. The "SAVE CHECK-IN" button on
+    /track is sliced in half and cannot be tapped.
+  - The tab bar itself has a large band of dead space below the labels.
+
+Investigate in this order and report what you find before changing anything:
+
+  a) Does src/app/+html.tsx set viewport-fit=cover in the viewport meta tag?
+     Without it, every env(safe-area-inset-*) resolves to 0 and no amount of
+     padding maths will work. Check this first.
+  b) Is the safe-area inset being applied twice — once by the tab bar and again
+     by the scroll container? That would explain the dead band.
+  c) Does every scrollable screen reserve bottom space for tab bar height PLUS
+     the bottom inset? Check all of them, not just /track.
+
+Fix so that on a home-indicator iPhone in standalone mode: no content is ever
+hidden behind the tab bar, and the tab bar sits directly above the home
+indicator with no dead band.
+
+IMPORTANT: you cannot verify this headlessly, and you should not pretend
+otherwise. Implement it, tell me exactly what you changed and why, and I will
+check it on my phone. Do not report it as confirmed.
+
+=============================================================
+3 — Signed out on every launch  ** HIGHEST PRIORITY **
+=============================================================
+
+Closing the app and reopening it requires signing in again, every time.
+
+Diagnose before fixing, and report each finding:
+
+  a) How is the Supabase client constructed? Report the exact auth options —
+     persistSession, autoRefreshToken, detectSessionInUrl, and the storage
+     adapter it is given.
+  b) On web, does that storage adapter actually reach window.localStorage, or
+     is it a memory shim that evaporates when the page unloads? This is my
+     leading suspicion. Verify it, don't assume it.
+  c) Sign in in a real browser and list the localStorage keys that exist
+     afterwards. Is a Supabase session token among them? Print the key names
+     only, never the values.
+  d) Reload the page completely. Is the session still there? Does the app
+     rehydrate from it, or does it have the token and ignore it?
+  e) Is the refresh token being used at all, or does the app treat an expired
+     access token as signed out rather than refreshing it?
+
+State the root cause in one sentence before fixing.
+
+Then fix it so the session survives a full app relaunch, and prove it by
+reloading and showing the app land on Home rather than the auth screen.
+
+Note the constraint this must respect: the session lives in the user's own
+browser storage and nowhere else. Do not "solve" this by storing credentials
+anywhere new.
+
+=============================================================
+4 — No way to refresh, and nothing refetches
+=============================================================
+
+In a Home Screen PWA there is no address bar and no reload button. If a
+squadmate joins, or a friend completes a task, the user has no way to see it
+short of force-quitting the app.
+
+Build both of these:
+
+  a) Pull-to-refresh on every screen that shows server data — Home, Check-in,
+     Track, Squad. Real refetch, real spinner, and it must actually complete
+     rather than bouncing back instantly.
+  b) Refetch on foreground. When the app becomes visible again — the
+     visibilitychange event — refetch the current screen's data. This is what
+     makes it feel live without anyone thinking about it.
+
+Do not add polling on a timer. It drains battery and this is a five-person app.
+
+Report which screens got which, and prove the Squad roster updates after a
+second account joins, without a force-quit.
+
+=============================================================
+Proof required
+=============================================================
+
+- Weight: enter a value in lb with the preference set to lb, then query
+  Postgres and show the stored value is correct in the canonical unit.
+- Session: full page reload lands on Home, not auth. Show the localStorage key
+  names before and after.
+- Refresh: second account joins a squad; first account sees the new member
+  after a pull-to-refresh, with no reload.
+- Layout: describe the change and state plainly that I must verify it on device.
+
+Full suite green. tsc and expo lint clean. Then rebuild with
+`npm run build:web -- --clear`, robocopy into the Pages repo, name the stale
+bundles, and STOP without committing.
+
+=============================================================
+Constraints (unchanged)
+=============================================================
+- Bundle ID com.aly786.rankedfitness. Expo SDK 54. Do not change either.
+- Never commit .env. Anon/publishable key only.
+- HealthKit values remain device-memory only.
+- Squadmates never read another member's metrics, nutrition, journal or
+  workout logs. You are touching metrics — re-prove with an impersonated JWT.
+- Day snapshots remain immutable.
+- The UI must never claim something happened that didn't.

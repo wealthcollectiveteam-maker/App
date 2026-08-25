@@ -513,6 +513,26 @@ export class SupabaseDataService implements IDataService {
   }
 
   /**
+   * EVERYTHING the server owns, re-read. Pull-to-refresh and coming back to
+   * the foreground both land here.
+   *
+   * It re-runs hydrate() rather than keeping a second list of reads, so a
+   * source added to hydrate() is refreshed here for free — and hydrate() is
+   * already built for exactly this shape of call: every non-essential read
+   * goes through optional(), so one flaky read costs one surface instead of
+   * the session, and the degraded notice names what did not come back.
+   *
+   * Throws only when the essential day read fails, and the caller's job is
+   * then to do NOTHING: the mirror keeps what it already had. A refresh that
+   * blanked a day-40 challenge because the phone lost signal mid-pull would
+   * be far worse than a refresh that quietly changed nothing.
+   */
+  async refreshAll(): Promise<void> {
+    if (!this.userId) return;
+    await this.hydrate(this.userId);
+  }
+
+  /**
    * An optional read. Failure costs one surface, not the session.
    *
    * NOT silence — that is the D7 bug, where a failed read was

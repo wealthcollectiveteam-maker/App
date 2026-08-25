@@ -75,3 +75,61 @@ export const weightUnitLabel = (pref: UnitPreference) =>
 export function formatWeightValue(kg: number, pref: UnitPreference): string {
   return fixed1(pref === 'imperial' ? kgToLb(kg) : kg);
 }
+
+/**
+ * PLAUSIBILITY GUARD for a typed weight.
+ *
+ * A user typed 203 meaning pounds while the field was reading kilograms. It
+ * was accepted in silence and stored as 203 kg — 447 lb — and their metrics
+ * history has been wrong ever since. A range check alone would NOT have
+ * caught it: 203 kg is inside any sane adult range. What gives it away is
+ * that the OTHER reading of the same number is ordinary and this one is not.
+ *
+ * So there are two checks, and they catch different things:
+ *
+ *   'implausible' — no adult weighs this, in either unit. Refuse.
+ *   'ambiguous'   — this reading is extreme AND the other unit's reading is
+ *                   ordinary. Almost certainly the wrong unit. Ask.
+ *
+ * Pure, and unit-tested in scripts/units.test.mjs.
+ */
+
+/** Nobody is outside this, in any unit. 66 lb – 660 lb. */
+export const MIN_PLAUSIBLE_KG = 30;
+export const MAX_PLAUSIBLE_KG = 300;
+
+/**
+ * The band where a kg reading stops being ordinary. Above 150 kg (331 lb)
+ * fewer than one adult in a thousand qualifies, while 150 *pounds* is the
+ * single most ordinary weight there is — so a number in that band is far
+ * likelier to be pounds typed into a kilograms field.
+ */
+const ORDINARY_MAX_KG = 150;
+const ORDINARY_MIN_KG = 40;
+
+export type WeightVerdict =
+  | { kind: 'ok'; kg: number }
+  | { kind: 'empty' }
+  | { kind: 'implausible'; kg: number }
+  /** `kg` is what was typed; `meantKg` is the other unit's reading. */
+  | { kind: 'ambiguous'; kg: number; meantKg: number; meantUnit: UnitPreference };
+
+export function checkWeightEntry(
+  input: string,
+  pref: UnitPreference,
+): WeightVerdict {
+  const kg = parseWeightToKg(input, pref);
+  if (kg == null) return { kind: 'empty' };
+  if (kg < MIN_PLAUSIBLE_KG || kg > MAX_PLAUSIBLE_KG) {
+    return { kind: 'implausible', kg };
+  }
+  // The same digits read as the other unit.
+  const typed = parseFloat(input.replace(',', '.'));
+  const other: UnitPreference = pref === 'metric' ? 'imperial' : 'metric';
+  const otherKg = other === 'imperial' ? lbToKg(typed) : typed;
+  const ordinary = (v: number) => v >= ORDINARY_MIN_KG && v <= ORDINARY_MAX_KG;
+  if (!ordinary(kg) && ordinary(otherKg)) {
+    return { kind: 'ambiguous', kg, meantKg: otherKg, meantUnit: other };
+  }
+  return { kind: 'ok', kg };
+}

@@ -9,7 +9,6 @@ import React, { useCallback, useState } from 'react';
 import {
   Platform,
   Pressable,
-  ScrollView,
   Share,
   StyleSheet,
   Text,
@@ -19,6 +18,7 @@ import {
 
 import { Micro, Serif, Skew, TheWall } from '@/components/primitives';
 import { QuickAddSheet } from '@/components/QuickAddSheet';
+import { RefreshableScrollView } from '@/components/RefreshableScrollView';
 import { ScreenState } from '@/components/ScreenState';
 import { TodaysHealthCard } from '@/components/TodaysHealthCard';
 import {
@@ -399,7 +399,7 @@ export default function TrackScreen() {
 
   return (
     <ScreenState>
-      <ScrollView
+      <RefreshableScrollView
         style={{ flex: 1, backgroundColor: colors.bg }}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
@@ -421,7 +421,7 @@ export default function TrackScreen() {
           <TodaysHealthCard />
           <WeeklyCheckinCard />
         </View>
-      </ScrollView>
+      </RefreshableScrollView>
     </ScreenState>
   );
 }

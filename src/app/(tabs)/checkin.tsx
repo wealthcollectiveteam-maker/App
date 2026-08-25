@@ -5,7 +5,6 @@ import {
 import React from 'react';
 import {
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -22,6 +21,7 @@ import Animated, {
 import { useShallow } from 'zustand/react/shallow';
 
 import { Micro, PrimaryButton, Serif, Skew } from '@/components/primitives';
+import { RefreshableScrollView } from '@/components/RefreshableScrollView';
 import { ScreenState } from '@/components/ScreenState';
 import { WorkoutSuggestion } from '@/components/WorkoutSuggestion';
 import type { TaskDef } from '@/data/types';
@@ -233,7 +233,7 @@ export default function CheckinScreen() {
 
   return (
     <ScreenState>
-      <ScrollView
+      <RefreshableScrollView
         style={{ flex: 1, backgroundColor: colors.bg }}
         contentContainerStyle={styles.content}
       >
@@ -299,7 +299,7 @@ export default function CheckinScreen() {
             );
           })}
         </View>
-      </ScrollView>
+      </RefreshableScrollView>
     </ScreenState>
   );
 }

@@ -4,7 +4,6 @@ import React, { useEffect, useState } from 'react';
 import {
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -19,6 +18,7 @@ import {
   SegmentBar,
   Skew,
 } from '@/components/primitives';
+import { RefreshableScrollView } from '@/components/RefreshableScrollView';
 import { ScreenState } from '@/components/ScreenState';
 import {
   Card,
@@ -736,7 +736,7 @@ export default function SquadScreen() {
 
   return (
     <ScreenState>
-      <ScrollView
+      <RefreshableScrollView
         style={{ flex: 1, backgroundColor: colors.bg }}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
@@ -755,7 +755,7 @@ export default function SquadScreen() {
           <LeaderboardTab />
         )}
         <PingSheet member={pingTarget} onClose={() => setPingTarget(null)} />
-      </ScrollView>
+      </RefreshableScrollView>
     </ScreenState>
   );
 }

@@ -1,6 +1,6 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppHeader } from '@/components/AppHeader';
@@ -26,10 +26,20 @@ interface TabBarProps {
  */
 function TabBar({ state, navigation }: TabBarProps) {
   const insets = useSafeAreaInsets();
+  // On web the browser owns this value: see the [data-safe-bottom] rule in
+  // +html.tsx. The 10 here is the same floor that rule starts from, so if the
+  // stylesheet ever fails to apply the bar still clears the bottom edge — and
+  // because CSS OVERRIDES this property rather than adding to it, the inset
+  // can never be counted twice.
+  const paddingBottom =
+    Platform.OS === 'web' ? 10 : Math.max(insets.bottom, 10);
   return (
     <>
       <TimerMiniBar />
-      <View style={[styles.bar, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+      <View
+        {...({ dataSet: { safeBottom: '' } } as object)}
+        style={[styles.bar, { paddingBottom }]}
+      >
         {state.routes.map((route, index) => {
           const focused = state.index === index;
           const label = LABELS[route.name];

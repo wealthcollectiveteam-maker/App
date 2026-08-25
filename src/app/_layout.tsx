@@ -15,6 +15,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { AppState, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { MockModeBanner } from '@/components/MockModeBanner';
 import {
@@ -132,13 +133,21 @@ export default function RootLayout() {
         completeActive();
       }
       useAppStore.getState().refreshHealth().catch(() => {});
-      // Ask the server what day it is again. Nothing else does, so an app
-      // left open across local midnight kept showing yesterday's day number
-      // and yesterday's ticks, and a session that had been offline had no
-      // way back short of a relaunch. Silent on failure — the mirror keeps
-      // what it has rather than degrading to an empty day 1.
+      // Refetch on foreground. On web this listener IS the visibilitychange
+      // event — react-native-web's AppState is built on it — so returning to
+      // a Home Screen web app lands here.
+      //
+      // This refreshed only the day, which fixed an app left open across
+      // local midnight but left the squad frozen: a member who joined, or a
+      // squadmate who ticked a task, stayed invisible until a force-quit, and
+      // a standalone web app has no reload button to fall back on. It now
+      // re-reads everything the server owns.
+      //
+      // Event-driven, never polled: a timer would spend battery all day on a
+      // five-person squad. Silent on failure — the mirror keeps what it has
+      // rather than degrading to an empty day 1.
       if (useSessionStore.getState().status === 'signedIn') {
-        useAppStore.getState().refreshDay().catch(() => {});
+        useAppStore.getState().refreshFromServer().catch(() => {});
       }
     });
     return () => sub.remove();
@@ -153,52 +162,69 @@ export default function RootLayout() {
   if (configurationError) {
     return (
       <GestureHandlerRootView style={{ flex: 1 }}>
-        <View style={{ flex: 1, backgroundColor: colors.bg }}>
-          <StatusBar style="light" />
-          <UnconfiguredBuildScreen />
-        </View>
+        <SafeAreaProvider style={{ flex: 1 }}>
+          <View style={{ flex: 1, backgroundColor: colors.bg }}>
+            <StatusBar style="light" />
+            <UnconfiguredBuildScreen />
+          </View>
+        </SafeAreaProvider>
       </GestureHandlerRootView>
     );
   }
 
+  /**
+   * ONE safe-area provider, at the root, above every navigator.
+   *
+   * There was none. Every navigator fell back to its own
+   * SafeAreaProviderCompat, so the tab navigator, the stack screens outside
+   * it (auth, settings, timer, the modals) and each modal measured the insets
+   * SEPARATELY — and on web each of those starts at zero for SSR and only
+   * learns the real value once its own hidden probe element is measured. That
+   * is how one part of the app can reserve room for the home indicator while
+   * another lays out as though it is not there. With a provider here,
+   * SafeAreaProviderCompat finds insets already in context and reuses them
+   * instead of creating a second source of truth.
+   */
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <View style={{ flex: 1, backgroundColor: colors.bg }}>
-        <StatusBar style="light" />
-        {/* In flow, above the navigator: a build silently running on mock
-            data is indistinguishable from a working one until data is lost. */}
-        <MockModeBanner />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: colors.bg },
-          }}
-        >
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="auth" options={{ gestureEnabled: false }} />
-          <Stack.Screen
-            name="celebration"
-            options={{ presentation: 'transparentModal', animation: 'fade' }}
-          />
-          <Stack.Screen
-            name="finish"
-            options={{ presentation: 'transparentModal', animation: 'fade' }}
-          />
-          <Stack.Screen
-            name="timer"
-            options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
-          />
-        </Stack>
-        {/* Over the navigator, never instead of it: unmounting the Stack
-            would leave expo-router with nothing to navigate. */}
-        {(gating || status === 'error') && (
-          <View style={StyleSheet.absoluteFill}>
-            {status === 'error' ? <SessionErrorScreen /> : <SessionLoadingScreen />}
-          </View>
-        )}
-        <ToastHost />
-        <TimerConflictSheet />
-      </View>
+      <SafeAreaProvider style={{ flex: 1 }}>
+        <View style={{ flex: 1, backgroundColor: colors.bg }}>
+          <StatusBar style="light" />
+          {/* In flow, above the navigator: a build silently running on mock
+              data is indistinguishable from a working one until data is lost. */}
+          <MockModeBanner />
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: colors.bg },
+            }}
+          >
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="auth" options={{ gestureEnabled: false }} />
+            <Stack.Screen
+              name="celebration"
+              options={{ presentation: 'transparentModal', animation: 'fade' }}
+            />
+            <Stack.Screen
+              name="finish"
+              options={{ presentation: 'transparentModal', animation: 'fade' }}
+            />
+            <Stack.Screen
+              name="timer"
+              options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
+            />
+          </Stack>
+          {/* Over the navigator, never instead of it: unmounting the Stack
+              would leave expo-router with nothing to navigate. */}
+          {(gating || status === 'error') && (
+            <View style={StyleSheet.absoluteFill}>
+              {status === 'error' ? <SessionErrorScreen /> : <SessionLoadingScreen />}
+            </View>
+          )}
+          <ToastHost />
+          <TimerConflictSheet />
+        </View>
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }

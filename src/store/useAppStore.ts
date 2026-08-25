@@ -251,6 +251,17 @@ interface AppState extends ScenarioState {
    */
   refreshDay: () => Promise<void>;
   /**
+   * Re-read everything the server owns: the day, the squad roster, the feed,
+   * the leaderboards, and the owner-only logs. Pull-to-refresh on every
+   * screen that shows server data calls this, and so does every return to
+   * the foreground.
+   *
+   * Resolves only once the refetch has actually finished, so a spinner tied
+   * to it cannot bounce back before the data lands. Silent on failure for
+   * the same reason refreshDay() is: the mirror keeps what it had.
+   */
+  refreshFromServer: () => Promise<void>;
+  /**
    * Adopt the backend mirror after a sign-in or a cold launch that restored
    * a session. DataService has already hydrated; this copies that state in.
    */
@@ -787,6 +798,35 @@ export const useAppStore = create<AppState>((set, get) => ({
             healthPromptDismissed: {},
             healthWorkoutsConsumed: [],
           }
+        : {}),
+      ...taskConfigMirror(st.tier, st.day),
+    });
+  },
+
+  refreshFromServer: async () => {
+    if (!supabaseService) return;
+    try {
+      await supabaseService.refreshAll();
+    } catch {
+      // Same contract as refreshDay(): a failed refresh must never be able
+      // to blank a real challenge. Keep the mirror exactly as it was.
+      return;
+    }
+    const st = supabaseService.snapshot;
+    const s = get();
+    // A refresh that crosses local midnight is a rollover like any other:
+    // yesterday's pending rollbacks describe a day that no longer exists.
+    if (st.day !== s.day) rollbacks.clear();
+    set({
+      ...supabaseService.getSquadState(),
+      blockedUsers: supabaseService.getBlockedUsers(),
+      ...st,
+      // AFTER the spread, for the same reason adoptSession() does it: st.meals
+      // is the whole challenge's log, and every screen that reads `meals`
+      // means today.
+      meals: supabaseService.getMeals(),
+      ...(st.day !== s.day
+        ? { deferred: [], healthPromptDismissed: {}, healthWorkoutsConsumed: [] }
         : {}),
       ...taskConfigMirror(st.tier, st.day),
     });

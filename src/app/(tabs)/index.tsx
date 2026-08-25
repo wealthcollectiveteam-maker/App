@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useShallow } from 'zustand/react/shallow';
 
 import { HealthPromptCards } from '@/components/HealthPromptCard';
@@ -13,6 +13,7 @@ import {
   Skew,
   TaskRow,
 } from '@/components/primitives';
+import { RefreshableScrollView } from '@/components/RefreshableScrollView';
 import { ScreenState } from '@/components/ScreenState';
 import { Card, OutlineButton } from '@/components/ui';
 import { WorkoutSuggestion } from '@/components/WorkoutSuggestion';
@@ -217,7 +218,7 @@ export default function HomeScreen() {
 
   return (
     <ScreenState>
-      <ScrollView
+      <RefreshableScrollView
         style={{ flex: 1, backgroundColor: colors.bg }}
         contentContainerStyle={styles.content}
       >
@@ -289,7 +290,7 @@ export default function HomeScreen() {
         <View style={{ marginTop: 20 }}>
           <SquadStrip />
         </View>
-      </ScrollView>
+      </RefreshableScrollView>
     </ScreenState>
   );
 }
