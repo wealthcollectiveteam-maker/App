@@ -3,6 +3,13 @@ import { getLocales } from 'expo-localization';
 import { create } from 'zustand';
 
 import { MAX_CUSTOM_TASKS, PINGS, XP } from '@/constants/challenge';
+import {
+  PREF_KEYS,
+  restoreFlag,
+  restorePrefs,
+  serializeFlag,
+  serializePrefs,
+} from '@/lib/prefsStorage';
 import type { UnitPreference } from '@/lib/units';
 import {
   displayTierLabel,
@@ -196,7 +203,6 @@ interface AppState extends ScenarioState {
   completeTask: (key: TaskKey, options?: { sync?: boolean }) => void;
   uncompleteTask: (key: TaskKey) => void;
   deferTask: (key: TaskKey) => void;
-  attachProof: (key: TaskKey) => void;
   sealDay: () => void;
   saveJournal: (text: string) => JournalEntry;
   logMeal: (text: string) => Meal;
@@ -313,9 +319,11 @@ const DEFAULT_PREFS: NotificationPrefs = {
   timerAlerts: true,
 };
 
-const UNIT_PREF_KEY = 'ranked.unitPreference.v1';
-const CHECKINS_KEY = 'ranked.metricCheckins.v1';
+const NOTIF_PREFS_KEY = PREF_KEYS.notifications;
+const HEALTH_PREFS_KEY = PREF_KEYS.health;
+const WEEKLY_CHECKIN_KEY = PREF_KEYS.weeklyCheckin;
 
+const UNIT_PREF_KEY = 'ranked.unitPreference.v1';
 /** Seed from the device locale; the user can change it in Settings. */
 function localeUnitPreference(): UnitPreference {
   try {
@@ -324,6 +332,24 @@ function localeUnitPreference(): UnitPreference {
   } catch {
     return 'metric';
   }
+}
+const CHECKINS_KEY = 'ranked.metricCheckins.v1';
+
+/**
+ * Preferences that MUST survive a relaunch.
+ *
+ * All three of these were `set()` and nothing else, so every one of them
+ * reset on launch: you turned a notification off, and the next time you
+ * opened the app it was on again. A switch that forgets is a switch that
+ * lied about what it did — the same bug as a dead button, spread over time.
+ *
+ * They are device settings, not account state, so AsyncStorage rather than
+ * the server: which alerts this phone shows is a fact about this phone.
+ * The serialisation lives in lib/prefsStorage.ts, which is pure and has its
+ * own proofs in scripts/prefs.test.mjs.
+ */
+function persist(key: string, value: object): void {
+  AsyncStorage.setItem(key, serializePrefs(value)).catch(() => {});
 }
 
 const initialScenario = fromScenario('day1');
@@ -458,21 +484,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       deferred: [...s.deferred.filter((k) => k !== key), key],
     })),
 
-  attachProof: (key) => {
-    const { feed, todayTasks } = get();
-    const label = todayTasks.find((t) => t.key === key)?.label ?? key;
-    const item: FeedItem = {
-      id: `f-local-${++feedId}`,
-      kind: 'proof',
-      who: 'You',
-      text: `attached proof — ${label}.`,
-      timestamp: Date.now(),
-    };
-    set((s) => ({
-      proofs: { ...s.proofs, [key]: `mock://proof-${key}` },
-      feed: [item, ...feed],
-    }));
-  },
+
 
   sealDay: () => {
     const s = get();
@@ -606,10 +618,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     DataService.updateProfile(trimmedName, trimmedWhy);
   },
 
-  setNotificationPref: (key, value) =>
-    set((s) => ({
-      notificationPrefs: { ...s.notificationPrefs, [key]: value },
-    })),
+  setNotificationPref: (key, value) => {
+    const next = { ...get().notificationPrefs, [key]: value };
+    set({ notificationPrefs: next });
+    persist(NOTIF_PREFS_KEY, next);
+  },
 
   attachNutrition: (mealId, nutrition) => {
     rememberForRollback('meal', { meals: get().meals });
@@ -643,7 +656,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setHealthPref: (key, value) => {
-    set((s) => ({ healthPrefs: { ...s.healthPrefs, [key]: value } }));
+    const nextPrefs = { ...get().healthPrefs, [key]: value };
+    set({ healthPrefs: nextPrefs });
+    persist(HEALTH_PREFS_KEY, nextPrefs);
     if (key === 'healthEnabled') {
       if (value) {
         const service = getHealthService();
@@ -724,8 +739,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   dismissCheckinCard: () => set({ checkinHandledWeek: localWeekKey() }),
 
-  setWeeklyCheckinEnabled: (enabled) =>
-    set({ weeklyCheckinEnabled: enabled }),
+  setWeeklyCheckinEnabled: (enabled) => {
+    set({ weeklyCheckinEnabled: enabled });
+    AsyncStorage.setItem(WEEKLY_CHECKIN_KEY, serializeFlag(enabled)).catch(() => {});
+  },
 
   setUnitPreference: (pref) => {
     set({ unitPreference: pref });
@@ -777,14 +794,23 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   hydratePersisted: async () => {
     try {
-      const [pref, checkins] = await Promise.all([
+      const [pref, checkins, notif, health, weekly] = await Promise.all([
         AsyncStorage.getItem(UNIT_PREF_KEY),
         AsyncStorage.getItem(CHECKINS_KEY),
+        AsyncStorage.getItem(NOTIF_PREFS_KEY),
+        AsyncStorage.getItem(HEALTH_PREFS_KEY),
+        AsyncStorage.getItem(WEEKLY_CHECKIN_KEY),
       ]);
       const updates: Partial<AppState> = {};
       if (pref === 'metric' || pref === 'imperial') {
         updates.unitPreference = pref;
       }
+      const storedNotif = restorePrefs(notif, DEFAULT_PREFS);
+      if (storedNotif) updates.notificationPrefs = storedNotif;
+      const storedHealth = restorePrefs(health, DEFAULT_HEALTH_PREFS);
+      if (storedHealth) updates.healthPrefs = storedHealth;
+      const storedWeekly = restoreFlag(weekly);
+      if (storedWeekly !== null) updates.weeklyCheckinEnabled = storedWeekly;
       if (checkins) {
         const parsed = JSON.parse(checkins) as MetricCheckin[];
         if (Array.isArray(parsed)) {
@@ -826,7 +852,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     const st = DataService.loadScenario('day1');
     // Weight and mood are private data with no owner once signed out; the
     // unit preference is a display setting and stays.
-    AsyncStorage.removeItem(CHECKINS_KEY).catch(() => {});
+    // Weight and mood are private data with no owner once signed out. The
+    // preference blobs go with them: the next account on this device gets
+    // the defaults, not the last person's choices.
+    AsyncStorage.multiRemove([
+      CHECKINS_KEY,
+      NOTIF_PREFS_KEY,
+      HEALTH_PREFS_KEY,
+      WEEKLY_CHECKIN_KEY,
+    ]).catch(() => {});
     set({
       scenario: 'day1',
       squads: [],

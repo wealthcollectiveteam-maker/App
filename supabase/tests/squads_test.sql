@@ -462,7 +462,12 @@ begin
   -- B writes private data of every kind.
   call s_login(v_b);
   insert into public.journal_entries (owner, day, text) values (v_b, 1, 'private');
-  insert into public.meals (owner, day, text) values (v_b, 1, 'private meal');
+  -- With nutrition attached, because that is the field 10C added a manual
+  -- entry path for. It travels inside meals.nutrition, so it is covered by
+  -- the meals policy — but "covered by" is an argument, and this is a test.
+  insert into public.meals (owner, day, text, nutrition)
+  values (v_b, 1, 'private meal',
+          '{"calories":650,"protein":45,"carbs":70,"fat":18,"quickAdd":true}'::jsonb);
   insert into public.metric_checkins (owner, weight_kg, mood) values (v_b, 80, 4);
   insert into public.workout_logs (owner, challenge_id, day, task_key, activity_type, duration_seconds)
   values (v_b, v_ch_b, 1, 'workout1', 'Run', 600);
@@ -478,6 +483,18 @@ begin
   select count(*) into n from public.meals where owner = v_b;
   raise notice 'ISOLATION  C reads B meals                = % (expect 0)', n;
   if n <> 0 then raise exception 'FAIL: meals leaked'; end if;
+
+  -- The same row, asked for by the column that carries the calories. A
+  -- squadmate must not be able to read what anybody ate, or how much of it.
+  select count(*) into n from public.meals
+   where owner = v_b and nutrition is not null;
+  raise notice 'ISOLATION  C reads B nutrition            = % (expect 0)', n;
+  if n <> 0 then raise exception 'FAIL: nutrition leaked'; end if;
+
+  select count(*) into n from public.meals
+   where (nutrition->>'calories')::int > 0;
+  raise notice 'ISOLATION  C reads ANY calories at all    = % (expect 0)', n;
+  if n <> 0 then raise exception 'FAIL: nutrition readable across the squad'; end if;
 
   select count(*) into n from public.metric_checkins where owner = v_b;
   raise notice 'ISOLATION  C reads B metrics              = % (expect 0)', n;

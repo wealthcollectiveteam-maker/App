@@ -17,7 +17,6 @@ import {
   View,
 } from 'react-native';
 
-import { MealBuilderSheet } from '@/components/MealBuilderSheet';
 import { Micro, Serif, Skew, TheWall } from '@/components/primitives';
 import { QuickAddSheet } from '@/components/QuickAddSheet';
 import { ScreenState } from '@/components/ScreenState';
@@ -309,13 +308,16 @@ function MealsTab() {
         )}
       </View>
 
-      <MealBuilderSheet
-        meal={nutritionMeal}
-        onClose={() => setNutritionMeal(null)}
-      />
+      {/* One sheet, two jobs: nutritionMeal set means "attach figures to
+          this meal", null means "log a new one". The USDA search sheet that
+          used to handle the first case is gone. */}
       <QuickAddSheet
-        visible={quickAddOpen}
-        onClose={() => setQuickAddOpen(false)}
+        visible={quickAddOpen || nutritionMeal != null}
+        meal={nutritionMeal}
+        onClose={() => {
+          setQuickAddOpen(false);
+          setNutritionMeal(null);
+        }}
       />
     </View>
   );

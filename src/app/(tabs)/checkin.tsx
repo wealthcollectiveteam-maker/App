@@ -1,12 +1,10 @@
 import { useRouter } from 'expo-router';
 import {
-  CameraIcon as Camera,
   CheckIcon as Check,
 } from 'phosphor-react-native';
 import React from 'react';
 import {
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -26,7 +24,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { Micro, PrimaryButton, Serif, Skew } from '@/components/primitives';
 import { ScreenState } from '@/components/ScreenState';
 import { WorkoutSuggestion } from '@/components/WorkoutSuggestion';
-import type { TaskDef, TaskKey } from '@/data/types';
+import type { TaskDef } from '@/data/types';
 import { useStartTimer } from '@/hooks/useStartTimer';
 import {
   selectDoneCount,
@@ -43,41 +41,6 @@ const FLY_THRESHOLD = 90;
 /** "10:00" from a whole-minute timer target. */
 const clockFace = (minutes: number) =>
   `${String(minutes).padStart(2, '0')}:00`;
-
-function ProofRow({ taskKey }: { taskKey: TaskKey }) {
-  const proof = useAppStore((s) => s.proofs[taskKey]);
-  const attachProof = useAppStore((s) => s.attachProof);
-
-  return (
-    <Pressable
-      onPress={() => {
-        if (!proof) {
-          attachProof(taskKey);
-          toast('Proof attached');
-        }
-      }}
-      accessibilityRole="button"
-      accessibilityLabel={proof ? 'Proof attached' : 'Attach proof, optional'}
-      style={styles.proofRow}
-    >
-      <View
-        style={[
-          styles.proofSquare,
-          proof && { borderColor: colors.accent, backgroundColor: colors.accentDeep },
-        ]}
-      >
-        {proof ? (
-          <Check size={15} weight="bold" color={colors.accent400} />
-        ) : (
-          <Camera size={15} color={colors.textLow} />
-        )}
-      </View>
-      <Micro color={proof ? colors.accent400 : colors.textLow}>
-        {proof ? 'Proof attached' : 'Proof optional'}
-      </Micro>
-    </Pressable>
-  );
-}
 
 /**
  * Top card of the swipe deck. Gesture runs through
@@ -170,7 +133,6 @@ function TopCard({
           {suggestion && (
             <WorkoutSuggestion taskKey={task.key} workout={suggestion} />
           )}
-          {task.proof && <ProofRow taskKey={task.key} />}
 
           <View style={{ flex: 1, minHeight: 24 }} />
 

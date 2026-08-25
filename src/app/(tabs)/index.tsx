@@ -76,9 +76,13 @@ function StatusBanner() {
 }
 
 /**
- * The right-hand meta on a task row, in priority order: a timer control, a
- * proof note, then the task's own target. Nothing here invents progress the
- * app does not track.
+ * The right-hand meta on a task row: a timer control, then the task's own
+ * target. Nothing here invents progress the app does not track.
+ *
+ * It used to show "Proof optional" for tasks flagged `proof`, which said the
+ * app would accept a photo. It never could — there is no capture, no upload
+ * and nowhere to put one — so the line advertised a feature that did not
+ * exist. The progress photo is now honestly a checkbox; see TASK_BASES.
  */
 function TaskMeta({ task }: { task: TaskDef }) {
   const startTimer = useStartTimer();
@@ -93,7 +97,6 @@ function TaskMeta({ task }: { task: TaskDef }) {
       />
     );
   }
-  if (task.proof) return <Micro color={colors.textLow}>Proof optional</Micro>;
   if (task.target) {
     return <Micro color={colors.accent400}>{targetText(task.target)}</Micro>;
   }

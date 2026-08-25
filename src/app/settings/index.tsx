@@ -20,7 +20,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NotificationPermissionBanner } from '@/components/NotificationPermissionBanner';
 import { Card, Kicker, OutlineButton, SegmentedControl } from '@/components/ui';
 import { CHALLENGE_LENGTHS } from '@/constants/challenge';
-import { PRIVACY_POLICY_URL, isPlaceholderLegalUrl } from '@/constants/legal';
+import {
+  PRIVACY_POLICY_URL,
+  TERMS_OF_SERVICE_URL,
+  isPlaceholderLegalUrl,
+} from '@/constants/legal';
 import type {
   ChallengeLength,
   SquadSummary,
@@ -228,15 +232,17 @@ export default function SettingsScreen() {
   const [deleteText, setDeleteText] = useState('');
   const [deleting, setDeleting] = useState(false);
 
-  // Opens the hosted policy in a SFSafariViewController sheet rather than
-  // leaving for Safari, so the user comes straight back to Settings.
-  const openPrivacyPolicy = () => {
-    if (isPlaceholderLegalUrl(PRIVACY_POLICY_URL)) {
-      toast('Privacy Policy URL not set yet');
+  // Opens a hosted document in a SFSafariViewController sheet rather than
+  // leaving for Safari, so the user comes straight back to Settings. Both
+  // documents are hosted, not in-app: they have to be updatable without a
+  // build, and App Store Connect points at the same Privacy Policy URL.
+  const openLegalDoc = (label: string, url: string) => () => {
+    if (isPlaceholderLegalUrl(url)) {
+      toast(`${label} URL not set yet`);
       return;
     }
-    WebBrowser.openBrowserAsync(PRIVACY_POLICY_URL).catch(() =>
-      toast('Could not open the Privacy Policy'),
+    WebBrowser.openBrowserAsync(url).catch(() =>
+      toast(`Could not open the ${label}`),
     );
   };
 
@@ -474,16 +480,14 @@ export default function SettingsScreen() {
       <Kicker style={styles.sectionKicker}>Legal</Kicker>
       <Card>
         <Pressable
-          onPress={() => router.push('/settings/terms')}
+          onPress={openLegalDoc('Terms of Service', TERMS_OF_SERVICE_URL)}
           style={styles.prefRow}
         >
           <Text style={[styles.rowLabel, { flex: 1 }]}>Terms of Service</Text>
           <CaretRight size={15} color={colors.neutral600} />
         </Pressable>
-        {/* Hosted, not in-app: the policy has to be updatable without a
-            build, and App Store Connect points at the same URL. */}
         <Pressable
-          onPress={openPrivacyPolicy}
+          onPress={openLegalDoc('Privacy Policy', PRIVACY_POLICY_URL)}
           style={[styles.prefRow, styles.rowBorder]}
         >
           <Text style={[styles.rowLabel, { flex: 1 }]}>Privacy Policy</Text>

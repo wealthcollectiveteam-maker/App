@@ -8,7 +8,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
@@ -134,15 +133,6 @@ function TaskFormSheet({
         placeholderTextColor={colors.neutral600}
         style={styles.input}
       />
-      <View style={styles.formRow}>
-        <Text style={styles.formLabel}>Requires proof photo</Text>
-        <Switch
-          value={proof}
-          onValueChange={setProof}
-          trackColor={{ false: colors.neutral800, true: colors.accent700 }}
-          thumbColor={proof ? colors.accent300 : colors.neutral500}
-        />
-      </View>
       <View style={styles.formRow}>
         <Text style={styles.formLabel}>Timer duration (minutes, optional)</Text>
         <TextInput

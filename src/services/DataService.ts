@@ -30,10 +30,8 @@ import type {
   WorkoutLog,
   WorkoutLogInput,
 } from '@/data/types';
-import type { FoodDetail, FoodSearchResult } from '@/lib/fdc';
 import { normalizeInviteCode } from '@/lib/inviteCode';
 import type { IDataService, RejectedWrite } from '@/services/contract';
-import { NutritionService } from '@/services/NutritionService';
 import {
   composeTaskSet,
   DEFAULT_ACTIVITY_TYPES,
@@ -182,8 +180,6 @@ export class MockDataService implements IDataService {
     );
     return {
       ...tally,
-      day1PhotoUri: null,
-      day75PhotoUri: this.state.proofs.photo ?? null,
     };
   }
 
@@ -356,7 +352,6 @@ export class MockDataService implements IDataService {
     this.initTaskConfig(this.state.tier, this.state.day);
     AsyncStorage.removeItem(TIMER_STORAGE_KEY).catch(() => {});
     AsyncStorage.removeItem(MockDataService.SAVED_MEALS_KEY).catch(() => {});
-    NutritionService.clearCache().catch(() => {});
   }
 
   // ---- Workout timer ----
@@ -409,14 +404,6 @@ export class MockDataService implements IDataService {
   }
 
   // ---- Nutrition ----
-
-  searchFoods(query: string): Promise<FoodSearchResult[]> {
-    return NutritionService.searchFoods(query);
-  }
-
-  getFoodDetail(fdcId: number): Promise<FoodDetail> {
-    return NutritionService.getFoodDetail(fdcId);
-  }
 
   // ---- Saved meals (persisted locally; sync lands with the backend) ----
 

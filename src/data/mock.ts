@@ -64,7 +64,6 @@ export function buildScenario(scenario: Scenario): ScenarioState {
         missedDay: false,
         dayComplete: false,
         tasksDone: {},
-        proofs: {},
         why: WHY,
         journal: [],
         meals: [],
@@ -102,7 +101,6 @@ export function buildScenario(scenario: Scenario): ScenarioState {
           read: '1:32 PM',
           diet: '2:10 PM',
         },
-        proofs: {},
         why: WHY,
         journal: [
           {
@@ -157,7 +155,6 @@ export function buildScenario(scenario: Scenario): ScenarioState {
         missedDay: true,
         dayComplete: false,
         tasksDone: {},
-        proofs: {},
         why: WHY,
         journal: [
           {
@@ -207,7 +204,6 @@ export function buildScenario(scenario: Scenario): ScenarioState {
           diet: '8:06 PM',
           photo: '8:10 PM',
         },
-        proofs: { photo: 'mock://day75-photo' },
         why: WHY,
         journal: [
           {

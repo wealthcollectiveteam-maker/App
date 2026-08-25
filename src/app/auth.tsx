@@ -536,12 +536,17 @@ export default function AuthScreen() {
               onPress={startChallenge}
               style={{ marginTop: 18 }}
             />
+            {/* Sign-up is three steps and this is the last one: email, code,
+                then this. It read "Step 2 of 3 — squad next", which was wrong
+                twice — this is the third step, and there is no squad step
+                after it. finishSetup() goes straight to the tabs; a squad is
+                optional and is joined from the Squad tab whenever you like. */}
             <Micro
               size={10}
               color={colors.textLow}
               style={{ marginTop: 16, textAlign: 'center' }}
             >
-              Step 2 of 3 — squad next
+              Step 3 of 3 — squads are optional, add one any time
             </Micro>
           </View>
         )}

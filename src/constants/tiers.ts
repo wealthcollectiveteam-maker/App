@@ -61,7 +61,10 @@ export const TASK_BASES: Record<BuiltinTaskKey, TaskBase> = {
   photo: {
     key: 'photo',
     shortName: 'Progress photo',
-    sub: 'One photo. Same spot every day.',
+    // Says where the photo lives, because the app never sees it. There is
+    // no capture, no upload and no bucket — ticking this off is the
+    // user's word, exactly like every other task here.
+    sub: 'Take it on your phone. Ranked never sees it.',
     proof: true,
   },
 };
@@ -198,7 +201,7 @@ export const TIERS: Record<Tier, TierDef> = {
       {
         key: 'photo',
         name: 'Progress photo',
-        sub: 'One photo. Same spot every day.',
+        sub: 'Take it on your phone. Ranked never sees it.',
         standard: null,
       },
     ],

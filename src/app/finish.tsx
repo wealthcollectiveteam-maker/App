@@ -1,8 +1,8 @@
+import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import {
   BarbellIcon as Barbell,
   BookOpenIcon as BookOpen,
-  CameraIcon as Camera,
   DropIcon as Drop,
   ForkKnifeIcon as ForkKnife,
   MedalIcon as Medal,
@@ -142,16 +142,40 @@ function StepOne({ onNext }: { onNext: () => void }) {
   );
 }
 
-function PhotoSlot({ label }: { label: string }) {
-  return (
-    <View style={{ flex: 1, gap: 6 }}>
-      <Kicker color={colors.neutral500}>{label}</Kicker>
-      <View style={styles.photoSlot}>
-        <Camera size={24} color={colors.neutral600} />
-        <Text style={styles.photoHint}>progress photo</Text>
-      </View>
-    </View>
-  );
+const NEWLINE = String.fromCharCode(10);
+
+/**
+ * Copy the results, and say so ONLY if the copy happened.
+ *
+ * This button used to be `onPress={() => toast('Results copied to share')}` —
+ * the toast and nothing else, on every platform. It reported a success that
+ * had not occurred, which is the worst kind of dead control: the user has no
+ * reason to check, and finds out when they paste.
+ *
+ * The text is built from the same numbers on screen, so what is copied is
+ * what was read. Failure is reported as failure.
+ */
+async function shareResults(
+  results: FinalResults,
+  durationDays: number,
+  feeling: string | null,
+): Promise<void> {
+  const lines = [
+    `${durationDays} days. Done.`,
+    '',
+    `${results.workouts} workout${results.workouts === 1 ? '' : 's'}`,
+    `${results.pagesRead} page${results.pagesRead === 1 ? '' : 's'} read`,
+    // targetText is what the rest of the app uses, so the copied line reads
+    // the same as the screen — and "1 gallons" cannot happen.
+    `${targetText(results.water)} of water`,
+  ];
+  if (feeling) lines.push('', `Feeling: ${feeling}`);
+  try {
+    await Clipboard.setStringAsync(lines.join(NEWLINE));
+    toast('Results copied');
+  } catch {
+    toast('Could not copy — select the text above instead');
+  }
 }
 
 function StepTwo() {
@@ -212,11 +236,6 @@ function StepTwo() {
 
       <AccentDivider style={{ marginVertical: 22 }} />
 
-      <View style={{ flexDirection: 'row', gap: 10 }}>
-        <PhotoSlot label="Day 1" />
-        <PhotoSlot label={`Day ${durationDays}`} />
-      </View>
-
       <View style={styles.statGrid}>
         {[
           { value: results.workouts, label: 'Workouts' },
@@ -254,7 +273,7 @@ function StepTwo() {
 
       <OutlineButton
         label="Share your results"
-        onPress={() => toast('Results copied to share')}
+        onPress={() => shareResults(results, durationDays, feeling)}
         style={{ marginTop: 20 }}
       />
       <OutlineButton
@@ -372,22 +391,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.accent300,
     marginTop: 8,
-  },
-  photoSlot: {
-    height: 210,
-    borderRadius: radius.sm,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.divider,
-    borderStyle: 'dashed',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  photoHint: {
-    fontFamily: font.regular,
-    fontSize: 11,
-    color: colors.neutral600,
   },
   statGrid: {
     flexDirection: 'row',

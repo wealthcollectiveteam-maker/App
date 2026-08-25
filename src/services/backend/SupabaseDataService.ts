@@ -31,7 +31,6 @@ import type {
   WorkoutLog,
   WorkoutLogInput,
 } from '@/data/types';
-import type { FoodDetail, FoodSearchResult } from '@/lib/fdc';
 import { normalizeInviteCode } from '@/lib/inviteCode';
 import {
   api,
@@ -46,7 +45,6 @@ import {
   type IDataService,
   type RejectedWrite,
 } from '@/services/contract';
-import { NutritionService } from '@/services/NutritionService';
 import {
   composeTaskSet,
   DEFAULT_ACTIVITY_TYPES,
@@ -95,7 +93,6 @@ function emptyState(): ScenarioState {
     missedDay: false,
     dayComplete: false,
     tasksDone: {},
-    proofs: {},
     why: '',
     journal: [],
     meals: [],
@@ -801,8 +798,6 @@ export class SupabaseDataService implements IDataService {
         workouts: 0,
         pagesRead: 0,
         water: { value: 0, unit: waterUnit },
-        day1PhotoUri: null,
-        day75PhotoUri: null,
       };
     }
     const { days, completions } = await api.listChallengeHistory(this.challengeId);
@@ -816,10 +811,6 @@ export class SupabaseDataService implements IDataService {
     );
     return {
       ...tally,
-      // Progress photos are captured nowhere yet — see the Day 75 screen,
-      // which renders empty slots. Both stay null until they are.
-      day1PhotoUri: null,
-      day75PhotoUri: null,
     };
   }
 
@@ -1273,7 +1264,6 @@ export class SupabaseDataService implements IDataService {
     const result = await Promise.resolve().then(() => api.deleteAccount());
     if (result.error) throw toBackendError(result.error, 'delete account');
     this.reset();
-    NutritionService.clearCache().catch(() => {});
     await AuthService.signOut();
   }
 
@@ -1339,14 +1329,6 @@ export class SupabaseDataService implements IDataService {
   }
 
   // ===================== nutrition (external API) ========================
-
-  searchFoods(query: string): Promise<FoodSearchResult[]> {
-    return NutritionService.searchFoods(query);
-  }
-
-  getFoodDetail(fdcId: number): Promise<FoodDetail> {
-    return NutritionService.getFoodDetail(fdcId);
-  }
 
   // Saved meal templates stay device-local by design: they are a typing
   // shortcut, not user history, and keeping them off the server avoids

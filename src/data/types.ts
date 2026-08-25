@@ -119,20 +119,6 @@ export interface JournalEntry {
   text: string;
 }
 
-/** One food in a multi-component meal ("Chicken, broiled — 6 oz"). */
-export interface MealComponent {
-  fdcId: number;
-  description: string;
-  quantity: number;
-  unit: string;
-  /** Resolved grams for the whole component — the scaling ground truth. */
-  gramWeight: number;
-  kcal: number;
-  protein: number;
-  carbs: number;
-  fat: number;
-}
-
 /**
  * Optional nutrition enrichment for a logged meal. Never required.
  * Totals are the sum of components (or direct entry via Quick Add).
@@ -142,7 +128,6 @@ export interface MealNutrition {
   protein: number;
   carbs: number;
   fat: number;
-  components?: MealComponent[];
   /** Entered by hand — no search, no network. */
   quickAdd?: boolean;
 }
@@ -321,8 +306,6 @@ export interface FinalResults {
    * one tier and wrong for the other two.
    */
   water: TaskTarget;
-  day1PhotoUri: string | null;
-  day75PhotoUri: string | null;
 }
 
 export type ReportReason =
@@ -351,7 +334,6 @@ export interface ScenarioState {
   missedDay: boolean;
   dayComplete: boolean;
   tasksDone: Partial<Record<TaskKey, string>>; // key -> completion time label
-  proofs: Partial<Record<TaskKey, string>>;
   why: string;
   journal: JournalEntry[];
   meals: Meal[];

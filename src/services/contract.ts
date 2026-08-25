@@ -26,7 +26,6 @@ import type {
   WorkoutLog,
   WorkoutLogInput,
 } from '@/data/types';
-import type { FoodDetail, FoodSearchResult } from '@/lib/fdc';
 
 /**
  * DataService contract. The app talks to this interface only; both the mock
@@ -202,8 +201,6 @@ export interface IDataService {
   /** Records real elapsed training seconds against the completed task. */
   completeTimedTask(taskKey: TaskKey, elapsedSeconds: number): Promise<void>;
   // Nutrition — optional enrichment on meals; owner-read-only when synced.
-  searchFoods(query: string): Promise<FoodSearchResult[]>;
-  getFoodDetail(fdcId: number): Promise<FoodDetail>;
   attachNutrition(mealId: string, nutrition: MealNutrition): Meal[];
   removeNutrition(mealId: string): Meal[];
   getDailyNutritionTotals(): DailyNutritionTotals | null;

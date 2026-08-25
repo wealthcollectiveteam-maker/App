@@ -670,17 +670,19 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
 }
 
 function LeaderboardTab() {
-  const [range, setRange] = useState('THIS WEEK');
-  const week = useAppStore((s) => s.leaderboardWeek);
+  const [range, setRange] = useState('STREAK');
+  // Named `leaderboardWeek` in the store for historical reasons: it ranks by
+  // each member's current flame, not by anything scoped to the week.
+  const byStreak = useAppStore((s) => s.leaderboardWeek);
   const allTime = useAppStore((s) => s.leaderboardAllTime);
   // The self row's tier tag renders live so CUSTOM shows the day it applies.
   const selfTierLabel = useAppStore(selectTierLabel);
-  const rows = range === 'THIS WEEK' ? week : allTime;
+  const rows = range === 'STREAK' ? byStreak : allTime;
 
   return (
     <View style={{ gap: 14 }}>
       <SegmentedControl
-        segments={['THIS WEEK', 'ALL-TIME']}
+        segments={['STREAK', 'ALL-TIME']}
         value={range}
         onChange={setRange}
       />
@@ -720,7 +722,9 @@ function LeaderboardTab() {
         ))}
       </View>
       <Text style={styles.footerNote}>
-        XP resets weekly. Flames don{'\u2019'}t lie.
+        {range === 'STREAK'
+          ? 'Ranked by current flame — longest live streak first.'
+          : 'Ranked by lifetime XP. Nothing here resets.'}
       </Text>
     </View>
   );

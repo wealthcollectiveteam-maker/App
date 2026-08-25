@@ -1,0 +1,110 @@
+PHASE 10C — Make the UI tell the truth
+
+Read CLAUDE.md first. All standing constraints still apply.
+
+Governing rule for this whole phase:
+
+  THE UI MUST NEVER CLAIM SOMETHING HAPPENED THAT DIDN'T.
+
+A control that does nothing, a toast that reports a success that never
+occurred, a counter that describes a step that doesn't exist, a toggle that
+forgets — each of these is a lie to the user. I am about to hand this link to
+five friends. Every lie costs me credibility with them personally.
+
+=============================================================
+PART 1 — Audit first. Report before you fix.
+=============================================================
+
+Walk all 19 routes in a real browser. For EVERY interactive control — button,
+toggle, tappable row, swipe target, link, form field — determine whether it
+does what it appears to do.
+
+Produce a table before changing anything:
+
+  Route | Control | What it appears to do | What it actually does | Verdict
+
+Verdicts: WORKS / DEAD (does nothing) / LIES (claims a result that didn't
+happen) / PARTIAL (works locally, never reaches the server).
+
+Do not skip controls because they look obviously fine. The whole point is that
+I currently cannot tell which ones are real. Show me the table, then fix.
+
+Flag separately anything that needs a product decision from me rather than
+guessing at one.
+
+=============================================================
+PART 2 — Fixes I have already decided
+=============================================================
+
+2.1 Progress photo (HARD tier)
+  Capture and storage were never built. It becomes an honest checkbox.
+  - It stays a real task and counts toward the day exactly like the others.
+  - Swipe completes it. No camera, no upload, no storage bucket.
+  - The card copy must say plainly that the photo stays on your phone — the app
+    does not store or upload it. Something like: "Take it on your phone. Ranked
+    never sees it."
+  - Remove any dead camera/upload/storage code paths rather than leaving them
+    disabled. Report anything you delete.
+
+2.2 Nutrition — manual entry, USDA removed
+  - Delete the USDA FoodData Central lookup entirely. It 404s on ordinary meals
+    like "chicken and rice" and it is not going to get good.
+  - Replace with manual entry: meal name plus calories, protein, carbs, fat.
+    All optional except the name.
+  - Meals must still scope to the current day only. There was a bug once where
+    meals accumulated across the whole challenge — verify by querying, not by
+    looking at the screen.
+  - If a USDA API key exists in .env or config, remove it and tell me. Confirm
+    by grep that it is not in the emitted bundle.
+  - Nutrition is not a scored task in any tier. Do not make it one.
+
+2.3 The share button on finish.tsx
+  It toasts "Results copied to share" and copies nothing, on every platform.
+  Either make it genuinely copy, or remove the button. Your call — but the
+  toast must not appear unless the copy actually succeeded. If you make it work,
+  prove it by reading the clipboard back in the browser.
+
+2.4 "Step 2 of 3" with no step 3
+  Find it, work out what the real count is, and make the label match reality.
+
+2.5 Notification preferences
+  Currently in-memory only — every toggle resets on launch. Persist them.
+  On web, notifications do not exist at all: if the toggles cannot do anything
+  on this platform, say so in the UI rather than offering a control that
+  silently does nothing. Do not show a switch that cannot switch anything.
+
+=============================================================
+PART 3 — Verify, then rebuild
+=============================================================
+
+3.1 Re-run the full suite. All four sets must stay green.
+
+3.2 For each fix, show me evidence rather than asserting it:
+  - the photo task swiping to complete and counting in "x of y"
+  - a manually entered meal, queried straight from Postgres, scoped to today
+  - the share button either copying real text (read it back) or being gone
+  - the corrected step label
+  - notification prefs surviving a full page reload
+
+3.3 Then rebuild and stage, exactly as before:
+  - kill any stale dev server holding a port
+  - npm run build:web -- --clear
+  - both build gates must pass
+  - robocopy dist C:\dev\alymalji.github.io /E   (no /MIR)
+  - name every stale entry-*.js I need to delete by hand
+  - confirm .nojekyll, index.html, 404.html, _expo/ at the Pages repo root
+  - security grep table on the bundle that will be served
+
+3.4 Stop. Do not commit, do not push. I will do both in GitHub Desktop.
+
+=============================================================
+Constraints (unchanged)
+=============================================================
+- Bundle ID com.aly786.rankedfitness. Expo SDK 54. Do not change either.
+- Never commit .env. Never stage it.
+- Anon/publishable key only. Never service_role or sb_secret_.
+- Squadmates must never read another member's metrics, nutrition, journal
+  entries, or workout logs. You are touching nutrition — re-prove that one
+  with an impersonated JWT, not through the UI.
+- HealthKit values are device-memory only.
+- Day snapshots remain immutable.
