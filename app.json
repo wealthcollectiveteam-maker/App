@@ -1,0 +1,76 @@
+{
+  "expo": {
+    "name": "Ranked Fitness",
+    "slug": "ranked-fitness",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "rankedfitness",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0A0B0D",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/13ba3946-9bc4-46e2-afcd-d4a4fd8113ba"
+    },
+    "ios": {
+      "bundleIdentifier": "com.aly786.rankedfitness",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0A0B0D",
+        "foregroundImage": "./assets/adaptive-icon.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-updates",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0A0B0D",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "Ranked Fitness reads your logged food energy, most recent weight, and today's workouts so it can suggest marking your daily tasks complete and pre-fill your optional weekly weight check-in. This data stays on your device and is never uploaded or shared.",
+          "NSHealthUpdateUsageDescription": false,
+          "background": false
+        }
+      ],
+      "expo-localization"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "13ba3946-9bc4-46e2-afcd-d4a4fd8113ba"
+      }
+    }
+  }
+}

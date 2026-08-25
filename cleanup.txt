@@ -1,0 +1,59 @@
+Read CLAUDE.md first.
+
+Pre-submission cleanup. Small, but some of these are things Apple or my friends will
+find.
+
+1. THE DEV MENU MUST NOT SHIP
+
+Long-pressing the RANKED wordmark opens a developer scenario sheet — jump to day 12,
+trigger a missed day, switch tiers. In a production build that is reachable by anyone
+who long-presses the logo, and it can rewrite someone's real challenge state.
+
+Gate it behind `__DEV__` so it does not exist in a production bundle. Not hidden —
+absent. Confirm the same for any other debug affordance: scenario loaders,
+`loadScenario`, mock toggles, anything that mutates state outside normal use.
+
+2. THE MOCK BANNER IN PRODUCTION
+
+Confirm the mock-mode banner can never render in a production build. If credentials
+were somehow missing there, refusing to start is more honest than running on fake data
+— tell me which behaviour you implemented and why.
+
+3. ACCOUNT DELETION — Apple checks this
+
+Guideline 5.1.1(v) requires in-app account deletion. Confirm the flow is reachable in
+two taps or fewer from Settings, actually deletes server-side, signs the user out, and
+does not leave orphaned rows. Report what it removes and what it misses.
+
+4. WHAT HAPPENS WHEN THE NETWORK DIES MID-CHALLENGE
+
+The one scenario nobody has tested. Turn the radio off conceptually and trace it:
+
+- A task completed with no connection — does the optimistic write roll back visibly,
+  or does the user believe it saved?
+- Does the app recover when connection returns, or does it need a relaunch?
+- Is there any path where a user sees their streak as broken because a read failed?
+
+This matters more than it sounds. Someone completing their last task in a basement gym
+must not be told they lost their streak. Report what actually happens; fix anything
+that lies to the user.
+
+5. THE LEFTOVERS
+
+- `getFinalResults` is hardcoded arithmetic — the Day 75 screen shows fabricated
+  numbers. Compute it from real data, or if that is a bigger job than it looks, say so
+  and I will decide.
+- `missedDay` is never set from the server. Confirm the current default is the safe
+  direction (no false alarm) and leave the semantics alone unless you can define them
+  precisely.
+- The name-keyed feed filter misses a blocked user whose name RLS will not resolve.
+
+6. FIRST-RUN SANITY
+
+Delete every account in Supabase, then trace a genuinely fresh install: no session, no
+profile, no challenge, no squad. Every screen must render a real empty state — not
+"undefined", not a spinner that never resolves, not a crash. List each screen and what
+it shows.
+
+After: npx tsc --noEmit, npx expo lint, and a short report — what you fixed, what you
+found and deliberately left, and anything unverified without a device.

@@ -1,0 +1,52 @@
+Read CLAUDE.md first.
+
+Device test: a brand new account completed setup correctly (name, tier, why) and then
+hit the session error screen. Verbatim:
+
+  load blocked users: Could not find a relationship between 'blocked_users' and
+  'profiles' in the schema cache — Searched for a foreign key relationship between
+  'blocked_users' and 'profiles' using the hint 'blocked_users_blocked_fkey' in the
+  schema 'public', but no matches were found. — Perhaps you meant 'feed_items'
+  instead of 'blocked_users'.
+
+Two problems here. Fix both.
+
+PROBLEM 1 — the embedded join names a foreign key that does not exist.
+
+Find the read that requests profiles embedded under blocked_users with the hint
+blocked_users_blocked_fkey. Compare it against what the migrations actually create:
+the real column name on blocked_users, what it references, and the real constraint
+name. Then make the query match the schema.
+
+If the FK genuinely does not exist in the migrations, say so — the fix is then a
+migration, not a query change, and I need to run it against the live project myself.
+Do not invent a constraint name that only compiles.
+
+Check every other embedded PostgREST join in api.ts the same way while you are here.
+This class of bug does not appear until the query runs against the real database, and
+we have just proven the app has never exercised most of these paths. Report any other
+join whose hint does not match a constraint the migrations create.
+
+PROBLEM 2 — one non-essential read failing takes down the entire app.
+
+The blocked-users list is a moderation nicety. A new account has none. It should not
+be able to stop a challenge, a task list, and a journal from loading.
+
+Separate hydrate's reads into two classes:
+
+- ESSENTIAL — challenge, day snapshot, tasks, completions. If these fail, the session
+  error screen is right: the app genuinely cannot function and Retry is the correct
+  offer.
+- OPTIONAL — blocked users, activity feed, squad roster, recents, anything the app can
+  render without. If these fail, log it, leave that surface empty or in its existing
+  empty state, and let the rest of the app load.
+
+Do not swallow the optional failures silently — that is the D7 bug we just fixed.
+Surface them as a toast or a quiet inline notice, but never as a full-screen block.
+
+Getting this split right matters more than the specific FK. On day 12 of a real
+challenge, one flaky read must not present as "your challenge is gone."
+
+After: npx tsc --noEmit, npx expo lint, then a short report — which query was wrong and
+why, any other mismatched joins you found, how you classified each hydrate read, and
+anything unverified without a device or the live project.

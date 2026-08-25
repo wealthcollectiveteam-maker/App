@@ -1,0 +1,84 @@
+PHASE 12B — The tab bar is still wrong on a real iPhone
+
+Read CLAUDE.md first. Standing constraints apply. Small, focused phase.
+
+Phase 12 IS deployed and running — pull-to-refresh works on the device, so the
+SafeAreaProvider change and the CSS rule are both live. The bottom of the screen
+is still wrong: the tab bar sits too high, with dead space below the labels.
+
+You cannot reproduce this. Chrome reports env(safe-area-inset-bottom) = 0, so
+your injected 34px floor only ever applied ONCE in your test. On a real iPhone
+it may be applying twice. Do not guess again — make the device tell us.
+
+=============================================================
+1 — My hypothesis, test it first
+=============================================================
+
+Before Phase 12, the JS provider reported bottom = 0 (that was the bug), so the
+CSS rule was the only thing supplying the inset. Now that there is one
+SafeAreaProvider at the root, the JS value is probably CORRECT — 34px — and the
+CSS rule adds another 34px on top of it.
+
+A bar sitting exactly one inset too high with a dead band below it is what
+double-application looks like.
+
+Check whether the tab bar can receive the inset from both paths at once. If it
+can, the fix is to pick ONE mechanism and make the other impossible — not to
+tune numbers until it looks right. Tell me which one you kept and why.
+
+=============================================================
+2 — Build a temporary on-screen diagnostic
+=============================================================
+
+I have an iPhone and you don't, so give me something I can screenshot.
+
+Add a temporary debug panel, reachable from Settings, that renders these values
+as plain text on screen:
+
+  - matchMedia('(display-mode: standalone)').matches
+  - navigator.standalone
+  - window.innerHeight
+  - window.visualViewport.height
+  - the computed value of env(safe-area-inset-bottom), read by setting a CSS
+    custom property to it and reading that property back off an element
+  - useSafeAreaInsets() -> top, bottom, left, right
+  - the tab bar element's computed paddingBottom, height, and
+    getBoundingClientRect().bottom
+  - document.documentElement.clientHeight
+
+Plain readable text, one per line, big enough to read in a screenshot. No
+styling effort needed.
+
+This panel is TEMPORARY. Gate it behind the same mechanism the dev scenario
+sheet uses so it can never appear for a normal user, and put a comment on it
+saying it is to be removed once the layout is confirmed.
+
+=============================================================
+3 — What correct looks like
+=============================================================
+
+On a home-indicator iPhone in standalone mode:
+  - the tab bar's bottom edge sits at the bottom of the viewport
+  - its labels clear the home indicator
+  - there is NO band of empty space between the labels and the indicator
+  - no screen content is hidden behind the bar at any scroll position
+
+State plainly which of those you can verify and which you cannot. Do not report
+this as confirmed — I will check it on the phone and send you the numbers from
+the debug panel.
+
+=============================================================
+4 — Rebuild
+=============================================================
+
+Full suite green, tsc and lint clean, then:
+  - npm run build:web -- --clear   (both gates must pass)
+  - robocopy dist C:\dev\alymalji.github.io /E    (no /MIR)
+  - name every stale entry-*.js for me to delete by hand
+  - root check and the security grep table
+  - STOP. Do not commit or push.
+
+Constraints unchanged: bundle ID, Expo SDK 54, no .env, anon key only,
+day snapshots immutable, the UI must never claim something happened that didn't.
+
+Measured from a real device screenshot: the tab bar occupies ~140pt from its top border to the bottom of the viewport, where ~83pt is expected. The excess is ~55-60pt, consistent with the inset applying twice plus the 10px floor. Content is no longer clipped, which means the root SafeAreaProvider fix worked and the CSS override is now the redundant one.

@@ -1,0 +1,17 @@
+Read CLAUDE.md first.
+
+A previous agent run committed partial work. Before writing any code, audit and report:
+
+1. src/services/backend/SupabaseDataService.ts — which DataService methods are
+   implemented against real Supabase, which are stubs, which throw.
+2. src/services/index.ts — does it select the Supabase implementation by default?
+   Does EXPO_PUBLIC_USE_MOCK=1 still return the mock?
+3. Does an auth flow exist (email → OTP → display name → squad)? What's missing?
+4. src/services/contract.ts and src/services/taskProjection.ts — what are they for,
+   are they wired in?
+5. Migrations 0003 and 0004: show me the exact workout_logs RLS policy. It has one
+   policy — confirm whether it has a WITH CHECK clause, not just USING. Without
+   WITH CHECK, a user could insert rows attributed to someone else.
+6. Do 0003/0004 apply the 0002 allow-list grant pattern?
+
+Report only. Write no code yet.

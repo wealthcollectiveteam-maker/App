@@ -1,0 +1,45 @@
+Read CLAUDE.md first.
+
+Device test on the real backend. Two issues.
+
+BUG 1 — the invite code is unreadable and uncopyable. This is blocking.
+
+Creating a squad reports that an invite code was made, but the Squad screen renders it
+as dots, and copying it puts dots on the clipboard rather than the code.
+
+Nobody can join a squad without reading this code out to a friend, so this is the
+single thing standing between a working app and a working squad.
+
+Diagnose before fixing:
+
+1. Does the server actually generate and store a code? Find where create_squad
+   produces invite_code and what the client receives back.
+2. How is the code rendered? If it is a TextInput with secureTextEntry, that explains
+   both the dots and the clipboard — iOS will not release the contents of a secure
+   field. It should be plain Text, not an input at all.
+3. What does the copy control actually put on the clipboard — the rendered string, or
+   the value from state?
+
+Then fix. The code should render as plain, large, selectable monospace text, and the
+copy control should copy the value from state, never scrape the view. Add a visible
+confirmation that the copy succeeded.
+
+While you are there: an invite code is meant to be read aloud and typed by a friend.
+Confirm the join path accepts it case-insensitively and tolerates surrounding
+whitespace, since it will arrive pasted out of a text message.
+
+BUG 2 — confirm what the running-timer notification actually says.
+
+Spec was that it carries the absolute end time — "Workout 1 — 45:00 · ends at 7:05 PM"
+— because a live countdown is impossible in a notification and the clock time is the
+useful information on a locked phone.
+
+Report the literal string it posts today. If it does not include the end time, add it.
+Do the same for the halfway and 5-minute notifications, and make sure each states
+which task it belongs to by name.
+
+Do not attempt Live Activities. That decision stands.
+
+After: npx tsc --noEmit, npx expo lint, then a short report — what the invite code bug
+actually was, the exact notification strings before and after, and anything you could
+not verify without a device.

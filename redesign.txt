@@ -1,0 +1,200 @@
+Read CLAUDE.md first.
+
+Redesign the app to the attached schematics. new-ui.pdf is in the repo root — read it.
+It is the source of truth for layout. This document is the source of truth for tokens,
+behaviour, and what must not change.
+
+This is a visual pass over working screens. Do not alter data flow, completion logic,
+the snapshot model, or any service call. If a layout change would require a data
+change, stop and tell me instead of doing it.
+
+Work in the order below. Typecheck and report after each part.
+
+============================================================
+PART 0 — DECISIONS. Read before anything else.
+============================================================
+
+You raised four things after reading new-ui.pdf. All four are correct. Here are the
+rulings — they override the mockups where they conflict.
+
+**1. The third tier stays SOFT. Do not add a CUSTOM tier.**
+
+You are right that this is a domain change wearing a design change's clothes. CUSTOM is
+already the label `displayTierLabel()` derives at render time when a target sits below
+its tier standard — that meaning was chosen deliberately and is live. A selectable
+CUSTOM tier would give one word two meanings, and would touch TIERS, the tier column,
+and day-start snapshots to do it.
+
+The mockup is overridden. Render the third card as **SOFT**, keep all three penalty
+behaviours exactly as built, and leave `displayTierLabel()` alone.
+
+**2. "Miss a task, restart at day one" is Hard-only. Move it.**
+
+`restartsChallenge` is true for hard and false for the other two, so as a blanket line
+under the heading it is simply false for two thirds of users. Move the consequence
+inside each tier card, worded for that tier:
+
+  HARD    — Miss a task, restart at day one.
+  MEDIUM  — Miss a task, the streak resets. Your day count continues.
+  SOFT    — Miss a task, the streak resets.
+
+Derive the wording from the tier config, not from three hardcoded strings, so it can
+never drift from the rules again.
+
+**3. Type: two families do the work. A third is allowed for the wordmark only.**
+
+Inter (400/500/600/700/900) for all UI, plus one serif italic for quotes and
+descriptors. If a condensed italic display face meaningfully improves the RANKED
+wordmark, you may add it — but **only** for the wordmark and the large day numeral,
+where it appears once per screen and can be subset small. If that turns fiddly, Inter
+900 italic with tight tracking is an acceptable stand-in. Do not introduce a third face
+for body, labels, or buttons.
+
+**4. The splash colour must move with the ground, and this one is urgent.**
+
+Correct. ship-prep set splash and adaptive-icon background to `#151724`, and neither can
+ship over the air. Update both to the new ground colour as part of Part 1, in the same
+commit as the tokens — not later. A cold launch that flashes navy into a near-black
+first frame would be permanent until the next binary.
+
+Report the exact values you set and where, so I can confirm before the production
+build.
+
+============================================================
+PART 1 — Replace the rules, then the tokens
+============================================================
+
+CLAUDE.md's design section describes the old system and will fight this. Replace that
+section with:
+
+  Ground is near-black. Accent blue is a FILL, not only an outline — primary actions
+  are solid blue. Skewed parallelogram shapes are the signature form: badges, timer
+  controls, ping buttons, save controls. Two type families only: a grotesque (Inter)
+  for everything structural, and a serif italic reserved for quotes and descriptors.
+  Uppercase micro-labels carry wide letter-spacing. Headings are heavy and tight.
+  All colour comes from constants/theme.ts. No hardcoded hex anywhere else.
+
+Then replace the palette in constants/theme.ts. Sample exact values from the PDF;
+these are the intended targets:
+
+  bg         #0A0B0D    near-black ground
+  surface    #131519    cards
+  surfaceAlt #1A1D23    chips, avatar tiles, inactive segments
+  line       #22262E    hairlines
+  accent     #1E5BFF    electric blue, used as a FILL
+  accentDeep #10306B    filled chips, dim accent states
+  textHi     #F2F3F5
+  textMid    #8B919B
+  textLow    #4E545D
+
+Type — two families via @expo-google-fonts:
+
+  Inter 400 / 600 / 700 / 900 — everything structural
+  Instrument Serif Italic — quotes and descriptors ONLY: the why-quote, task
+  descriptors, journal entries, and the tier-penalty line
+
+Scale:
+  Display numerals (01, 03/06, 10:00, stat figures) — Inter 900, tight tracking, very
+  large. The day number on Home is the largest element on that screen.
+  Screen headings (Check-in, Track, Squad, Pick your tier.) — Inter 700-800, tight.
+  Wordmark RANKED — Inter 900 italic, tight.
+  Micro-labels (OF 75 DAYS, 2 OF 6 TODAY, PROOF OPTIONAL, INVITE CODE) — Inter 600,
+  10-11px, uppercase, letter-spacing ~0.14em.
+  Body — Inter 400-500.
+
+============================================================
+PART 2 — Build the primitives once
+============================================================
+
+Every screen assembles from these. Build them properly and Part 3 is mechanical.
+
+- **Skew** — the parallelogram. skewX '-12deg' on the container, counter-skew '12deg'
+  on the inner label so the shape slants and the text stays upright. Filled variant
+  (tier badge, primary actions) and outlined variant (TIMER, START TIMER, SAVE ENTRY,
+  PING). **Get the counter-skew right** — slanted text inside a slanted box reads as a
+  rendering bug, not a style.
+
+- **SegmentBar** — N discrete segments with gaps; filled = accent, empty = surfaceAlt.
+  Under the day number on Home and on every squad member row. Segment count is always
+  that member's own task count. Never hardcode 6, and never use the viewer's count for
+  someone else's row — that bug already bit us once.
+
+- **TheWall** — 75 cells, 15 across x 5 down. States: done (accent fill), today
+  (outlined), future (surfaceAlt), and a distinct marker on cell 75. Legend below:
+  DONE · TODAY · DAY 75.
+
+- **DiamondBadge** — 45deg-rotated square with an upright numeral inside. Locked =
+  textLow outline; earned = accent.
+
+- **StatBox** — large figure over a tiny uppercase label.
+
+- **TaskRow** — square checkbox, label, right-aligned meta. Completed rows strike
+  through and drop to textMid.
+
+Primary buttons are now **solid accent with dark text** — GO TO CHECK-IN, START DAY 01.
+This reverses the old outlined-only rule. Secondary actions stay outlined.
+
+============================================================
+PART 3 — The screens
+============================================================
+
+Layout comes from the PDF. Behaviour does not change.
+
+**Home** — wordmark left, tier badge + STREAK right. Enormous day number with
+OF 75 DAYS / X OF N TODAY set small beside it. SegmentBar. Why-quote in serif italic.
+TaskRows with checkboxes; completed struck through with a timestamp; right-side meta
+(64 OZ LEFT, a skewed TIMER, PROOF OPTIONAL). Solid blue GO TO CHECK-IN. Squad strip:
+initials tiles, active member underlined accent, streak right.
+
+**Check-in** — heading with X OF N DONE right. One large surface card with an accent
+rule down its left edge: TASK / 03/06, task name huge over two lines, descriptor in
+serif italic, then large ghost timer numerals with a skewed START TIMER beside them.
+Footer: LATER | SWIPE TO COMPLETE. Below the card, a chip grid of all tasks — completed
+chips show a check on accentDeep, the current one reads NOW with an accent border.
+
+**Track** — heading with JOURNAL / MEALS / MILESTONES, active tab underlined accent.
+**The Wall** card at top with 1 / 75 right. Below, today's entry card: DAY 01 —
+TODAY'S ENTRY / timestamp, entry in serif italic, and a How did today go? field with a
+skewed SAVE ENTRY.
+
+**Squad** — group card with name, squad streak, invite code (26px monospace, still
+selectable and copyable — do not regress that). Member rows: initials tile, name,
+SegmentBar, n/N, skewed PING. Header right shows pings left. Activity feed below under
+TODAY, newest carrying an accent left rule.
+
+**You** — avatar tile with accent underline, name, LVL / XP / DAY line, XP bar. Three
+StatBoxes: CURRENT DAY, BEST FLAME, PERFECT DAYS. Badges card: five DiamondBadges —
+1 DAY ONE, 7 WEEK ONE, 10 DOUBLE DIGITS, 38 HALFWAY, 75 FINISHER. WHY I STARTED card
+with accent left rule. Then My Challenge, Settings, Invite code.
+
+**Onboarding tier picker** — giant ghost 75 bleeding off the top-right. Heading over
+Pick your tier. Tier cards, selected one accent-bordered with a SELECTED tab. Inline
+WHY field. Solid blue START DAY 01. Footer STEP 2 OF 3.
+
+### Three conflicts — resolve them this way
+
+1. **"NO EDITS" contradicts the app.** Editable tasks and targets exist and My
+   Challenge is on the You screen. Keep the editing. Use **75 DAYS. NO SHORTCUTS. NO
+   MERCY.** and replace "Locked once you start" with **"Changes start tomorrow. Never
+   today."** — true to the snapshot model and a stronger promise than a false one.
+
+2. **The third tier reads CUSTOM, not SOFT.** Rename in the UI only. **Keep all three
+   penalty behaviours exactly as built.** Label change, not a rules change.
+
+3. **Progress photo appears as a task.** Render it with PROOF OPTIONAL meta and let it
+   complete like any other task. Photo upload and storage stay cut.
+
+============================================================
+CONSTRAINTS
+============================================================
+
+No data-flow changes. No service changes. No new dependencies beyond the two font
+families. Do not bump Expo off 54. Do not change the bundle ID. Every colour from
+theme.ts — grep and prove no hardcoded hex outside it when you're done.
+
+Accessibility: text must stay legible at the system's larger sizes; do not clamp font
+scaling below 1.0. Check the 26px invite code and the day number both survive it.
+
+After each part: npx tsc --noEmit, npx expo lint, and a short report — what changed,
+anything in the PDF you could not implement and why, and anything unverified without a
+device.

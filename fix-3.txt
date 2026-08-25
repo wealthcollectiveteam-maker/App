@@ -1,0 +1,38 @@
+Read CLAUDE.md first.
+
+Device test found two things. Fix the second; the first is a Supabase dashboard
+setting I am handling.
+
+BUG — a new account skips setup entirely and lands on Day 1 with a tier nobody chose.
+
+Reproduced: brand new email, signed in by tapping the emailed link (not by typing a
+code). Landed straight on Day 1 with a task list. Never asked for a tier, never asked
+for a display name, never asked for a why.
+
+Diagnose before changing anything, and report what you find:
+
+1. Trace both entry paths — typed OTP via verifyOtp, and deep link via
+   completeAuthFromUrl / setSession. Does the deep-link path call checkAccount(), or
+   does it go straight to completeSignIn()?
+2. If a challenge already exists for this user, where did it come from and what tier
+   did it get? Was it created before any tier was chosen?
+3. checkAccount() treats only "no challenge for user" as a new account. On the deep
+   link path, is that check reached at all?
+
+Then fix:
+
+- Setup must run for a new account on EVERY entry path. Typed code and deep link must
+  converge on the same session state machine, not two parallel ones.
+- No challenge row may be created before the user has chosen a tier. Tier is not
+  defaultable — it decides the task set and the missed-day penalty, so a silent
+  default is a wrong challenge, not a convenient one.
+- Setup order stays: display name, then tier, then why, then create_challenge +
+  get_or_freeze_today.
+- An existing account signing in must never see setup again, on either path.
+
+Also confirm: if a user abandons setup halfway and relaunches, do they resume at
+setup, or land in a broken half-created state? A user with an auth row and no
+challenge must go back to setup, not to an empty Day 1.
+
+After: npx tsc --noEmit, npx expo lint, then a short report — what you found, what
+changed, how I test both paths on device, and anything unverified without hardware.

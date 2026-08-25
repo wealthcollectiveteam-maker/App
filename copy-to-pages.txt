@@ -1,0 +1,46 @@
+Task: copy the built web export into my GitHub Pages site repo and commit it.
+
+Context:
+- App repo: C:\dev\App (branch cursor/ranked-fitness-75-hard-0c7a)
+- Pages repo: a folder under C:\dev ending in ".github.io" — find it yourself with a directory listing, do not guess the name. If there is more than one, stop and ask me.
+
+Steps:
+
+1. In C:\dev\App run `npm run build:web`. Confirm it succeeds and that dist/ contains:
+   - index.html
+   - .nojekyll          <-- MANDATORY. Without it GitHub Pages runs Jekyll,
+                            which deletes every path starting with an underscore,
+                            and the entire bundle lives under _expo/. The site
+                            will load a blank page.
+   - 404.html
+   - _expo/ (the JS bundle)
+   - manifest.json
+   If .nojekyll is missing, stop and tell me — do not continue.
+
+2. Wipe the old contents of the Pages repo folder EXCEPT the .git folder.
+   Do not delete .git. If the folder only has a README, deleting it is fine.
+
+3. Copy EVERYTHING from dist into the Pages repo folder, including dotfiles.
+   On Windows use robocopy, not xcopy, and not a shell glob:
+     robocopy dist <pages-repo-path> /E
+   (robocopy exit codes 0-7 mean success, not failure — do not treat 1 as an error.)
+   A `dist\*` copy silently skips .nojekyll. That is the one file that breaks the site.
+
+4. Verify inside the Pages repo folder, by listing the actual files:
+   - .nojekyll exists at the ROOT of the repo (not inside a subfolder)
+   - index.html exists at the root
+   - _expo/ exists at the root
+   - 404.html exists at the root
+   Report the top-level file listing back to me.
+
+5. Do NOT commit or push. Stop here and tell me the listing. I will commit
+   through GitHub Desktop myself, because that repo belongs to a different
+   GitHub account than the App repo and I need Desktop to handle the credentials.
+
+6. Also report: the total size of the copied folder, and whether any file
+   exceeds 100 MB (GitHub's hard per-file limit).
+
+Constraints (unchanged):
+- Do not modify anything in C:\dev\App other than regenerating dist/.
+- Do not commit .env anywhere, ever.
+- Do not change the bundle ID or the Expo SDK version.

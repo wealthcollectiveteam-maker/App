@@ -1,0 +1,40 @@
+Read CLAUDE.md first.
+
+Build the auth flow. AuthService.ts already implements requestOtp / verifyOtp /
+getUserId / signOut correctly against signInWithOtp + verifyOtp — it is imported by
+nothing. Wire it up; do not rewrite it.
+
+Use existing components and the existing theme. Plain and functional. No cinematic
+onboarding, no redesign.
+
+What to build:
+
+1. Email entry screen — no screen, no route, no Stack.Screen exists.
+2. OTP code entry and verify.
+3. Session gate on cold launch. _layout.tsx currently renders tabs unconditionally.
+   Signed out goes to the email screen; signed in goes to tabs.
+4. Call SupabaseDataService.hydrate(userId) after sign-in and on cold launch with a
+   restored session. It is never called today, so this.userId stays null and the
+   mirror stays empty — that is the root of half the defects in the audit.
+5. Display name to profiles. api.upsertProfile is unused; Settings' name field only
+   sets profileName in Zustand — not AsyncStorage, not Supabase.
+6. Challenge creation. api.createChallenge is unused, so a new user has no challenges
+   row and get_or_freeze_today() raises "no challenge for user". A new account must
+   end up with a challenge, a tier, and a day-1 snapshot.
+7. Sign out — AuthService.signOut exists but is unwired. Wire it in Settings, and
+   clear the mirror on sign-out.
+8. D5 — deleteAccount never signs out. The comment claims the RPC signs the session
+   out; it does not. Call signOut after deletion so the user isn't left holding a
+   valid JWT for a profile row that no longer exists.
+
+Session persistence uses the AsyncStorage auth adapter. Handle the OTP deep link.
+
+Squad create / join already works — do not rebuild it. Task setup already lives in
+My Challenge — do not duplicate it.
+
+Done means: a brand new email can sign up, land on a real day 1 with a task list,
+create or join a squad, complete a task that persists across a force-quit, and sign
+out and back in to the same state. Solo mode works with no squad row.
+
+After: npx tsc --noEmit, npx expo lint, then a short report — what changed, files
+touched, exactly how I test it on device, and anything unverified without hardware.
