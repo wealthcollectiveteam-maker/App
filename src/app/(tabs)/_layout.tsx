@@ -1,11 +1,24 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppHeader } from '@/components/AppHeader';
 import { TimerMiniBar } from '@/components/TimerMiniBar';
 import { colors, font, microTracking } from '@/theme/tokens';
+
+/**
+ * TEMPORARY — Phase 12B. The on-screen layout diagnostic, reached through the
+ * same guarded-require shape the dev scenario sheet uses, so that a build made
+ * without the flag does not merely hide it: the module is never required and
+ * Metro leaves it out. Delete this, `@/components/LayoutDebug`, and the row in
+ * Settings once the tab bar is confirmed on a real iPhone.
+ */
+const LayoutDebug: typeof import('@/components/LayoutDebug') | null =
+  __DEV__ || process.env.EXPO_PUBLIC_LAYOUT_DEBUG === '1'
+    ? // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('@/components/LayoutDebug')
+    : null;
 
 const LABELS: Record<string, string> = {
   index: 'HOME',
@@ -26,18 +39,25 @@ interface TabBarProps {
  */
 function TabBar({ state, navigation }: TabBarProps) {
   const insets = useSafeAreaInsets();
-  // On web the browser owns this value: see the [data-safe-bottom] rule in
-  // +html.tsx. The 10 here is the same floor that rule starts from, so if the
-  // stylesheet ever fails to apply the bar still clears the bottom edge — and
-  // because CSS OVERRIDES this property rather than adding to it, the inset
-  // can never be counted twice.
-  const paddingBottom =
-    Platform.OS === 'web' ? 10 : Math.max(insets.bottom, 10);
+  // THE ONLY PLACE the bottom inset is applied, on every platform.
+  //
+  // Phase 12 had this read 10 on web and let a `!important` CSS rule in
+  // +html.tsx supply the real number, because the JS provider was believed to
+  // report zero there. With one SafeAreaProvider at the root it does not: the
+  // library's probe div is measured synchronously on mount and a first style
+  // resolution fires no transition, so this value is the browser's own from
+  // the first commit. Two writers of one property is what made the bar
+  // unreasonable-about; the CSS rule is gone and this is the survivor,
+  // because it is also the only one native can use.
+  //
+  // max() rather than +: a device with no home indicator reports 0 and still
+  // needs the labels off the bottom edge.
+  const paddingBottom = Math.max(insets.bottom, 10);
   return (
     <>
       <TimerMiniBar />
       <View
-        {...({ dataSet: { safeBottom: '' } } as object)}
+        ref={(node) => LayoutDebug?.captureTabBar(node)}
         style={[styles.bar, { paddingBottom }]}
       >
         {state.routes.map((route, index) => {
@@ -87,24 +107,29 @@ function TabBar({ state, navigation }: TabBarProps) {
 
 export default function TabLayout() {
   return (
-    <Tabs
-      tabBar={(props) => <TabBar {...props} />}
-      screenOptions={{
-        header: () => <AppHeader />,
-        headerShown: true,
-        sceneStyle: { backgroundColor: colors.bg },
-      }}
-    >
-      {/* Home is the only screen that carries STREAK beside the tier badge. */}
-      <Tabs.Screen
-        name="index"
-        options={{ header: () => <AppHeader showStreak /> }}
-      />
-      <Tabs.Screen name="checkin" />
-      <Tabs.Screen name="track" />
-      <Tabs.Screen name="squad" />
-      <Tabs.Screen name="you" />
-    </Tabs>
+    <View style={{ flex: 1 }}>
+      <Tabs
+        tabBar={(props) => <TabBar {...props} />}
+        screenOptions={{
+          header: () => <AppHeader />,
+          headerShown: true,
+          sceneStyle: { backgroundColor: colors.bg },
+        }}
+      >
+        {/* Home is the only screen that carries STREAK beside the tier badge. */}
+        <Tabs.Screen
+          name="index"
+          options={{ header: () => <AppHeader showStreak /> }}
+        />
+        <Tabs.Screen name="checkin" />
+        <Tabs.Screen name="track" />
+        <Tabs.Screen name="squad" />
+        <Tabs.Screen name="you" />
+      </Tabs>
+      {/* TEMPORARY — Phase 12B tab-bar diagnostics. Remove with the rest of
+          @/components/LayoutDebug once the layout is confirmed on device. */}
+      {LayoutDebug ? <LayoutDebug.LayoutDebugOverlay /> : null}
+    </View>
   );
 }
 

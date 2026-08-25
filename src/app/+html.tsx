@@ -25,19 +25,20 @@ import { colors } from '@/theme/tokens';
  *    reads are real on a notched phone; `user-scalable=no` because a
  *    double-tap zoom on a tab bar is a misfire, not a gesture.
  *
- * 4. THE BOTTOM INSET, IN CSS. react-native-safe-area-context does not read
- *    env() on web. It appends a hidden probe div, gives it
- *    `padding: env(safe-area-inset-*)`, measures the computed padding once on
- *    mount, and after that only updates when a CSS TRANSITION on that padding
- *    fires. Its documented initial value on web is zero, for SSR. So the
- *    first paint always believes there is no home indicator, and if the real
- *    value is already in place before the probe is inserted there is no
- *    transition to notice — the app can believe that for ever.
+ * 4. NO SAFE-AREA CSS HERE. Phase 12 added a `[data-safe-bottom]` rule that
+ *    set the tab bar's padding-bottom from env(safe-area-inset-bottom) with
+ *    `!important`, on the belief that react-native-safe-area-context reports
+ *    zero on web. It does not: its probe div is appended to the body and read
+ *    back with getComputedStyle in the same synchronous block, and a first
+ *    style resolution runs no transition, so the value it reports is the real
+ *    one from the first commit. The rule therefore duplicated a job the JS
+ *    already did, and did it somewhere the component could not see — the tab
+ *    bar's inline style said 10px while the computed style said 34px, which
+ *    is precisely what made this bug impossible to reason about.
  *
- *    A tab bar that believes bottom = 0 puts its labels inside the home
- *    indicator's gesture area, where iOS eats the taps. So the bar's bottom
- *    padding is taken straight from the browser here instead. It overrides
- *    rather than adds, so it can never double up with the JS value.
+ *    ONE mechanism now owns the bottom inset, and it is the JS one in
+ *    `(tabs)/_layout.tsx` — the only one that also works on native. Do not
+ *    reintroduce a CSS rule for it; two writers of one property is the bug.
  *
  * The colours come from the token file like everywhere else. `manifest.json`
  * in `public/` repeats them as literals because JSON cannot import — if the
@@ -90,13 +91,5 @@ const backgroundStyle = `
 html, body, #root {
   background-color: ${colors.bg};
   color-scheme: dark;
-}
-
-/* Marked by the tab bar with a safeBottom dataSet entry. max() keeps the
-   10px floor on a device with no home indicator, where env() resolves to 0.
-   The !important is because react-native-web writes the JS value inline. */
-[data-safe-bottom] {
-  padding-bottom: 10px;
-  padding-bottom: max(10px, env(safe-area-inset-bottom)) !important;
 }
 `;

@@ -36,6 +36,18 @@ import { useSessionStore } from '@/store/useSessionStore';
 import { toast } from '@/store/useToastStore';
 import { colors, font, radius, space } from '@/theme/tokens';
 
+/**
+ * TEMPORARY — Phase 12B. The on-screen tab-bar diagnostic, reached the same
+ * guarded-require way the dev scenario sheet is, so a build made without the
+ * flag never requires the module. Delete this, the row it renders and
+ * @/components/LayoutDebug once the layout is confirmed on device.
+ */
+const LayoutDebug: typeof import('@/components/LayoutDebug') | null =
+  __DEV__ || process.env.EXPO_PUBLIC_LAYOUT_DEBUG === '1'
+    ? // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('@/components/LayoutDebug')
+    : null;
+
 const PREF_ROWS: { key: keyof NotificationPrefs; label: string; sub: string }[] = [
   { key: 'timerAlerts', label: 'Timer alerts', sub: 'Running, halfway, 5-min and done notifications' },
   { key: 'pings', label: 'Pings', sub: 'When a squadmate pings you' },
@@ -584,6 +596,37 @@ export default function SettingsScreen() {
           />
         </View>
       </Card>
+
+      {/* TEMPORARY — Phase 12B. Reads numbers off the running app so the tab
+          bar can be diagnosed from a screenshot. Absent from any build made
+          without EXPO_PUBLIC_LAYOUT_DEBUG=1. Remove with the panel. */}
+      {LayoutDebug ? (
+        <>
+          <Kicker style={styles.sectionKicker}>Layout debug (temporary)</Kicker>
+          <Card>
+            <Pressable
+              onPress={() => {
+                // The panel measures the tab bar, which is not on screen here
+                // — Settings is a stack screen above the tabs. Open it, then
+                // go back to where the bar is.
+                LayoutDebug.openPanel();
+                router.back();
+              }}
+              style={styles.prefRow}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowLabel}>Show layout numbers</Text>
+                <Text style={styles.rowSub}>
+                  Opens a read-only panel over the tabs with the viewport,
+                  safe-area and tab bar measurements. Screenshot it. Nothing
+                  here changes anything.
+                </Text>
+              </View>
+              <CaretRight size={15} color={colors.neutral600} />
+            </Pressable>
+          </Card>
+        </>
+      ) : null}
     </ScrollView>
   );
 }
