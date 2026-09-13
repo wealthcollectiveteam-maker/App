@@ -258,6 +258,7 @@ begin
     ('old_repl',    v_old::text),
     ('squad',       v_squad::text),
     ('end_day',     v_endday::text),
+    ('local_date',  v_today::text),
     ('feed_item',   (select id::text from public.feed_items
                       where author = v_uid and kind = 'miss'
                       order by created_at desc limit 1)),

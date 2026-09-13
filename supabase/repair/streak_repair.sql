@@ -199,6 +199,16 @@ declare
   P_EXPECT_ARCHIVE     uuid := '7729ffa2-3679-410f-b7c8-98554504c2be';
   P_EXPECT_REPLACEMENT uuid := '3ad49dc5-e7b8-4a0d-9ecb-8ec5a2ba99c3';
 
+  -- THE DATE GUARD. This run is written for ONE evening: the local date on
+  -- which archive day 20 and replacement day 1 are the same calendar day, and
+  -- on which the replacement has exactly one day to carry. At 12:01 AM local
+  -- that stops being true — the replacement grows a day 2, the archive grows a
+  -- day 21, and the carry-over takes a path nothing has rehearsed. The script
+  -- would still do something defensible; "defensible" is not the standard for
+  -- a hand-run repair. It refuses instead, and the constant is what you edit
+  -- to re-aim it after re-rehearsing. NULL skips the check entirely.
+  P_EXPECT_LOCAL_DATE date := date '2026-09-12';
+
   -- Days on the ARCHIVED challenge the account holder has NAMED, and which the
   -- S1 diagnostic classed `partial` — the app was open, some tasks were
   -- ticked. A day with ZERO ticks is REFUSED here and belongs below.
@@ -367,6 +377,28 @@ begin
   else
     v_arch := v_repl;
     v_offset := 0;
+  end if;
+
+  -- ---- 1a. THE DATE GUARD -------------------------------------------------
+  -- Checked against the CHALLENGE's timezone, not the server's and not the SQL
+  -- editor session's, because every day boundary in this schema is a local one
+  -- (0011, challenge_local_now / day_closes_at). Placed after the shape is
+  -- resolved and before a single row is written, so a refusal costs nothing.
+  --
+  -- It sits BELOW the idempotency NO-OP on purpose: re-running this file on a
+  -- later day, after it has already succeeded, should still say NO-OP rather
+  -- than shout about the date.
+  if P_EXPECT_LOCAL_DATE is not null
+     and (now() at time zone v_arch.timezone)::date <> P_EXPECT_LOCAL_DATE then
+    raise exception
+      'REFUSED: it is % in %, and this repair is written for % and for that '
+      'evening only. On %, and only then, the replacement has exactly one day '
+      'to carry onto archive day %; on any other date it has more, the archive '
+      'has days past that one, and the carry-over takes a path nothing has '
+      'rehearsed. Nothing has been written. Re-rehearse against the real '
+      'shape, then set P_EXPECT_LOCAL_DATE to the day you are running.',
+      (now() at time zone v_arch.timezone)::date, v_arch.timezone,
+      P_EXPECT_LOCAL_DATE, P_EXPECT_LOCAL_DATE, v_offset + 1;
   end if;
 
   -- The named days must be on the archive, closed, and not already met.
@@ -714,6 +746,35 @@ begin
   v_cursor := greatest(1, least(v_maxeval,
                                 coalesce(public.last_closed_day(v_arch), v_maxeval),
                                 v_arch.duration_days));
+
+  -- THE FLAME/SEAL INVARIANT, asserted rather than reasoned about.
+  --
+  -- flame is a COUNT of met days. seal_day() (0011:306-311) and
+  -- evaluate_challenge() (0011:447-454) each PAY one flame when they move a
+  -- day from unsealed to sealed. So any day this recompute COUNTS while
+  -- leaving it UNSEALED could be paid for a second time afterwards, and the
+  -- streak would grow by itself.
+  --
+  -- Days at or below v_cursor cannot be paid again: evaluate_challenge starts
+  -- at last_evaluated_day + 1 (0011:435) and seal_day refuses a day that has
+  -- closed (0011:289-293). Above v_cursor, nothing may be met and unsealed.
+  --
+  -- As written, step 5 seals every carried day it scores and step 6 seals
+  -- every named day, so met implies sealed and this cannot fire. That is an
+  -- argument about the code; the check is about the database.
+  select count(*) into v_n
+    from generate_series(v_cursor + 1, greatest(v_maxeval, v_cursor)) as g(day)
+   where public.day_is_met(v_arch.id, g.day)
+     and not exists (select 1 from public.challenge_days
+                      where challenge_id = v_arch.id and day = g.day
+                        and sealed_at is not null);
+  if v_n > 0 then
+    raise exception
+      'ABORT: % day(s) above the evaluator cursor (%) are met but UNSEALED. '
+      'The flame counts them now and seal_day() or the evaluator would pay '
+      'for them again, landing the streak one higher than the days justify. '
+      'Refusing to leave a streak that can grow by itself.', v_n, v_cursor;
+  end if;
 
   update public.challenges
      set flame              = v_flame,

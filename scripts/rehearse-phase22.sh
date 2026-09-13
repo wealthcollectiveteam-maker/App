@@ -22,6 +22,7 @@
 #   E  REFUSED: the feed item id names a row that is not the one described
 #   F  the ordering constraint, proved directly
 #   G  P_FEED_DISPOSITION = rewrite, the Phase 15 behaviour, still works
+#   H  REFUSED: run on any local date but the one it is written for
 #
 # Same fidelity caveat as test-rls.sh: this is Supabase's shape, not Supabase.
 # It proves the repair's logic against real PostgreSQL semantics — triggers,
@@ -115,6 +116,7 @@ PROD_REPL=3ad49dc5-e7b8-4a0d-9ecb-8ec5a2ba99c3
 PROD_FEED=475bf99b-f485-4df2-9f22-a584cfdcd123
 PROD_SQUAD=1ffcc0c5-3578-4d89-bb67-16be6fd3bcf0
 PROD_DAY=19
+PROD_LOCAL_DATE=2026-09-12
 
 rehearsal_copy() {
   # $1 = output basename, remaining args = extra sed expressions
@@ -127,6 +129,7 @@ rehearsal_copy() {
       -e "s/Day $PROD_DAY/Day $(fx end_day)/g" \
       -e "s/day $PROD_DAY/day $(fx end_day)/g" \
       -e "s/array\[$PROD_DAY\]/array[$(fx end_day)]/g" \
+      -e "s/date '$PROD_LOCAL_DATE'/date '$(fx local_date)'/g" \
       "$@" \
       supabase/repair/streak_repair.sql > "$TMP/$out"
 }
@@ -362,6 +365,33 @@ run_sql "$(tmp_path G_repair.sql)" | grep -E "NOTICE|ERROR"
 psql_run -X -d "$DB" -P pager=off -c "
   select left(id::text,8) as id, kind, text from public.feed_items
    where author = '$(fx owner)' order by created_at;"
+
+echo
+echo "############################################################"
+echo "# SCENARIO H — the date guard: a run on any other local date"
+echo "#              REFUSES before writing a row"
+echo "############################################################"
+build_db
+psql_run -v ON_ERROR_STOP=1 -q -d "$DB" -P pager=off -v ticks=all   -f "$(sql_path supabase/repair/phase22_fixture.sql)" >/dev/null 2>&1
+# Aim the script at TOMORROW. From the script's side that is exactly what
+# running it one minute after local midnight looks like.
+rehearsal_copy H_repair.sql
+TOMORROW=$(psql_run -X -At -d "$DB" -c "select (v::date + 1)::text from public.fx22 where k='local_date'")
+sed -i "s/P_EXPECT_LOCAL_DATE date := date '$(fx local_date)';/P_EXPECT_LOCAL_DATE date := date '$TOMORROW';/" "$TMP/H_repair.sql"
+grep -n "P_EXPECT_LOCAL_DATE date :=" "$TMP/H_repair.sql"
+sync_sql
+run_sql_expect_error "$(tmp_path H_repair.sql)" | grep -E "NOTICE|ERROR" | head -6
+echo "----- and nothing was written -----"
+psql_run -X -d "$DB" -P pager=off -c "
+  select left(id::text,8) as id,
+         case when ended_at is null then 'LIVE' else 'ended' end as state,
+         ended_reason, ended_on_day, flame
+    from public.challenges where owner = '$(fx owner)' order by start_date, ended_at nulls last;
+  select (select count(*) from public.task_completions
+           where challenge_id = '$(fx archive)' and day = $(fx end_day))
+           as completions_on_the_empty_day,
+         (select count(*) from public.feed_items
+           where author = '$(fx owner)' and kind = 'miss') as miss_feed_items;"
 
 echo
 echo "rehearse-phase22: done"
