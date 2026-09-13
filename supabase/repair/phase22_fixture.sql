@@ -18,8 +18,11 @@
 --     * an archive ended by the engine with ended_reason 'missed_day'
 --     * on a day with ZERO completions whose challenge_days row nonetheless
 --       EXISTS, carries a full task_snapshot, outcome 'missed', sealed_at null
---     * a live replacement with TWO days to carry, the first complete and
---       SEALED BY THE APP inside the grace window, the second empty or absent
+--     * a live replacement with TWO days to carry, the second empty or absent,
+--       the first complete — and SEALED BY THE APP only under \set grace open.
+--       Under grace closed, seal_day() refuses the closed day and it stays
+--       unsealed and unjudged, which is production's shape as checked on
+--       2026-09-13 in the afternoon (rehearsal scenario K).
 --     * the replacement's custom-task keys diverging from the archive's, for
 --       the same task NAMES, because the real restart_challenge() made them
 --     * a SECOND, older retired replacement that also points at the archive —
@@ -44,8 +47,8 @@
 --                        'all' = every task, an integer = that many,
 --                        'none' = the row exists with nothing ticked,
 --                        'absent' = no challenge_days row for that day at all.
---                        Production's shape right now is  all:absent  or
---                        all:none — we do not yet know which.
+--                        Production's shape, checked 2026-09-13 in the
+--                        afternoon, is  all:none  with grace closed.
 --   \set grace   open|closed
 --                        Whether the FIRST carried day is still inside its
 --                        grace window. The fixture picks a timezone that makes
@@ -325,10 +328,10 @@ begin
       v_day, v_want, array_length(v_keys, 1);
   end loop;
 
-  -- DAY 1 WAS SEALED BY THE APP, through the real RPC, inside the grace
-  -- window — which is what production says happened at 09:35. seal_day() pays
-  -- a flame on the REPLACEMENT; the repair must recompute over the archive's
-  -- day series and not inherit that number.
+  -- DAY 1 IS OFFERED TO seal_day(), the real RPC. Under grace open it seals and
+  -- pays a flame on the REPLACEMENT, which the repair must not inherit. Under
+  -- grace closed the day has closed, seal_day() refuses it, and day 1 stays
+  -- unsealed and unjudged — production's actual shape on 2026-09-13 PM.
   if public.day_is_met(v_repl, 1) then
     begin
       perform public.seal_day(1);

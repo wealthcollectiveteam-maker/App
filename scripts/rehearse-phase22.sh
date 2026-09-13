@@ -15,9 +15,12 @@
 # see exactly what differs between the rehearsed file and the shipped one.
 #
 # Scenarios (2026-09-13 re-aim — the carry is now TWO days):
-#   A  day 1 complete+sealed, day 2 row exists EMPTY      the live shape
-#   B  day 1 complete+sealed, day 2 row ABSENT            the other live shape
-#   C  as A but the first carried day has CLOSED          same flame, same cursor
+#   A  day 1 complete+sealed, day 2 row exists EMPTY      sealed inside the window
+#   B  day 1 complete+sealed, day 2 row ABSENT            the app not opened today
+#   C  day 1 complete, CLOSED, day 2 EMPTY                day 1 is left UNSEALED: the
+#                                                         fixture's seal_day(1) is refused
+#                                                         because the day has closed
+#                                                         (0011:289). Not asserted here.
 #   D  day 1 PARTIAL and still open                        carried open, no seal
 #   E  day 1 PARTIAL and CLOSED                            REFUSED: a fresh miss
 #   F  REFUSED: the empty day named in P_REPAIR_DAYS
@@ -25,6 +28,11 @@
 #   H  the ordering constraint, proved directly
 #   I  P_FEED_DISPOSITION = rewrite, the Phase 15 behaviour, still works
 #   J  REFUSED: run on any local date but the one it is written for
+#   K  PRODUCTION AS CHECKED 2026-09-13 PM: day 1 complete, CLOSED, sealed_at,
+#      evaluated_at and outcome all NULL; day 2 row EMPTY. The shape is
+#      asserted before the repair, the result after it, and then the real
+#      engine and app RPCs run over it to prove no flame is paid twice.
+#      supabase/repair/phase22_K_check.sql.
 #
 # Same fidelity caveat as test-rls.sh: this is Supabase's shape, not Supabase.
 # It proves the repair's logic against real PostgreSQL semantics — triggers,
@@ -240,8 +248,8 @@ echo
 carry_check
 
 # ---------------------------------------------------------------- C ---------
-banner "SCENARIO C — as A, but the first carried day has already CLOSED" \
-       "              (the repair run after local noon)"
+banner "SCENARIO C — the first carried day has already CLOSED (run after" \
+       "              local noon); seal_day(1) is refused, so day 1 is UNSEALED"
 seed "all:none" closed
 rehearsal_copy C_repair.sql
 sync_sql
@@ -367,6 +375,45 @@ psql_run -X -d "$DB" -P pager=off -c "
            where author = '$(fx owner)' and kind = 'miss') as miss_feed_items,
          (select ended_reason from public.challenges
            where id = '$(fx archive)') as archive_ended_reason;"
+
+# ---------------------------------------------------------------- K ---------
+k_check() {
+  psql_run -v ON_ERROR_STOP=1 -X -d "$DB" -P pager=off \
+    -v stage="$1" -v prod_day="$PROD_DAY" \
+    -f "$(sql_path supabase/repair/phase22_K_check.sql)" 2>&1 | sed 's/^psql:[^ ]* //'
+}
+
+banner "SCENARIO K — PRODUCTION AS CHECKED 2026-09-13 PM: carried day 1" \
+       "              COMPLETE, CLOSED, UNSEALED, UNJUDGED; carried day 2 EMPTY"
+seed "all:none" closed
+# Production's archive holds best_flame = flame. The fixture puts best_flame
+# ABOVE flame on purpose, which would make "best_flame rises to the new flame"
+# unprovable; K mirrors production instead.
+psql_run -v ON_ERROR_STOP=1 -X -q -d "$DB" \
+  -c "update public.challenges set best_flame = flame where id = '$(fx archive)'"
+rehearsal_copy K_repair.sql
+sync_sql
+echo
+echo "----- K: PRECONDITIONS — is this production's shape? -----"
+k_check before
+echo
+echo "----- K: THE REPAIR -----"
+run_sql "$(tmp_path K_repair.sql)"
+echo
+echo "----- K: STATE AFTER -----"
+state
+echo
+echo "----- K: ASSERTIONS -----"
+k_check after
+echo
+echo "----- K: THE CARRY, DAY BY DAY AND KEY BY KEY -----"
+carry_check
+echo
+echo "----- K: THE REPAIR A SECOND TIME — must be a NO-OP -----"
+run_sql "$(tmp_path K_repair.sql)" | grep -E "NOTICE|ERROR"
+echo
+echo "----- K: PAY-ONCE — the real engine and app RPCs over the result -----"
+k_check payonce
 
 echo
 echo "rehearse-phase22: done"
