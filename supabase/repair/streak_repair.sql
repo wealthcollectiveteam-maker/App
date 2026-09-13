@@ -11,9 +11,25 @@
 --   rows themselves, so a database that does not match aborts rather than
 --   improvising.
 --
--- CURRENTLY SET FOR: PHASE 22 — archive 7729ffa2, day 19, ZERO ticks.
+-- CURRENTLY SET FOR: PHASE 22 — archive 7729ffa2, day 19, ZERO ticks,
+--   re-aimed at 2026-09-13 for a TWO-DAY carry.
 --   The Phase 18 run (day 15, nine ticks) is the shape this file was born for.
 --   What Phase 22 changed is documented below, not overwritten.
+--
+--   THE CARRY IS NOW TWO DAYS, and they are not alike:
+--     replacement day 1 (2026-09-12) -> archive day 20, complete and sealed
+--     replacement day 2 (2026-09-13) -> archive day 21, empty, or no row yet
+--
+--   An EMPTY carried day is carried anyway: its snapshot is composed from the
+--   ARCHIVE's config so the day exists with the right tasks, no completion is
+--   written, it is not sealed, it gets no outcome, and the flame does not
+--   count it. An ABSENT one — the app not opened yet, so the replacement has
+--   no day-2 row — is simply not carried, and the app freezes archive day 21
+--   itself on next launch through get_or_freeze_today(). Both are correct;
+--   the only difference is who composes the snapshot and when.
+--
+--   What the script must NEVER do with an empty second day is invent a
+--   completion, seal it, or let it touch the streak. Rehearsed both ways.
 --
 -- =============================================================================
 -- THE STATE THIS ASSUMES BEFORE IT RUNS
@@ -199,15 +215,16 @@ declare
   P_EXPECT_ARCHIVE     uuid := '7729ffa2-3679-410f-b7c8-98554504c2be';
   P_EXPECT_REPLACEMENT uuid := '3ad49dc5-e7b8-4a0d-9ecb-8ec5a2ba99c3';
 
-  -- THE DATE GUARD. This run is written for ONE evening: the local date on
-  -- which archive day 20 and replacement day 1 are the same calendar day, and
-  -- on which the replacement has exactly one day to carry. At 12:01 AM local
-  -- that stops being true — the replacement grows a day 2, the archive grows a
-  -- day 21, and the carry-over takes a path nothing has rehearsed. The script
-  -- would still do something defensible; "defensible" is not the standard for
-  -- a hand-run repair. It refuses instead, and the constant is what you edit
-  -- to re-aim it after re-rehearsing. NULL skips the check entirely.
-  P_EXPECT_LOCAL_DATE date := date '2026-09-12';
+  -- THE DATE GUARD. This run is written for ONE local date, and re-aimed only
+  -- after re-rehearsing against the shape that date actually produces.
+  --
+  -- 2026-09-12 was the one-day carry: replacement day 1 onto archive day 20.
+  -- The guard did its job and refused overnight, so this is now the TWO-day
+  -- carry — replacement days 1 and 2 onto archive days 20 and 21 — which is a
+  -- different shape and has its own rehearsal. Re-aiming this constant without
+  -- re-rehearsing is the one thing it exists to prevent.
+  -- NULL skips the check entirely.
+  P_EXPECT_LOCAL_DATE date := date '2026-09-13';
 
   -- Days on the ARCHIVED challenge the account holder has NAMED, and which the
   -- S1 diagnostic classed `partial` — the app was open, some tasks were
@@ -391,14 +408,17 @@ begin
   if P_EXPECT_LOCAL_DATE is not null
      and (now() at time zone v_arch.timezone)::date <> P_EXPECT_LOCAL_DATE then
     raise exception
-      'REFUSED: it is % in %, and this repair is written for % and for that '
-      'evening only. On %, and only then, the replacement has exactly one day '
-      'to carry onto archive day %; on any other date it has more, the archive '
-      'has days past that one, and the carry-over takes a path nothing has '
-      'rehearsed. Nothing has been written. Re-rehearse against the real '
-      'shape, then set P_EXPECT_LOCAL_DATE to the day you are running.',
+      'REFUSED: it is % in %, and this repair is written for % and rehearsed '
+      'against the shape that date produces — the replacement had % day(s) to '
+      'carry onto archive day % and up. Every midnight changes that shape: one '
+      'more replacement day, one more archive day, a different flame and a '
+      'different evaluator cursor. Nothing has been written. Re-rehearse '
+      'against the real shape, then set P_EXPECT_LOCAL_DATE to the day you '
+      'are running.',
       (now() at time zone v_arch.timezone)::date, v_arch.timezone,
-      P_EXPECT_LOCAL_DATE, P_EXPECT_LOCAL_DATE, v_offset + 1;
+      P_EXPECT_LOCAL_DATE,
+      (select count(*) from public.challenge_days where challenge_id = v_repl.id),
+      v_offset + 1;
   end if;
 
   -- The named days must be on the archive, closed, and not already met.
@@ -622,6 +642,41 @@ begin
                evaluated_at = now(),
                outcome      = 'met'
          where challenge_id = v_arch.id and day = v_day + v_offset;
+
+      elsif (v_day + v_offset) < public.earliest_open_day(v_arch) then
+        -- A CARRIED DAY THAT HAS ALREADY CLOSED AND IS NOT MET.
+        -- This is not a forgotten tap; it is a fresh miss, and restoring on
+        -- top of it hands back a challenge the evaluator must immediately end
+        -- again — or, if the cursor were pushed past it, one carrying a closed
+        -- day that is never judged at all. Neither is a script's call.
+        --
+        -- The whole DO block is one transaction, so raising here rolls back
+        -- every row written above it. A late refusal costs exactly as little
+        -- as an early one.
+        raise exception
+          'REFUSED: replacement day % carries onto archive day %, which CLOSED '
+          'at % and is only % of % done. That is a new miss, not a forgotten '
+          'tap, and restoring the archive over it would hand back an attempt '
+          'that is already broken again. Nothing has been written. If the work '
+          'was genuinely done on that day, it needs naming deliberately the '
+          'way day % was — do not simply re-run this.',
+          v_day, v_day + v_offset,
+          public.day_closes_at(v_arch, v_day + v_offset),
+          v_mapped,
+          (select jsonb_array_length(task_snapshot) from public.challenge_days
+            where challenge_id = v_arch.id and day = v_day + v_offset),
+          (P_REPAIR_DAYS || P_NO_RECORD_DAYS)[1];
+
+      else
+        -- Open, and not finished. Legitimate — it is the day in progress — but
+        -- it has a deadline, and the operator should know what it is.
+        raise notice
+          'carried archive day % is % of % and still OPEN; it must be finished '
+          'in the app by % or the evaluator will judge it a miss',
+          v_day + v_offset, v_mapped,
+          (select jsonb_array_length(task_snapshot) from public.challenge_days
+            where challenge_id = v_arch.id and day = v_day + v_offset),
+          public.day_closes_at(v_arch, v_day + v_offset);
       end if;
     end loop;
   end if;
@@ -654,10 +709,22 @@ begin
   -- calendar date, so a row written earlier today — while the archive was
   -- still live — already carries the archive's day 20 and is correctly left
   -- alone: it fails the `day = v_day` test, not the created_at one.
+  --
+  -- IT ITERATES THE REPLACEMENT'S DAY NUMBERS, NOT ITS challenge_days ROWS.
+  -- Those are not the same set. A journal entry, meal or milestone is keyed on
+  -- (owner, day) and needs no frozen snapshot to exist, so the replacement can
+  -- hold a private row on a day it never froze — and the rehearsal showed
+  -- exactly that: with no day-2 challenge_days row, a day-2 journal entry was
+  -- left stranded at day 2, which on the restored archive means the second day
+  -- of a 45-day challenge three weeks ago. Walking 1..challenge_day covers
+  -- every day the replacement could have had, frozen or not.
   if P_RESTORE_FROM_RESTART then
     for v_day in
-      select day from public.challenge_days
-       where challenge_id = v_repl.id order by day desc
+      select g from generate_series(
+               least(greatest(public.challenge_day(v_repl), 1),
+                     v_repl.duration_days,
+                     v_arch.duration_days - v_offset),
+               1, -1) g
     loop
       update public.journal_entries
          set day = v_day + v_offset
@@ -734,18 +801,33 @@ begin
       from generate_series(1, greatest(v_maxeval, 1)) as d(day)
   ) t where t.breaks = 0;
 
-  -- last_evaluated_day is the EVALUATOR's cursor and it means "the highest day
-  -- that has CLOSED and been judged". It is NOT the highest day the repair
-  -- touched. Sealing today early — which this does when the carried day is
-  -- already complete — must not push the cursor past a day that has not
-  -- closed: if it did, and that day later turned out unmet, evaluate_challenge
-  -- would start above it and never judge it at all. Hence the clamp to
-  -- last_closed_day. Setting the cursor LOW is always safe: re-judging a day
-  -- that is already sealed and met only restamps evaluated_at and pays no
-  -- second flame (0011, evaluate_challenge's `sealed_at is null` branch).
-  v_cursor := greatest(1, least(v_maxeval,
-                                coalesce(public.last_closed_day(v_arch), v_maxeval),
+  -- last_evaluated_day is the EVALUATOR's cursor: "the highest day already
+  -- judged, which will never need judging again". It is NOT the highest day
+  -- the repair touched.
+  --
+  -- The rule, and it took two goes to get right. The cursor may include a day
+  -- that has not CLOSED, provided that day can no longer change — and a SEALED
+  -- day cannot: uncomplete_task() refuses to un-tick one (0011:264-270), so a
+  -- sealed met day stays met. What the cursor may never do is step OVER a day
+  -- that is still unsettled, because evaluate_challenge starts at
+  -- last_evaluated_day + 1 (0011:435) and a day below that is never judged at
+  -- all. A flat clamp to last_closed_day was safe but too pessimistic: it left
+  -- the cursor below a day this repair had already sealed and scored.
+  --
+  -- So: start at the last CLOSED day and walk up while the next day is sealed.
+  -- Gapless by construction — the walk stops at the first unsealed day, so an
+  -- unsettled day is never stepped over even when a later day is sealed (day
+  -- 20 half-done and day 21 finished is a real shape, not a hypothetical).
+  v_cursor := greatest(1, least(coalesce(public.last_closed_day(v_arch), 0),
                                 v_arch.duration_days));
+  loop
+    exit when v_cursor >= v_arch.duration_days;
+    exit when not exists (select 1 from public.challenge_days
+                           where challenge_id = v_arch.id
+                             and day = v_cursor + 1
+                             and sealed_at is not null);
+    v_cursor := v_cursor + 1;
+  end loop;
 
   -- THE FLAME/SEAL INVARIANT, asserted rather than reasoned about.
   --
@@ -1103,13 +1185,26 @@ select * from (
          case when (select missed_notice_day from live) is null then 'OK' else 'FINDING' end
 
   union all
-  select 15, 'last_evaluated_day is a day that has CLOSED',
-         '<= last closed day, which is '
-           || (select public.last_closed_day(live.*)::text from live),
+  -- The cursor may sit above the last closed day, but only across days that
+  -- are SEALED and therefore settled. A single unsealed day inside that span
+  -- is a day the evaluator would skip forever.
+  select 15, 'last_evaluated_day leaves no unsettled day behind it',
+         'closed (<= ' || (select public.last_closed_day(live.*)::text from live)
+           || ') or sealed all the way up',
          (select last_evaluated_day::text from live),
          case when (select last_evaluated_day from live)
                 <= (select public.last_closed_day(live.*) from live)
-              then 'OK' else 'FINDING — the evaluator would skip an unjudged day' end
+              then 'OK — at or below the last closed day'
+              when not exists (
+                     select 1 from generate_series(
+                              (select public.last_closed_day(live.*) + 1 from live),
+                              (select last_evaluated_day from live)) as g(day)
+                      where not exists (select 1 from public.challenge_days d
+                                         where d.challenge_id = (select id from live)
+                                           and d.day = g.day
+                                           and d.sealed_at is not null))
+              then 'OK — above the close, but every day up to it is sealed'
+              else 'FINDING — the evaluator would skip an unjudged day' end
 
   union all
   select 16, 'today',
