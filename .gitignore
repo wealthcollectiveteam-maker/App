@@ -42,3 +42,6 @@ example
 # generated native folders
 /ios
 /android
+
+# rehearsal scratch (scripts/rehearse-phase22.sh), removed on exit
+supabase/.rehearsal/

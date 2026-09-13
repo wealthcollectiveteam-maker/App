@@ -11,20 +11,62 @@
 --   rows themselves, so a database that does not match aborts rather than
 --   improvising.
 --
+-- CURRENTLY SET FOR: PHASE 22 — archive 7729ffa2, day 19, ZERO ticks.
+--   The Phase 18 run (day 15, nine ticks) is the shape this file was born for.
+--   What Phase 22 changed is documented below, not overwritten.
+--
 -- =============================================================================
 -- THE STATE THIS ASSUMES BEFORE IT RUNS
 -- =============================================================================
 --   * exactly one auth.users row for P_OWNER
 --   * exactly one LIVE challenge for that owner
---   * if P_RESTORE_FROM_RESTART: exactly one ENDED challenge, the live one's
---     restarted_from points at it, and its ended_reason is 'missed_day'
+--   * if P_RESTORE_FROM_RESTART: the live one's restarted_from points at an
+--     ENDED challenge whose ended_reason is 'missed_day'. The owner may hold
+--     any number of OTHER ended challenges — PHASE 22: this account also holds
+--     the Phase 18 replacement (ff81767a), already retired, which points at
+--     the same archive. Nothing here may assume "exactly one ended row".
 --   * every day in P_REPAIR_DAYS exists on the archive, is CLOSED, is not
 --     already met, and has at least one completion (the `partial` evidence
 --     class from the S1 diagnostic)
---   * every day in P_NO_RECORD_DAYS is CLOSED and has no completions
+--   * every day in P_NO_RECORD_DAYS is CLOSED and has NO completions. Two
+--     sub-classes live here and both are handled — see "THE EMPTY DAY".
 --   * the replacement's days map onto the archive with no overlap
 --
 -- Any of these being false aborts the whole thing. See "atomicity" below.
+--
+-- =============================================================================
+-- THE EMPTY DAY — WHAT PHASE 22 CHANGED
+-- =============================================================================
+--   Phase 18 repaired day 15, which had NINE of eleven ticks. The repair-day
+--   path (P_REPAIR_DAYS) REFUSES a day with zero completions, on purpose: a
+--   day with some ticks is corroborated by the database, a day with none is
+--   corroborated by nothing but the account holder's word. That refusal is
+--   still here and it still fires. SO YES — the repair-day path assumes a
+--   partial day, and Phase 22's day 19 is not one.
+--
+--   Day 19 — a challenge_days row, outcome 'missed', sealed_at null, eleven
+--   tasks in task_snapshot, ZERO task_completions — belongs in
+--   P_NO_RECORD_DAYS, the deliberate-act list. That list spans two sub-classes
+--   and now says which one each day is:
+--
+--     never_opened   no challenge_days row at all. The snapshot is composed
+--                    from the challenge's own config before anything else.
+--     zero_ticks     the row exists (the evaluator back-filled it, or the app
+--                    froze it) and carries a snapshot, but nothing was ticked.
+--                    PHASE 22's day 19 is this one.
+--
+--   Both end in the same place — insert every key in that day's own snapshot —
+--   and the distinction is logged rather than branched on, because the only
+--   difference is whether the snapshot already existed. A zero_ticks day keeps
+--   the snapshot that was frozen ON the day; it is never recomposed.
+--
+--   ONE TRAP THE EMPTY CASE OPENS THAT THE PARTIAL CASE CANNOT.
+--   day_is_met() returns TRUE for a day whose snapshot is an empty array
+--   ("nothing to do is not a failure", 0007). A day with no completions AND an
+--   empty snapshot would therefore pass the post-insert assertion having had
+--   nothing whatsoever written to it. On a partial day that is impossible — a
+--   completion exists, so the snapshot cannot be empty. The guard below is new
+--   and that is why: a repaired day must have at least one task in it.
 --
 -- =============================================================================
 -- WHAT IT DOES NOT MEAN
@@ -34,13 +76,26 @@
 --   IS the record that a repair happened — it is the only trace, by choice,
 --   and it is why nothing here is backdated.
 --
---   It does NOT mean the squad never saw the miss. They did, on the day. The
---   feed item is rewritten so it stops asserting something false going
---   forward; it cannot unsend what was already read.
---
 --   It does NOT decide which days you did. It repairs the days named in the
 --   constants and refuses everything else, including days it can see were
 --   nearly complete.
+--
+-- =============================================================================
+-- THE FEED ITEM — A DELIBERATE DEPARTURE FROM PHASE 15's RULE, FLAGGED
+-- =============================================================================
+--   Phase 15 set the rule: the miss feed item is REWRITTEN, never deleted. The
+--   squad saw the miss on the day; deleting the row cannot unsend it, and a
+--   rewrite leaves a visible, honest correction where the false sentence was.
+--
+--   The Phase 22 brief asks for a DELETE of one named feed item instead. That
+--   is the account holder's call about their own squad feed and it is
+--   implemented — but it IS a departure, so it is a switch rather than a
+--   silent edit. P_FEED_DISPOSITION := 'rewrite' restores Phase 15's behaviour
+--   in one word, and P_FEED_TEXT is still here for it.
+--
+--   The delete is addressed BY ID and refuses to fire unless the row it finds
+--   is the row the brief described — same author, same squad, same kind, same
+--   text. A mistyped uuid deletes nothing; it aborts.
 --
 -- =============================================================================
 -- THE ORDER, AND WHY IT IS THIS ONE
@@ -59,8 +114,8 @@
 --     7  re-point day-numbered private rows
 --     8  retire the replacement                <- frees the unique slot
 --     9  un-end the archive                    <- only now
---    10  recompute flame and best_flame from the day series
---    11  rewrite the feed item, clear missed_notice_day
+--    10  recompute flame, best_flame and the evaluator's cursor from the days
+--    11  the feed item, deleted or rewritten; missed_notice_day already null
 --
 -- =============================================================================
 -- ATOMICITY — and why this file breaks the "no big DO block" habit
@@ -80,16 +135,47 @@
 --   No temp tables. No begin/commit. The verification SELECT is the last
 --   statement and it is what you read.
 --
+--   This is also what makes "nothing is backdated" STRUCTURAL rather than a
+--   promise. Inside a PL/pgSQL block now() is the TRANSACTION timestamp, so
+--   every completion this inserts and every evaluated_at it stamps carry one
+--   identical instant — the run instant. There is not one assignment below
+--   that sets a timestamp to anything other than now(), and the guarantee is
+--   not being weakened for this run.
+--
 -- =============================================================================
 -- forbid_snapshot_mutation() IS NOT TOUCHED
 -- =============================================================================
 --   The trigger is `before update or delete on challenge_days`. INSERT is not
---   guarded at all, so composing new day snapshots is unrestricted. On UPDATE
---   it raises only if task_snapshot, day or challenge_id change; sealed_at,
---   evaluated_at and outcome are explicitly permitted, because the evaluator
---   itself writes them. This script changes nothing else on that table, so the
---   guarantee stays armed throughout. Nothing is disabled, relaxed or worked
---   around.
+--   guarded at all, so composing new day snapshots is unrestricted. Its UPDATE
+--   arm, quoted verbatim from supabase/migrations/0007_missed_day_engine.sql
+--   (lines 312-320):
+--
+--       if new.task_snapshot is distinct from old.task_snapshot
+--          or new.day is distinct from old.day
+--          or new.challenge_id is distinct from old.challenge_id then
+--         raise exception 'day snapshots are immutable';
+--       end if;
+--       -- sealed_at, evaluated_at and outcome are the only permitted changes.
+--       return new;
+--
+--   THE THREE COLUMNS THIS SCRIPT UPDATES ON challenge_days, CHECKED AGAINST
+--   THAT LIST:
+--       sealed_at     PERMITTED — named in the permitted comment, absent from
+--                     the raise test.
+--       evaluated_at  PERMITTED — same.
+--       outcome       PERMITTED — same.
+--   All three are in it. Nothing else on challenge_days is written, so the
+--   trigger stays armed throughout and nothing is disabled, relaxed or worked
+--   around. 'missed' -> 'met' is the value a met day carries, and it satisfies
+--   the column's own constraint: outcome is null or outcome in ('met','missed')
+--   (0007, line 99).
+--
+-- =============================================================================
+-- WHAT THIS SCRIPT DOES NOT TOUCH
+-- =============================================================================
+--   grace_deadline_hour(), day_closes_at(), earliest_open_day(),
+--   last_closed_day(), day_is_open() and seal_day() are read, never written.
+--   No migration is applied, no function is replaced, no trigger is disabled.
 --
 -- SAFE TO RUN TWICE. The second run finds the archive already live and the
 --   named days already met, logs NO-OP, and changes nothing.
@@ -107,16 +193,25 @@ declare
   -- docs/streak-repair-runbook.md.
   P_OWNER uuid := '5212e3ec-29ab-4bb0-b048-41088920e433';
 
+  -- PHASE 22. The brief names the exact two challenges. Asserting them costs
+  -- one comparison and turns "the script ran against the wrong attempt" from a
+  -- silent success into an abort. NULL skips the check.
+  P_EXPECT_ARCHIVE     uuid := '7729ffa2-3679-410f-b7c8-98554504c2be';
+  P_EXPECT_REPLACEMENT uuid := '3ad49dc5-e7b8-4a0d-9ecb-8ec5a2ba99c3';
+
   -- Days on the ARCHIVED challenge the account holder has NAMED, and which the
   -- S1 diagnostic classed `partial` — the app was open, some tasks were
-  -- ticked. Empty is refused.
-  P_REPAIR_DAYS integer[] := array[15];
+  -- ticked. A day with ZERO ticks is REFUSED here and belongs below.
+  P_REPAIR_DAYS integer[] := array[]::integer[];
 
-  -- Days with NO record at all (`never_opened`: no challenge_days row, no
-  -- completions). A SEPARATE list on purpose. There is nothing in the database
-  -- corroborating these, so putting a day here has to be a deliberate act
-  -- rather than one more number in a row of numbers.
-  P_NO_RECORD_DAYS integer[] := array[]::integer[];
+  -- Days with NO completions at all: either `never_opened` (no challenge_days
+  -- row) or `zero_ticks` (a row exists, nothing was ticked). A SEPARATE list on
+  -- purpose. There is nothing in the database corroborating these, so putting a
+  -- day here has to be a deliberate act rather than one more number in a row of
+  -- numbers.
+  --
+  -- PHASE 22: day 19 is `zero_ticks`.
+  P_NO_RECORD_DAYS integer[] := array[19];
 
   -- Fold the replacement challenge back into the archive and make the archive
   -- live again. False = repair the named days only, leave the restart standing.
@@ -127,10 +222,20 @@ declare
   -- RETIRE IS THE DEFAULT AND THE RECOMMENDATION — see the report.
   P_REPLACEMENT_DISPOSITION text := 'retire';
 
-  -- The rewritten feed text. Approved wording goes here.
+  -- THE FEED ITEM. 'delete' | 'rewrite' | 'none'. See the header block.
+  P_FEED_DISPOSITION text := 'delete';
+
+  -- Addressed by id, and refused unless it is the row the brief described.
+  P_FEED_ITEM_ID      uuid := '475bf99b-f485-4df2-9f22-a584cfdcd123';
+  P_FEED_EXPECT_SQUAD uuid := '1ffcc0c5-3578-4d89-bb67-16be6fd3bcf0';
+  P_FEED_EXPECT_KIND  text := 'miss';
+  P_FEED_EXPECT_TEXT  text :=
+    'missed Day 19. Hard rules — the challenge restarts at Day 1.';
+
+  -- Only read when P_FEED_DISPOSITION = 'rewrite'.
   P_FEED_TEXT text :=
-    'Day 15 was completed. The miss recorded here on 8 September was a '
-    || 'forgotten tap, not a missed day, and the record has been corrected.';
+    'Day 19 was completed. The miss recorded here was a forgotten tap, not a '
+    || 'missed day, and the record has been corrected.';
   P_FEED_KIND text := 'complete';
   -- ---------------------------------------------------------------------------
 
@@ -139,14 +244,19 @@ declare
   v_n        integer;
   v_day      integer;
   v_offset   integer;
-  v_snapshot jsonb;
   v_total    integer;
   v_mapped   integer;
   v_missing  text;
   v_flame    integer;
   v_maxeval  integer;
+  v_cursor   integer;
   v_feed     integer;
+  v_ftext    text;
+  v_fsquad   uuid;
+  v_fkind    text;
   v_moved    integer := 0;
+  v_tasks    integer;
+  v_class    text;
 begin
   -- ---- 0. refuse an empty instruction --------------------------------------
   if coalesce(array_length(P_REPAIR_DAYS, 1), 0)
@@ -161,6 +271,16 @@ begin
       P_REPLACEMENT_DISPOSITION;
   end if;
 
+  if P_FEED_DISPOSITION not in ('delete', 'rewrite', 'none') then
+    raise exception 'REFUSED: P_FEED_DISPOSITION must be delete, rewrite or none, got %',
+      P_FEED_DISPOSITION;
+  end if;
+
+  if P_FEED_DISPOSITION in ('delete', 'rewrite') and P_FEED_ITEM_ID is null then
+    raise exception 'REFUSED: P_FEED_DISPOSITION is % but P_FEED_ITEM_ID is null.',
+      P_FEED_DISPOSITION;
+  end if;
+
   -- ---- 1. resolve and assert the shape -------------------------------------
   select count(*) into v_n from auth.users where id = P_OWNER;
   if v_n <> 1 then
@@ -169,9 +289,6 @@ begin
 
   select * into v_repl from public.challenges
    where owner = P_OWNER and ended_at is null;
-
-  select count(*) into v_n from public.challenges
-   where owner = P_OWNER and ended_at is not null;
 
   -- IDEMPOTENCY, checked before anything is asserted about a restart: if the
   -- archive is already live and every named day is already met, this has
@@ -209,14 +326,43 @@ begin
     if v_arch.ended_on_day is null then
       raise exception 'REFUSED: archive % has ended_on_day NULL', v_arch.id;
     end if;
+
+    -- PHASE 22. The brief names both ids; check them rather than hope.
+    if P_EXPECT_ARCHIVE is not null and v_arch.id <> P_EXPECT_ARCHIVE then
+      raise exception
+        'REFUSED: resolved archive % is not the expected %. The wrong attempt '
+        'is about to be restored.', v_arch.id, P_EXPECT_ARCHIVE;
+    end if;
+    if P_EXPECT_REPLACEMENT is not null and v_repl.id <> P_EXPECT_REPLACEMENT then
+      raise exception
+        'REFUSED: resolved live challenge % is not the expected %.',
+        v_repl.id, P_EXPECT_REPLACEMENT;
+    end if;
+
     -- Day N of the replacement is day ended_on_day + N of the archive. The
-    -- brief's "no overlap to reconcile" is asserted, not assumed.
+    -- brief's "no overlap to reconcile" is asserted, not assumed. It is also
+    -- what makes the carry-over a CALENDAR-DATE carry-over: replacement day 1
+    -- and archive day ended_on_day + 1 are the same local date, by this
+    -- equation, or the run refuses.
     v_offset := v_arch.ended_on_day;
     if v_repl.start_date <> v_arch.start_date + v_offset then
       raise exception
         'REFUSED: the replacement starts %, but archive day % is %. The two do '
         'not line up and the carry-over would put days on the wrong dates.',
         v_repl.start_date, v_offset + 1, v_arch.start_date + v_offset;
+    end if;
+
+    -- The carry-over must fit inside the archive's own length. A 30-day
+    -- challenge restarted on day 29 has room for two carried days and no more;
+    -- day 31 is a day that challenge does not have.
+    select coalesce(max(day), 0) into v_n from public.challenge_days
+     where challenge_id = v_repl.id;
+    if v_n + v_offset > v_arch.duration_days then
+      raise exception
+        'REFUSED: the replacement reaches day %, which maps to archive day % — '
+        'past the archive''s own length of %. A human has to decide what a '
+        'restored challenge past its own end even means.',
+        v_n, v_n + v_offset, v_arch.duration_days;
     end if;
   else
     v_arch := v_repl;
@@ -258,6 +404,11 @@ begin
         'REFUSED: day % is in P_NO_RECORD_DAYS but HAS % completion(s). It '
         'belongs in P_REPAIR_DAYS.', v_day, v_n;
     end if;
+    -- Which of the two empty sub-classes this is. Logged, not branched on.
+    select case when count(*) = 0 then 'never_opened' else 'zero_ticks' end
+      into v_class
+      from public.challenge_days where challenge_id = v_arch.id and day = v_day;
+    raise notice 'day % is the % class — no completions at all', v_day, v_class;
   end loop;
 
   -- A day still inside the grace window is finishable in the app, and the
@@ -271,25 +422,44 @@ begin
     end if;
   end loop;
 
-  raise notice 'BEFORE: archive % day_now(if live) flame=% best=% ended=% on day %',
-    v_arch.id, v_arch.flame, v_arch.best_flame,
+  raise notice 'BEFORE: archive % flame=% best=% last_evaluated_day=% ended=% on day %',
+    v_arch.id, v_arch.flame, v_arch.best_flame, v_arch.last_evaluated_day,
     coalesce(v_arch.ended_at::text, 'null'), coalesce(v_arch.ended_on_day, -1);
 
   -- ---- 2. the named days: insert the missing completions -------------------
   -- Timestamped now() by the column default. Nothing backdated, ever.
   foreach v_day in array (P_REPAIR_DAYS || P_NO_RECORD_DAYS) loop
-    -- A no-record day may have no snapshot at all; compose the one the
-    -- challenge's own config would have produced for that day.
+    -- A never_opened day has no snapshot at all; compose the one the
+    -- challenge's own config would have produced for that day. A zero_ticks
+    -- day already has one and this inserts nothing — the snapshot frozen ON
+    -- the day is the snapshot that is used.
     insert into public.challenge_days (challenge_id, day, task_snapshot)
     select v_arch.id, v_day, public.compose_task_set(v_arch.id, v_day)
     where not exists (select 1 from public.challenge_days
                        where challenge_id = v_arch.id and day = v_day);
+
+    -- THE EMPTY-SNAPSHOT GUARD. day_is_met() returns true for a zero-length
+    -- snapshot, so without this a day could be declared met having had nothing
+    -- written to it at all. Only reachable from the zero-completion path,
+    -- which is exactly the path Phase 22 takes.
+    select jsonb_array_length(task_snapshot) into v_tasks
+      from public.challenge_days where challenge_id = v_arch.id and day = v_day;
+    if coalesce(v_tasks, 0) = 0 then
+      raise exception
+        'ABORT: day % has an empty task_snapshot. day_is_met() would call that '
+        'day met without a single completion being written. Refusing to score '
+        'a day that has no tasks in it.', v_day;
+    end if;
 
     insert into public.task_completions (challenge_id, day, task_key)
     select v_arch.id, v_day, t->>'key'
       from public.challenge_days d, lateral jsonb_array_elements(d.task_snapshot) t
      where d.challenge_id = v_arch.id and d.day = v_day
     on conflict (challenge_id, day, task_key) do nothing;
+    get diagnostics v_n = row_count;
+
+    raise notice 'day %: wrote % completion(s); its snapshot holds % task(s)',
+      v_day, v_n, v_tasks;
 
     if not public.day_is_met(v_arch.id, v_day) then
       raise exception 'ABORT: day % still not met after inserting completions', v_day;
@@ -302,12 +472,37 @@ begin
       select day from public.challenge_days
        where challenge_id = v_repl.id order by day
     loop
-      -- 3. the snapshot comes from the ARCHIVE's own config, never copied.
+      -- 3. THE SNAPSHOT COMES FROM THE ARCHIVE'S OWN CONFIG, NEVER COPIED.
+      -- The replacement's keys are 'custom-' || <the replacement's own uuids>
+      -- and are wrong for this challenge; composing is what makes them right.
       insert into public.challenge_days (challenge_id, day, task_snapshot)
       select v_arch.id, v_day + v_offset,
              public.compose_task_set(v_arch.id, v_day + v_offset)
       where not exists (select 1 from public.challenge_days
                          where challenge_id = v_arch.id and day = v_day + v_offset);
+
+      -- The name mapping is only sound if shortName identifies a task uniquely
+      -- on both sides. Two customs called the same thing would make the counts
+      -- below lie, so it is checked before it is relied on.
+      select count(*) into v_n from (
+        select t->>'shortName' as sn
+          from public.challenge_days d, lateral jsonb_array_elements(d.task_snapshot) t
+         where d.challenge_id = v_arch.id and d.day = v_day + v_offset
+         group by 1 having count(*) > 1) x;
+      if v_n > 0 then
+        raise exception
+          'ABORT: archive day % has % duplicated task name(s); a name mapping '
+          'cannot be trusted against it.', v_day + v_offset, v_n;
+      end if;
+      select count(*) into v_n from (
+        select t->>'shortName' as sn
+          from public.challenge_days d, lateral jsonb_array_elements(d.task_snapshot) t
+         where d.challenge_id = v_repl.id and d.day = v_day
+         group by 1 having count(*) > 1) x;
+      if v_n > 0 then
+        raise exception
+          'ABORT: replacement day % has % duplicated task name(s).', v_day, v_n;
+      end if;
 
       -- 4. THE NAME MAPPING. Custom task keys are 'custom-' || custom_tasks.id
       -- and restart_challenge() re-inserted every custom against the new
@@ -316,6 +511,10 @@ begin
       -- archive's snapshot — day_is_met() ignores those, so the day would look
       -- full and score as missed. Map on shortName, which is the same string
       -- on both sides for standard and custom tasks alike.
+      --
+      -- READ AT RUN TIME. Nothing here knows or cares how many tasks the
+      -- account holder ticked; it carries whatever is in task_completions at
+      -- the instant this runs. No count is hardcoded anywhere below.
       insert into public.task_completions (challenge_id, day, task_key)
       select v_arch.id, v_day + v_offset, a.task->>'key'
         from public.challenge_days da,
@@ -333,9 +532,8 @@ begin
               and r.task->>'shortName' = a.task->>'shortName')
       on conflict (challenge_id, day, task_key) do nothing;
 
-      -- The 5-for-5 + 6 assertion the brief asks for, generalised: every task
-      -- the replacement had completed must have landed, and nothing may
-      -- reference a key outside the archive's snapshot.
+      -- Every task the replacement had completed must have landed, and nothing
+      -- may reference a key outside the archive's snapshot.
       select count(*) into v_total from public.task_completions
        where challenge_id = v_repl.id and day = v_day;
       select count(*) into v_mapped from public.task_completions tc
@@ -377,9 +575,15 @@ begin
           'own snapshot.', v_day + v_offset, v_n;
       end if;
 
+      raise notice 'carried replacement day % -> archive day %: % of % task(s) ticked',
+        v_day, v_day + v_offset, v_mapped,
+        (select jsonb_array_length(task_snapshot) from public.challenge_days
+          where challenge_id = v_arch.id and day = v_day + v_offset);
+
       -- 5. seal and score, but ONLY a day that is genuinely complete. A
       -- partially-done carried day (today, in progress) is left open on
-      -- purpose — that is the day the user finishes in the app.
+      -- purpose — that is the day the user finishes in the app, and seal_day()
+      -- pays its flame then.
       if public.day_is_met(v_arch.id, v_day + v_offset) then
         update public.challenge_days
            set sealed_at    = coalesce(sealed_at, now()),
@@ -391,6 +595,8 @@ begin
   end if;
 
   -- ---- 6. score the named days ---------------------------------------------
+  -- outcome 'missed' -> 'met', and sealed_at set. Both, plus evaluated_at, are
+  -- on forbid_snapshot_mutation()'s permitted list — quoted in full above.
   foreach v_day in array (P_REPAIR_DAYS || P_NO_RECORD_DAYS) loop
     update public.challenge_days
        set sealed_at    = coalesce(sealed_at, now()),
@@ -402,15 +608,20 @@ begin
   -- ---- 7. re-point day-numbered private rows -------------------------------
   -- NOT IN THE BRIEF, and required by it anyway. journal_entries, meals and
   -- milestones are keyed on (owner, day) with no challenge_id — the Phase 15
-  -- lesson — so a journal entry written on 8 September sits at day 1. Restore
-  -- the archive and day 1 becomes 24 August, and the app would render that
+  -- lesson — so a journal entry written tonight sits at day 1. Restore the
+  -- archive and day 1 means the start date, and the app would render that
   -- entry on the wrong date: the UI asserting something that did not happen,
   -- which is the one rule this repair may not break.
   --
   -- The discriminator is created_at against the restart instant, NOT the day
-  -- number: the genuine day-1 rows from 24 August share day = 1 and must not
-  -- move. Descending order so day 2 -> 17 lands before day 1 -> 16 and the
-  -- rows are never renumbered twice.
+  -- number: the genuine day-1 rows from the real day 1 share day = 1 and must
+  -- not move. Descending order so the highest day lands first and no row is
+  -- renumbered twice.
+  --
+  -- PHASE 22 NOTE: the archive ended and the replacement started on the SAME
+  -- calendar date, so a row written earlier today — while the archive was
+  -- still live — already carries the archive's day 20 and is correctly left
+  -- alone: it fails the `day = v_day` test, not the created_at one.
   if P_RESTORE_FROM_RESTART then
     for v_day in
       select day from public.challenge_days
@@ -459,6 +670,8 @@ begin
     end if;
 
     -- ---- 9. un-end the archive — ONLY NOW ----------------------------------
+    -- ended_at, ended_reason and ended_on_day all back to null. last_evaluated_day
+    -- is set in step 10, from the day series rather than from a constant.
     update public.challenges
        set ended_at          = null,
            ended_reason      = null,
@@ -469,7 +682,7 @@ begin
     update public.challenges set missed_notice_day = null where id = v_arch.id;
   end if;
 
-  -- ---- 10. recompute flame from the day series -----------------------------
+  -- ---- 10. recompute flame and the evaluator's cursor from the day series ---
   -- A consequence of the days, never a number typed in. The flame is the
   -- trailing unbroken run of met days, counted over days that have CLOSED or
   -- been sealed — today, still open and half done, must not break it.
@@ -489,27 +702,81 @@ begin
       from generate_series(1, greatest(v_maxeval, 1)) as d(day)
   ) t where t.breaks = 0;
 
+  -- last_evaluated_day is the EVALUATOR's cursor and it means "the highest day
+  -- that has CLOSED and been judged". It is NOT the highest day the repair
+  -- touched. Sealing today early — which this does when the carried day is
+  -- already complete — must not push the cursor past a day that has not
+  -- closed: if it did, and that day later turned out unmet, evaluate_challenge
+  -- would start above it and never judge it at all. Hence the clamp to
+  -- last_closed_day. Setting the cursor LOW is always safe: re-judging a day
+  -- that is already sealed and met only restamps evaluated_at and pays no
+  -- second flame (0011, evaluate_challenge's `sealed_at is null` branch).
+  v_cursor := greatest(1, least(v_maxeval,
+                                coalesce(public.last_closed_day(v_arch), v_maxeval),
+                                v_arch.duration_days));
+
   update public.challenges
      set flame              = v_flame,
          best_flame         = greatest(best_flame, v_flame),
-         last_evaluated_day = greatest(last_evaluated_day, v_maxeval)
+         last_evaluated_day = v_cursor
    where id = v_arch.id;
 
-  -- ---- 11. the feed, rewritten and never deleted ---------------------------
-  -- Phase 15's rule. The squad saw the miss; nothing unsees it. But leaving a
-  -- sentence that is now false is the thing that cannot stand.
-  update public.feed_items
-     set text = P_FEED_TEXT,
-         kind = P_FEED_KIND
-   where author = P_OWNER
-     and kind = 'miss'
-     and text like ('%Day ' || P_REPAIR_DAYS[1] || '.%')
-     and text not like '%late.%';
-  get diagnostics v_feed = row_count;
-  raise notice 'rewrote % feed item(s)', v_feed;
+  raise notice 'flame recomputed over days 1..% -> %; last_evaluated_day -> %',
+    v_maxeval, v_flame, v_cursor;
 
-  raise notice 'AFTER: challenge % flame=% best=% live=%',
-    v_arch.id, v_flame, greatest(v_arch.best_flame, v_flame),
+  -- ---- 11. the feed item ----------------------------------------------------
+  if P_FEED_DISPOSITION = 'delete' then
+    select squad_id, kind, text into v_fsquad, v_fkind, v_ftext
+      from public.feed_items where id = P_FEED_ITEM_ID;
+
+    if v_fkind is null then
+      -- Already gone. Re-running after a partial manual cleanup should not
+      -- abort on the one thing that is already done.
+      raise notice 'feed item % is not present; nothing deleted', P_FEED_ITEM_ID;
+    else
+      if P_FEED_EXPECT_SQUAD is not null and v_fsquad is distinct from P_FEED_EXPECT_SQUAD then
+        raise exception
+          'REFUSED: feed item % belongs to squad %, not the expected %.',
+          P_FEED_ITEM_ID, v_fsquad, P_FEED_EXPECT_SQUAD;
+      end if;
+      if P_FEED_EXPECT_KIND is not null and v_fkind is distinct from P_FEED_EXPECT_KIND then
+        raise exception
+          'REFUSED: feed item % is kind %, not the expected %.',
+          P_FEED_ITEM_ID, v_fkind, P_FEED_EXPECT_KIND;
+      end if;
+      if P_FEED_EXPECT_TEXT is not null and v_ftext is distinct from P_FEED_EXPECT_TEXT then
+        raise exception
+          'REFUSED: feed item % says %, not the expected %. Deleting the wrong '
+          'row out of a squad feed is not recoverable from here.',
+          P_FEED_ITEM_ID, quote_literal(v_ftext), quote_literal(P_FEED_EXPECT_TEXT);
+      end if;
+      -- The author check is not optional: this script is scoped to one account
+      -- and must never reach into a squadmate's row.
+      delete from public.feed_items
+       where id = P_FEED_ITEM_ID and author = P_OWNER;
+      get diagnostics v_feed = row_count;
+      if v_feed <> 1 then
+        raise exception
+          'REFUSED: feed item % is not authored by % — refusing to touch '
+          'another member''s feed row.', P_FEED_ITEM_ID, P_OWNER;
+      end if;
+      raise notice 'deleted feed item % %', P_FEED_ITEM_ID, quote_literal(v_ftext);
+    end if;
+
+  elsif P_FEED_DISPOSITION = 'rewrite' then
+    update public.feed_items
+       set text = P_FEED_TEXT,
+           kind = P_FEED_KIND
+     where id = P_FEED_ITEM_ID and author = P_OWNER and kind = 'miss';
+    get diagnostics v_feed = row_count;
+    raise notice 'rewrote % feed item(s)', v_feed;
+
+  else
+    raise notice 'feed item left alone (P_FEED_DISPOSITION = none)';
+  end if;
+
+  raise notice 'AFTER: challenge % flame=% best=% last_evaluated_day=% live=%',
+    v_arch.id, v_flame, greatest(v_arch.best_flame, v_flame), v_cursor,
     (select ended_at is null from public.challenges where id = v_arch.id);
 end $$;
 
@@ -527,27 +794,40 @@ end $$;
 -- database that was correct.
 --
 -- So nothing here is pinned to a date, a day number or a flame value. Every
--- expectation is either derived from the rows or is an invariant that holds
--- on any day:
+-- expectation is either derived from the rows or is an invariant that holds on
+-- any day.
 --
---   * flame is compared against the run RECOMPUTED from the day series, so
---     the check says "the stored number agrees with the days" rather than
---     "the stored number is 16".
---   * the repaired days are DERIVED, not listed. Inside a PL/pgSQL block
---     now() is the TRANSACTION timestamp, so every row the repair inserted
---     and every evaluated_at it stamped carry one identical instant. That
---     instant is the run's fingerprint and identifies its own work exactly.
---   * "nothing backdated" is scoped to rows the repair WROTE. The old check
---     took min(completed_at) across the whole repaired day, which includes
---     the original ticks that legitimately pre-date the run — it was asking
---     "is anything on this day old", not "did we write anything old".
---   * days completed since the repair are not expected to be untouched. The
---     invariant is that no day is scored met unless it IS met.
+-- AMENDED 2026-09-12 (PHASE 22). The rehearsal fixture was deliberately built
+-- from DIFFERENT constants this time — a different account, a different
+-- timezone, a different length, a different day number, a different task set —
+-- so that agreement between fixture and check would mean something. Two rows
+-- disagreed, and both were the check's fault:
+--
+--   * row 11 used a scalar subquery over "retired challenges pointing at the
+--     live one". This account now holds TWO — the Phase 18 replacement and the
+--     Phase 22 one — and a scalar subquery returning two rows raises 21000
+--     more_than_one_row, which would have aborted the entire grid on
+--     production. It aggregates now, and reports every retired attempt.
+--
+--   * row 9 asked "is any row the repair wrote dated on or before the local
+--     date of the day it belongs to". That is the right question for a day in
+--     the PAST and the wrong one for TODAY. Phase 22 carries a day whose local
+--     date IS today, so a perfectly correct run scores VIOLATION. Backdating
+--     is now tested as "dated before its own day" OR "a day already in the
+--     past, dated on or before itself" — the same teeth, no false alarm.
+--
+--     Worse, and only visible once the fixture stopped sharing the run's clock:
+--     `completed_at::date` renders in the SESSION timezone while
+--     day_local_date is a local calendar date. Run the same correct database
+--     from a UTC session and from a New_York one and the old row 9 gave
+--     different verdicts. Both sides are now rendered in the CHALLENGE's
+--     timezone, so the answer no longer depends on who is asking.
 --
 -- The only thing still written by hand is the account, which must match
--- P_OWNER above.
+-- P_OWNER above, and the feed item id in row 12.
 -- =============================================================================
 with me as (select '5212e3ec-29ab-4bb0-b048-41088920e433'::uuid as uid),
+feed_target as (select '475bf99b-f485-4df2-9f22-a584cfdcd123'::uuid as id),
 live as (select * from public.challenges
           where owner = (select uid from me) and ended_at is null),
 retired as (select * from public.challenges
@@ -558,9 +838,9 @@ retired as (select * from public.challenges
 -- report confidently described the fixture's work as the repair's.
 --
 -- The precise signature: the repair INSERTED completions and STAMPED
--- evaluated_at inside one transaction, so both carry the identical now().
--- The evaluator stamps evaluated_at but never inserts a completion, and the
--- app inserts completions but never stamps evaluated_at. So an instant that
+-- evaluated_at inside one transaction, so both carry the identical now(). The
+-- evaluator stamps evaluated_at but never inserts a completion, and the app
+-- inserts completions but never stamps evaluated_at. So an instant that
 -- appears in BOTH columns belongs to a repair and to nothing else.
 run as (
   select d.evaluated_at as at
@@ -578,8 +858,20 @@ touched as (
    where d.challenge_id = (select id from live)
      and d.evaluated_at = (select at from run)
 ),
+-- Today, in the CHALLENGE's own timezone. Row 9 has to know which days are
+-- genuinely in the past, and "in the past" is a local-calendar fact.
+today_local as (
+  select (now() at time zone timezone)::date as d from live
+),
 wrote as (
   select tc.day, tc.task_key, tc.completed_at,
+         -- BOTH dates in the CHALLENGE's timezone. `completed_at::date` alone
+         -- renders in the SESSION timezone (UTC in the Supabase SQL editor),
+         -- while day_local_date is a local calendar date — comparing them
+         -- compares two different frames, and the answer changes with who is
+         -- running the query and from where.
+         (tc.completed_at at time zone (select timezone from live))::date
+           as wrote_local_date,
          (select start_date + (tc.day - 1) from live) as day_local_date
     from public.task_completions tc
    where tc.challenge_id = (select id from live)
@@ -608,6 +900,12 @@ computed_flame as (
              over (order by g.day desc rows between unbounded preceding and current row) as breaks
       from generate_series(1, greatest((select d from maxeval), 1)) as g(day)
   ) t where t.breaks = 0
+),
+backdated as (
+  select count(*) as n from wrote
+   where wrote_local_date < day_local_date
+      or (day_local_date < (select d from today_local)
+          and wrote_local_date <= day_local_date)
 )
 select * from (
   select 1 as ord, 'live challenges'::text as item,
@@ -680,49 +978,86 @@ select * from (
               then 'OK — the name mapping landed' else 'FINDING' end
 
   union all
-  select 9, 'NOTHING BACKDATED: rows the repair wrote, dated on or before their own day',
+  select 9, 'NOTHING BACKDATED: no row the repair wrote pre-dates its own day',
          '0 such rows',
-         (select count(*)::text from wrote where completed_at::date <= day_local_date),
-         case when (select count(*) from wrote where completed_at::date <= day_local_date) = 0
-              then 'OK — every row it wrote is stamped after the day it belongs to'
+         (select n::text from backdated),
+         case when (select n from backdated) = 0
+              then 'OK — every row it wrote is stamped now(), never earlier'
               else 'VIOLATION' end
 
   union all
   select 10, 'what the repair wrote, and when',
-         (select count(*)::text || ' completion row(s)' from wrote),
+         (select count(*)::text || ' completion row(s) on day(s) '
+                 || coalesce((select string_agg(d::text, ', ' order by d)
+                                from (select distinct day as d from wrote) x), '-')
+            from wrote),
          (select to_char(at, 'YYYY-MM-DD HH24:MI:SS TZ') from run),
          'one instant, because now() is the transaction timestamp'
 
   union all
-  select 11, 'the retired replacement',
-         'ended, reason null',
-         coalesce((select 'ended ' || coalesce(ended_reason, '<null>')
-                          || ' on day ' || ended_on_day
+  -- AGGREGATED, not scalar: more than one retired attempt points at this
+  -- archive and a scalar subquery would raise 21000 here.
+  select 11, 'retired attempts pointing at the live challenge',
+         'each ended with reason null',
+         coalesce((select string_agg(
+                            left(id::text, 8) || ' ended ' || coalesce(ended_reason, '<null>')
+                            || ' on day ' || coalesce(ended_on_day::text, '<null>'),
+                            '; ' order by ended_at)
                      from retired where restarted_from = (select id from live)),
-                  'DELETED or absent'),
-         case when exists (select 1 from retired
+                  'none'),
+         case when not exists (select 1 from retired
+                                where restarted_from = (select id from live))
+              then 'FINDING — nothing points at the live challenge'
+              when exists (select 1 from retired
                             where restarted_from = (select id from live)
-                              and ended_reason is null)
-              then 'OK' else 'read it' end
+                              and ended_reason is not null)
+              then 'read it — one of them still carries an ended_reason'
+              else 'OK' end
 
   union all
-  select 12, 'feed items still asserting a miss',
+  -- Honest under either disposition, so that flipping the switch cannot leave
+  -- a stale FINDING behind — the failure mode this file already has form for.
+  select 12, 'the named feed item',
+         'gone if delete, corrected if rewrite; never still asserting a miss',
+         coalesce((select 'present, kind ' || kind from public.feed_items
+                    where id = (select id from feed_target)), 'gone'),
+         case when not exists (select 1 from public.feed_items
+                                where id = (select id from feed_target))
+              then 'OK — deleted'
+              when exists (select 1 from public.feed_items
+                            where id = (select id from feed_target) and kind = 'miss')
+              then 'FINDING — the row is still there and still says miss'
+              else 'OK — rewritten rather than deleted; read the text in row 13' end
+
+  union all
+  select 13, 'feed items still asserting a miss',
          'only ones that are true',
          (select count(*)::text from public.feed_items
            where author = (select uid from me) and kind = 'miss'),
          'read the text yourself — a count cannot judge a sentence'
 
   union all
-  select 13, 'missed_notice_day cleared',
+  select 14, 'missed_notice_day cleared',
          'null', coalesce((select missed_notice_day::text from live), 'null'),
          case when (select missed_notice_day from live) is null then 'OK' else 'FINDING' end
 
   union all
-  select 14, 'today',
+  select 15, 'last_evaluated_day is a day that has CLOSED',
+         '<= last closed day, which is '
+           || (select public.last_closed_day(live.*)::text from live),
+         (select last_evaluated_day::text from live),
+         case when (select last_evaluated_day from live)
+                <= (select public.last_closed_day(live.*) from live)
+              then 'OK' else 'FINDING — the evaluator would skip an unjudged day' end
+
+  union all
+  select 16, 'today',
          'reported, not asserted — you may have completed it',
          (select 'day ' || public.challenge_day(live.*) || ': '
                  || coalesce((select done || '/' || total || ' '
                                      || coalesce(outcome, 'unjudged')
+                                     || case when sealed_at is not null
+                                             then ', sealed' else ', open' end
                                 from days where day = public.challenge_day(live.*)),
                              'not frozen yet')
             from live),
