@@ -43,7 +43,18 @@ declare
     -- delete_account() should ever want that, and it reaches it as a
     -- SECURITY DEFINER. A grant would put "leave everything" on the API.
     'leave_all_squads()',
-    'sim_fill_day(uuid,integer)'];
+    'sim_fill_day(uuid,integer)',
+    -- 0011: the grace-window clock. All five take a `challenges` ROW rather
+    -- than an id, so they leak nothing a client cannot already read — but
+    -- nothing in the app calls them either. The app reads get_day_window(),
+    -- which carries the answers; these stay reachable only from inside the
+    -- SECURITY DEFINER functions that consult them. Minimum surface, and a
+    -- grant appearing here later is a question worth asking.
+    'challenge_local_now(challenges)',
+    'day_closes_at(challenges,integer)',
+    'earliest_open_day(challenges)',
+    'last_closed_day(challenges)',
+    'day_is_open(challenges,integer)'];
 begin
   for t in select tablename from pg_tables where schemaname = 'public' loop
     qualified := format('public.%I', t.tablename);
@@ -299,15 +310,18 @@ begin
   end;
 end $$;
 
--- 2b. The RPC only completes tasks that exist in TODAY's frozen snapshot.
+-- 2b. The RPC only completes tasks that exist in the frozen snapshot of the
+-- day it is writing to. The wording moved with 0011 — complete_task() now
+-- names the day, because it can be given one — but the guarantee is the same:
+-- a key that is not in that day's snapshot is refused.
 do $$
 begin
   begin
     perform public.complete_task('not-a-real-task');
     raise exception 'FAIL: completed a task outside the snapshot';
   exception when others then
-    if sqlerrm like '%not part of today%' then
-      raise notice 'PASS: completion restricted to today''s frozen snapshot';
+    if sqlerrm like '%is not part of day%' then
+      raise notice 'PASS: completion restricted to that day''s frozen snapshot';
     else raise; end if;
   end;
 end $$;

@@ -16,6 +16,22 @@ const surfaceAlt = '#1A1D23'; // chips, avatar tiles, inactive segments
 const line = '#22262E'; // hairlines
 const accent = '#1E5BFF'; // electric blue — a fill, not only an outline
 const accentDeep = '#10306B'; // filled chips, dim accent states
+// THE GRACE WINDOW, and nothing else.
+//
+// For part of every morning two days are open at once and the check-in screen
+// can be ticking either of them. Styling alone would not carry that — a badge
+// or a different label is something you can be looking straight at and not
+// register. So finishing yesterday changes the SCREEN: a warm ground instead
+// of the near-black one, and amber wherever the blue would be.
+//
+// It is deliberately not a second brand accent. Nothing outside the grace
+// window may use these: blue is what the app does, amber is the half-day
+// exception, and the whole point is that it never appears anywhere else.
+const grace = '#FFA31E'; // ember — a fill, like the blue it replaces
+const graceDeep = '#5C3B0B';
+const graceGround = '#12100A'; // near-black with a warm cast
+const graceSurface = '#1C1810';
+
 const textHi = '#F2F3F5';
 const textMid = '#8B919B';
 const textLow = '#4E545D';
@@ -27,6 +43,12 @@ export const colors = {
   line,
   accent,
   accentDeep,
+  grace,
+  graceDeep,
+  graceGround,
+  graceSurface,
+  /** Ember at low opacity, for tinted states on the grace ground. */
+  graceTint: 'rgba(255,163,30,0.14)',
   textHi,
   textMid,
   textLow,

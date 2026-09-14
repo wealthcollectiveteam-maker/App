@@ -221,6 +221,15 @@ export interface SquadMember {
    * so the viewer's own task count is not a stand-in for it.
    */
   tasksToday: number;
+  /**
+   * The previous day, while it is still open for THIS member and still
+   * unfinished — null otherwise. Each member's noon is their own challenge's
+   * noon, so two members in different timezones disagree about whether the
+   * window is open, and the roster shows each of them their own truth.
+   */
+  graceDay: number | null;
+  graceDone: number;
+  graceTasks: number;
   isSelf: boolean;
 }
 
@@ -322,6 +331,26 @@ export interface NotificationPrefs {
   timerAlerts: boolean;
 }
 
+/**
+ * A day the check-in screen may be showing — today, or yesterday while the
+ * grace window is still open.
+ *
+ * `open` and `closesAt` are the SERVER's answer, carried rather than derived.
+ * The boundary is noon in the CHALLENGE's timezone, and the device's clock and
+ * zone have nothing to do with it: a phone set to the wrong day must not be
+ * able to talk the app into offering a day the server will refuse.
+ */
+export interface OpenDay {
+  day: number;
+  isToday: boolean;
+  open: boolean;
+  /** ISO instant. When this day stops being completable. */
+  closesAt: string;
+  tasks: TaskDef[];
+  tasksDone: Partial<Record<TaskKey, string>>;
+  sealed: boolean;
+}
+
 export interface ScenarioState {
   tier: Tier;
   day: number;
@@ -334,6 +363,16 @@ export interface ScenarioState {
   missedDay: boolean;
   dayComplete: boolean;
   tasksDone: Partial<Record<TaskKey, string>>; // key -> completion time label
+  /**
+   * Yesterday, when it is still finishable or has just closed unfinished.
+   * null the rest of the time — which is most of every day.
+   *
+   * It is kept OUT of `tasksDone`/`day` rather than folded into them. Two days
+   * are open at once for part of every morning and the app must never be in a
+   * position where "the current day" is ambiguous: today is `day`, yesterday
+   * is here, and every write says which one it means.
+   */
+  yesterday: OpenDay | null;
   why: string;
   journal: JournalEntry[];
   meals: Meal[];

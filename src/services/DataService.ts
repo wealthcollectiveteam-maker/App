@@ -65,17 +65,42 @@ export class MockDataService implements IDataService {
   // all is that the Supabase implementation routes them through the RPCs
   // that DO validate.
 
-  completeTask(taskKey: TaskKey, at: string): void {
+  // `day` routes the write to yesterday when the grace window is open. The
+  // mock has no clock of its own to enforce the window with — the boundary is
+  // noon in the challenge's timezone and only the server knows it — so it
+  // mirrors whichever day it is handed. The rule is proved server-side, in
+  // grace_window_test.sql, which is where it is actually enforced.
+  completeTask(taskKey: TaskKey, at: string, day?: number): void {
+    const y = this.state.yesterday;
+    if (day !== undefined && y && day === y.day) {
+      this.state.yesterday = {
+        ...y,
+        tasksDone: { ...y.tasksDone, [taskKey]: at },
+      };
+      return;
+    }
     this.state.tasksDone = { ...this.state.tasksDone, [taskKey]: at };
   }
 
-  uncompleteTask(taskKey: TaskKey): void {
+  uncompleteTask(taskKey: TaskKey, day?: number): void {
+    const y = this.state.yesterday;
+    if (day !== undefined && y && day === y.day) {
+      const next = { ...y.tasksDone };
+      delete next[taskKey];
+      this.state.yesterday = { ...y, tasksDone: next };
+      return;
+    }
     const next = { ...this.state.tasksDone };
     delete next[taskKey];
     this.state.tasksDone = next;
   }
 
-  sealDay(): void {
+  sealDay(day?: number): void {
+    const y = this.state.yesterday;
+    if (day !== undefined && y && day === y.day) {
+      this.state.yesterday = { ...y, sealed: true };
+      return;
+    }
     this.state.dayComplete = true;
   }
 
@@ -210,6 +235,9 @@ export class MockDataService implements IDataService {
       durationDays: this.state.durationDays,
       doneToday: 0,
       tasksToday: this.daySnapshots[this.state.day]?.length ?? 0,
+      graceDay: null,
+      graceDone: 0,
+      graceTasks: 0,
       isSelf: true,
     };
   }
@@ -255,9 +283,9 @@ export class MockDataService implements IDataService {
     this.squads = [...this.squads, summary];
     return this.activate(summary, [
       this.selfMember(),
-      { id: 'maya', name: 'Maya', initials: 'MA', level: 4, day: 12, durationDays: 75, doneToday: 1, tasksToday: 6, isSelf: false },
-      { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, day: 12, durationDays: 45, doneToday: 0, tasksToday: 5, isSelf: false },
-      { id: 'sam', name: 'Sam', initials: 'SA', level: 2, day: 12, durationDays: 30, doneToday: 0, tasksToday: 4, isSelf: false },
+      { id: 'maya', name: 'Maya', initials: 'MA', level: 4, day: 12, durationDays: 75, doneToday: 1, tasksToday: 6, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: false },
+      { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, day: 12, durationDays: 45, doneToday: 0, tasksToday: 5, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: false },
+      { id: 'sam', name: 'Sam', initials: 'SA', level: 2, day: 12, durationDays: 30, doneToday: 0, tasksToday: 4, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: false },
     ]);
   }
 

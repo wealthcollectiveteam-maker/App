@@ -34,6 +34,7 @@ import type {
 import { normalizeInviteCode } from '@/lib/inviteCode';
 import {
   api,
+  type DayWindowRow,
   type MySquadRow,
   type SquadStatusRow,
 } from '@/services/backend/api';
@@ -93,6 +94,7 @@ function emptyState(): ScenarioState {
     missedDay: false,
     dayComplete: false,
     tasksDone: {},
+    yesterday: null,
     why: '',
     journal: [],
     meals: [],
@@ -376,14 +378,21 @@ export class SupabaseDataService implements IDataService {
     ]);
 
     // ---- ESSENTIAL ----
-    const day = await api.getOrFreezeToday();
+    // ONE read for every day the check-in screen may have to render. For part
+    // of every morning that is two, and which two is the server's decision.
+    const window = await api.getDayWindow();
+    const day = window.find((r) => r.is_today) ?? null;
     this.challengeId = day?.challenge_id ?? null;
     this.state.day = day?.day ?? 1;
     this.state.dayComplete = !!day?.sealed_at;
+    const prev = window.find((r) => !r.is_today) ?? null;
 
-    const [completions, config] = await Promise.all([
+    const [completions, prevCompletions, config] = await Promise.all([
       this.challengeId
         ? api.listTodayCompletions(this.challengeId, this.state.day)
+        : Promise.resolve({} as Partial<Record<TaskKey, string>>),
+      this.challengeId && prev
+        ? api.listTodayCompletions(this.challengeId, prev.day)
         : Promise.resolve({} as Partial<Record<TaskKey, string>>),
       this.challengeId
         ? api.getChallengeConfig(this.challengeId, this.state.day)
@@ -415,6 +424,17 @@ export class SupabaseDataService implements IDataService {
           ),
         }
       : {};
+
+    // Yesterday, after the config lands — a custom task's sub-line lives on
+    // custom_tasks, not in the frozen snapshot, so the mapping needs it.
+    this.applyDayWindow(window);
+    if (this.state.yesterday) {
+      this.state.yesterday = {
+        ...this.state.yesterday,
+        tasksDone: prevCompletions,
+      };
+      this.daySnapshots[this.state.yesterday.day] = this.state.yesterday.tasks;
+    }
 
     // ---- OPTIONAL ----
     // Each assignment is guarded: a read that failed leaves the mirror's
@@ -484,8 +504,13 @@ export class SupabaseDataService implements IDataService {
     if (!this.userId) return;
     const day = await api.getOrFreezeToday();
     if (!day) return;
-    const [completions, config, profile] = await Promise.all([
+    const window = await api.getDayWindow();
+    const prev = window.find((r) => !r.is_today) ?? null;
+    const [completions, prevCompletions, config, profile] = await Promise.all([
       api.listTodayCompletions(day.challenge_id, day.day),
+      prev
+        ? api.listTodayCompletions(day.challenge_id, prev.day)
+        : Promise.resolve({} as Partial<Record<TaskKey, string>>),
       api.getChallengeConfig(day.challenge_id, day.day),
       api.getProfile(this.userId),
     ]);
@@ -510,6 +535,17 @@ export class SupabaseDataService implements IDataService {
     this.daySnapshots[day.day] = day.task_snapshot.map((t) =>
       taskFromSnapshot(t, this.customTasks, this.state.tier),
     );
+
+    // Crossing noon is a rollover of its own: this is where an open yesterday
+    // becomes a closed one, and where the screen stops offering it.
+    this.applyDayWindow(window);
+    if (this.state.yesterday) {
+      this.state.yesterday = {
+        ...this.state.yesterday,
+        tasksDone: prevCompletions,
+      };
+      this.daySnapshots[this.state.yesterday.day] = this.state.yesterday.tasks;
+    }
   }
 
   /**
@@ -627,6 +663,12 @@ export class SupabaseDataService implements IDataService {
       // Also per member: they choose their own length and may change it.
       day: r.day,
       durationDays: r.duration_days,
+      // Each member's grace window is computed in THEIR challenge's
+      // timezone, so this is null for a squadmate whose noon has passed even
+      // while the viewer's is still hours away.
+      graceDay: r.grace_day ?? null,
+      graceDone: r.grace_done ?? 0,
+      graceTasks: r.grace_tasks ?? 0,
       isSelf: r.user_id === this.userId,
     }));
     this.state.squad = {
@@ -711,11 +753,74 @@ export class SupabaseDataService implements IDataService {
   // ===================== completion / seal / ping ========================
   // All four go through the same optimistic path as every other write:
   // mutate the mirror, fire the RPC, roll back if the server refuses. The
-  // SERVER decides what "today" is and which keys today's frozen snapshot
-  // allows — complete_task() rejects a key that isn't in it, and seal_day()
-  // re-counts completions itself rather than trusting a client's tally.
+  // SERVER decides which days are open and which keys that day's frozen
+  // snapshot allows — complete_task() rejects a key that isn't in it and a
+  // day that has closed, and seal_day() re-counts completions itself rather
+  // than trusting a client's tally.
+  //
+  // `day` is only ever YESTERDAY, during the grace window. It is passed
+  // through untouched: the client is asking, not deciding. isGrace() answers
+  // "is this write aimed at the open previous day" from the mirror the server
+  // filled, never from the device's clock.
 
-  completeTask(taskKey: TaskKey, at: string): void {
+  /**
+   * The day window -> the mirror. Today lands in day/tasksDone/dayComplete as
+   * it always has; the previous day lands in `yesterday` only while it is
+   * still worth showing — open, or closed within the last stretch so the
+   * screen can say it closed rather than silently dropping the option.
+   *
+   * `open` is copied from the server, never recomputed here. The boundary is
+   * noon in the CHALLENGE's timezone and this device may be in another one,
+   * or simply wrong.
+   */
+  private applyDayWindow(rows: DayWindowRow[]): DayWindowRow | null {
+    const today = rows.find((r) => r.is_today) ?? null;
+    const prev = rows.find((r) => !r.is_today) ?? null;
+
+    if (prev) {
+      const done: Partial<Record<TaskKey, string>> = {};
+      // The window read carries counts, not completion times; the times come
+      // from the completions read alongside it in hydrate(). Seed the keys we
+      // already know are done so a rollover never renders an empty yesterday
+      // that the user had in fact finished.
+      this.state.yesterday = {
+        day: prev.day,
+        isToday: false,
+        open: prev.is_open,
+        closesAt: prev.closes_at,
+        tasks: prev.task_snapshot.map((t) =>
+          taskFromSnapshot(t, this.customTasks, this.state.tier),
+        ),
+        tasksDone: done,
+        sealed: !!prev.sealed_at,
+      };
+    } else {
+      this.state.yesterday = null;
+    }
+    return today;
+  }
+
+  /** True when `day` names the previous day the server told us is open. */
+  private isGrace(day?: number): boolean {
+    const y = this.state.yesterday;
+    return day !== undefined && !!y && y.day === day;
+  }
+
+  completeTask(taskKey: TaskKey, at: string, day?: number): void {
+    if (this.isGrace(day)) {
+      const y = this.state.yesterday!;
+      const previous = { ...y.tasksDone };
+      this.state.yesterday = { ...y, tasksDone: { ...previous, [taskKey]: at } };
+      this.write(
+        () => api.completeTask(taskKey, undefined, day),
+        () => {
+          const cur = this.state.yesterday;
+          if (cur) this.state.yesterday = { ...cur, tasksDone: previous };
+        },
+        { op: 'complete', taskKey, day },
+      );
+      return;
+    }
     const previous = { ...this.state.tasksDone };
     this.state.tasksDone = { ...previous, [taskKey]: at };
     this.write(
@@ -727,7 +832,23 @@ export class SupabaseDataService implements IDataService {
     );
   }
 
-  uncompleteTask(taskKey: TaskKey): void {
+  uncompleteTask(taskKey: TaskKey, day?: number): void {
+    if (this.isGrace(day)) {
+      const y = this.state.yesterday!;
+      const previous = { ...y.tasksDone };
+      const next = { ...previous };
+      delete next[taskKey];
+      this.state.yesterday = { ...y, tasksDone: next };
+      this.write(
+        () => api.uncompleteTask(taskKey, day),
+        () => {
+          const cur = this.state.yesterday;
+          if (cur) this.state.yesterday = { ...cur, tasksDone: previous };
+        },
+        { op: 'uncomplete', taskKey, day },
+      );
+      return;
+    }
     const previous = { ...this.state.tasksDone };
     const next = { ...previous };
     delete next[taskKey];
@@ -741,7 +862,20 @@ export class SupabaseDataService implements IDataService {
     );
   }
 
-  sealDay(): void {
+  sealDay(day?: number): void {
+    if (this.isGrace(day)) {
+      const y = this.state.yesterday!;
+      this.state.yesterday = { ...y, sealed: true };
+      this.write(
+        () => api.sealDay(day),
+        () => {
+          const cur = this.state.yesterday;
+          if (cur) this.state.yesterday = { ...cur, sealed: y.sealed };
+        },
+        { op: 'seal', day },
+      );
+      return;
+    }
     const previous = this.state.dayComplete;
     this.state.dayComplete = true;
     this.write(

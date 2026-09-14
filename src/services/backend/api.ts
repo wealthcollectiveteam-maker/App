@@ -99,6 +99,32 @@ export interface DaySnapshotRow {
   sealed_at: string | null;
 }
 
+/**
+ * One row of get_day_window(): a day the check-in screen may need to render.
+ *
+ * For part of every morning there are TWO — yesterday and today — and the
+ * screen has to be able to tell them apart without guessing. `is_open` is the
+ * server's answer to "may I still write to this day", and it is the only
+ * answer: the client never derives it from its own clock, because the clock
+ * that matters is the challenge's timezone and the device's may be anything.
+ *
+ * A closed yesterday is still returned, so the UI can say it closed rather
+ * than silently dropping the option.
+ */
+export interface DayWindowRow {
+  challenge_id: string;
+  day: number;
+  is_today: boolean;
+  is_open: boolean;
+  /** When this day stops being completable: noon, the following local day. */
+  closes_at: string;
+  sealed_at: string | null;
+  outcome: 'met' | 'missed' | null;
+  tasks_total: number;
+  tasks_done: number;
+  task_snapshot: SnapshotTask[];
+}
+
 export interface SquadStatusRow {
   squad_id: string;
   squad_name: string;
@@ -113,6 +139,16 @@ export interface SquadStatusRow {
   /** This member's own day and challenge length — see SquadMember. */
   day: number;
   duration_days: number;
+  /**
+   * The previous day, while it is still open for THIS member and still
+   * unfinished — null otherwise. Each member's noon is computed in their own
+   * challenge's timezone, so a squad spread across zones gets different
+   * answers in the same result set. Counts only, like every other figure
+   * here; never which tasks, never anything private.
+   */
+  grace_day: number | null;
+  grace_done: number | null;
+  grace_tasks: number | null;
 }
 
 /** One row of my_squads(): what the switcher needs, per squad. */
@@ -236,16 +272,32 @@ export const BackendApi = {
       | DaySnapshotRow
       | null,
 
-  completeTask: (taskKey: TaskKey, durationSeconds?: number) =>
+  /**
+   * Every day the check-in screen may render, in one read. Freezes each OPEN
+   * day as a side effect — including yesterday, if the user never opened the
+   * app on it — and never manufactures a closed one.
+   */
+  getDayWindow: async () =>
+    (unwrap(await sb().rpc('get_day_window'), 'load day window') ??
+      []) as DayWindowRow[],
+
+  /**
+   * `day` is optional and means "not today". The server checks it against its
+   * OWN window before writing, so a client that asks for a day it should not
+   * have is refused rather than trusted — passing it is a request, not an
+   * instruction.
+   */
+  completeTask: (taskKey: TaskKey, durationSeconds?: number, day?: number) =>
     sb().rpc('complete_task', {
       p_task_key: taskKey,
       p_duration_seconds: durationSeconds ?? null,
+      p_day: day ?? null,
     }),
 
-  uncompleteTask: (taskKey: TaskKey) =>
-    sb().rpc('uncomplete_task', { p_task_key: taskKey }),
+  uncompleteTask: (taskKey: TaskKey, day?: number) =>
+    sb().rpc('uncomplete_task', { p_task_key: taskKey, p_day: day ?? null }),
 
-  sealDay: () => sb().rpc('seal_day'),
+  sealDay: (day?: number) => sb().rpc('seal_day', { p_day: day ?? null }),
 
   /**
    * Every frozen day of a challenge and every completion recorded against

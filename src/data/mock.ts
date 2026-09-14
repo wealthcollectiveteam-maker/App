@@ -49,6 +49,18 @@ function leaderboards(selfXp: number): {
   return { week, allTime };
 }
 
+/**
+ * Local noon today, as an ISO instant. The real deadline comes from the
+ * server, computed in the CHALLENGE's timezone; the mock has no challenge
+ * timezone to read, so it uses the device's own noon. Good enough to render a
+ * countdown against in mock mode, and never used for a decision.
+ */
+function noonToday(): string {
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  return d.toISOString();
+}
+
 export function buildScenario(scenario: Scenario): ScenarioState {
   switch (scenario) {
     case 'day1': {
@@ -64,6 +76,7 @@ export function buildScenario(scenario: Scenario): ScenarioState {
         missedDay: false,
         dayComplete: false,
         tasksDone: {},
+        yesterday: null,
         why: WHY,
         journal: [],
         meals: [],
@@ -73,10 +86,10 @@ export function buildScenario(scenario: Scenario): ScenarioState {
           { id: 'm3', title: 'Finish 2 books', done: false },
         ],
         squad: squad([
-          { id: 'you', name: 'You', initials: 'YO', level: 1, day: 1, durationDays: 75, doneToday: 0, tasksToday: 6, isSelf: true },
-          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, day: 12, durationDays: 75, doneToday: 1, tasksToday: 6, isSelf: false },
-          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, day: 12, durationDays: 45, doneToday: 0, tasksToday: 5, isSelf: false },
-          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, day: 12, durationDays: 30, doneToday: 0, tasksToday: 4, isSelf: false },
+          { id: 'you', name: 'You', initials: 'YO', level: 1, day: 1, durationDays: 75, doneToday: 0, tasksToday: 6, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: true },
+          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, day: 12, durationDays: 75, doneToday: 1, tasksToday: 6, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: false },
+          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, day: 12, durationDays: 45, doneToday: 0, tasksToday: 5, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: false },
+          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, day: 12, durationDays: 30, doneToday: 0, tasksToday: 4, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: false },
         ]),
         feed: [],
         leaderboardWeek: lb.week,
@@ -100,6 +113,24 @@ export function buildScenario(scenario: Scenario): ScenarioState {
           water: '11:05 AM',
           read: '1:32 PM',
           diet: '2:10 PM',
+        },
+        // The grace window, mid-morning: Day 11 is two tasks short and stays
+        // finishable until noon. This is the one scenario that puts two open
+        // days on screen at once, which is the state the check-in screen has
+        // to make unmistakable — so the dev sheet can actually show it.
+        yesterday: {
+          day: 11,
+          isToday: false,
+          open: true,
+          closesAt: noonToday(),
+          tasks: [],
+          tasksDone: {
+            workout1: '7:12 AM',
+            water: '10:40 AM',
+            read: '9:02 PM',
+            diet: '8:30 PM',
+          },
+          sealed: false,
         },
         why: WHY,
         journal: [
@@ -127,10 +158,10 @@ export function buildScenario(scenario: Scenario): ScenarioState {
           { id: 'm3', title: 'Finish 2 books', done: false },
         ],
         squad: squad([
-          { id: 'you', name: 'You', initials: 'YO', level: 3, day: 1, durationDays: 75, doneToday: 4, tasksToday: 6, isSelf: true },
-          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, day: 12, durationDays: 75, doneToday: 6, tasksToday: 6, isSelf: false },
-          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, day: 12, durationDays: 45, doneToday: 3, tasksToday: 5, isSelf: false },
-          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, day: 12, durationDays: 30, doneToday: 2, tasksToday: 4, isSelf: false },
+          { id: 'you', name: 'You', initials: 'YO', level: 3, day: 1, durationDays: 75, doneToday: 4, tasksToday: 6, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: true },
+          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, day: 12, durationDays: 75, doneToday: 6, tasksToday: 6, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: false },
+          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, day: 12, durationDays: 45, doneToday: 3, tasksToday: 5, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: false },
+          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, day: 12, durationDays: 30, doneToday: 2, tasksToday: 4, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: false },
         ]),
         feed: [
           { id: 'f4', kind: 'ping-in', who: 'Maya', text: '"Water won\u2019t drink itself."', timestamp: mins(38) },
@@ -155,6 +186,7 @@ export function buildScenario(scenario: Scenario): ScenarioState {
         missedDay: true,
         dayComplete: false,
         tasksDone: {},
+        yesterday: null,
         why: WHY,
         journal: [
           {
@@ -171,10 +203,10 @@ export function buildScenario(scenario: Scenario): ScenarioState {
           { id: 'm3', title: 'Finish 2 books', done: false },
         ],
         squad: squad([
-          { id: 'you', name: 'You', initials: 'YO', level: 3, day: 1, durationDays: 75, doneToday: 0, tasksToday: 6, isSelf: true },
-          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, day: 12, durationDays: 75, doneToday: 2, tasksToday: 6, isSelf: false },
-          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, day: 12, durationDays: 45, doneToday: 1, tasksToday: 5, isSelf: false },
-          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, day: 12, durationDays: 30, doneToday: 0, tasksToday: 4, isSelf: false },
+          { id: 'you', name: 'You', initials: 'YO', level: 3, day: 1, durationDays: 75, doneToday: 0, tasksToday: 6, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: true },
+          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, day: 12, durationDays: 75, doneToday: 2, tasksToday: 6, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: false },
+          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, day: 12, durationDays: 45, doneToday: 1, tasksToday: 5, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: false },
+          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, day: 12, durationDays: 30, doneToday: 0, tasksToday: 4, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: false },
         ]),
         feed: [
           { id: 'f2', kind: 'ping-in', who: 'Maya', text: '"Lock in. Now."', timestamp: mins(25) },
@@ -204,6 +236,7 @@ export function buildScenario(scenario: Scenario): ScenarioState {
           diet: '8:06 PM',
           photo: '8:10 PM',
         },
+        yesterday: null,
         why: WHY,
         journal: [
           {
@@ -229,10 +262,10 @@ export function buildScenario(scenario: Scenario): ScenarioState {
           { id: 'm3', title: 'Finish 2 books', done: true, meta: 'Hit on Day 68' },
         ],
         squad: squad([
-          { id: 'you', name: 'You', initials: 'YO', level: 12, day: 1, durationDays: 75, doneToday: 6, tasksToday: 6, isSelf: true },
-          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, day: 12, durationDays: 75, doneToday: 5, tasksToday: 6, isSelf: false },
-          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, day: 12, durationDays: 45, doneToday: 4, tasksToday: 5, isSelf: false },
-          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, day: 12, durationDays: 30, doneToday: 3, tasksToday: 4, isSelf: false },
+          { id: 'you', name: 'You', initials: 'YO', level: 12, day: 1, durationDays: 75, doneToday: 6, tasksToday: 6, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: true },
+          { id: 'maya', name: 'Maya', initials: 'MA', level: 4, day: 12, durationDays: 75, doneToday: 5, tasksToday: 6, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: false },
+          { id: 'jordan', name: 'Jordan', initials: 'JO', level: 2, day: 12, durationDays: 45, doneToday: 4, tasksToday: 5, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: false },
+          { id: 'sam', name: 'Sam', initials: 'SA', level: 2, day: 12, durationDays: 30, doneToday: 3, tasksToday: 4, graceDay: null, graceDone: 0, graceTasks: 0, isSelf: false },
         ]),
         feed: [
           { id: 'f2', kind: 'complete', who: 'You', text: `locked in Day 75 — ${tierTaskCount('hard')} of ${tierTaskCount('hard')}.`, timestamp: mins(20) },

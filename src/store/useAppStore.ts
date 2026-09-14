@@ -204,6 +204,20 @@ interface AppState extends ScenarioState {
   uncompleteTask: (key: TaskKey) => void;
   deferTask: (key: TaskKey) => void;
   sealDay: () => void;
+  /**
+   * WHICH DAY THE CHECK-IN SCREEN IS TICKING.
+   *
+   * For part of every morning two days are open at once, and every write on
+   * that screen has to say which one it means. This is that answer, held in
+   * one place rather than inferred at each call site — an inferred answer is
+   * how a task ends up ticked on the wrong day.
+   *
+   * It can only ever be 'yesterday' while the server says yesterday is open;
+   * setActiveDay refuses otherwise, and a refresh that closes the window
+   * snaps it back to 'today'.
+   */
+  activeDay: 'today' | 'yesterday';
+  setActiveDay: (which: 'today' | 'yesterday') => void;
   saveJournal: (text: string) => JournalEntry;
   logMeal: (text: string) => Meal;
   addMilestone: (title: string) => Milestone;
@@ -373,6 +387,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   scenario: 'day1',
   squads: [],
   activeSquadId: null,
+  activeDay: 'today',
   deferred: [],
   finishFeeling: null,
   finishFeelingText: '',
@@ -441,8 +456,38 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
+  setActiveDay: (which) => {
+    const s = get();
+    // 'yesterday' is only reachable while the SERVER says it is open. The
+    // device's clock has no say: the boundary is noon in the challenge's
+    // timezone, and a phone in another zone would otherwise offer a day every
+    // write against it is going to be refused.
+    if (which === 'yesterday' && !(s.yesterday && s.yesterday.open)) return;
+    set({ activeDay: which });
+  },
+
   completeTask: (key, options) => {
     const s0 = get();
+    const y = s0.yesterday;
+    if (s0.activeDay === 'yesterday' && y && y.open) {
+      if (y.tasksDone[key]) return;
+      const at = formatClock();
+      rememberForRollback(`complete:${y.day}:${key}`, {
+        yesterday: y,
+        xp: s0.xp,
+      });
+      set((s) => ({
+        yesterday: s.yesterday
+          ? { ...s.yesterday, tasksDone: { ...s.yesterday.tasksDone, [key]: at } }
+          : s.yesterday,
+        xp: s.xp + XP.task,
+      }));
+      // No local feed row. The squad feed is a record of what happened today;
+      // a "checked off" line for yesterday, posted this morning, would read
+      // as today's work to everyone but the person who did it.
+      if (options?.sync !== false) DataService.completeTask(key, at, y.day);
+      return;
+    }
     const { tasksDone, feed, todayTasks } = s0;
     if (tasksDone[key]) return;
     const label = todayTasks.find((t) => t.key === key)?.label ?? key;
@@ -477,6 +522,25 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   uncompleteTask: (key) => {
     const s0 = get();
+    const y = s0.yesterday;
+    if (s0.activeDay === 'yesterday' && y && y.open) {
+      if (!y.tasksDone[key]) return;
+      rememberForRollback(`uncomplete:${y.day}:${key}`, {
+        yesterday: y,
+        xp: s0.xp,
+      });
+      set((s) => {
+        if (!s.yesterday) return {};
+        const next = { ...s.yesterday.tasksDone };
+        delete next[key];
+        return {
+          yesterday: { ...s.yesterday, tasksDone: next },
+          xp: Math.max(0, s.xp - XP.task),
+        };
+      });
+      DataService.uncompleteTask(key, y.day);
+      return;
+    }
     if (!s0.tasksDone[key]) return;
     rememberForRollback(`uncomplete:${key}`, {
       tasksDone: s0.tasksDone,
@@ -499,6 +563,33 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   sealDay: () => {
     const s = get();
+    const y = s.yesterday;
+    if (s.activeDay === 'yesterday' && y && y.open) {
+      if (y.sealed) return;
+      rememberForRollback(`seal:${y.day}`, {
+        yesterday: y,
+        xp: s.xp,
+        flame: s.flame,
+        bestFlame: s.bestFlame,
+        perfectDays: s.perfectDays,
+      });
+      set((st) => ({
+        yesterday: st.yesterday ? { ...st.yesterday, sealed: true } : st.yesterday,
+        xp: st.xp + XP.dayComplete,
+        // A day finished inside the window is a met day, so it pays the
+        // flame like any other. The server recomputes both on the next
+        // hydrate; this is the optimistic mirror, not the record.
+        flame: st.flame + 1,
+        bestFlame: Math.max(st.bestFlame, st.flame + 1),
+        perfectDays: st.perfectDays + 1,
+        // Back to today the moment yesterday is done. Leaving the screen in
+        // yesterday-mode after there is nothing left to do there is how a
+        // user ends up ticking the wrong day.
+        activeDay: 'today',
+      }));
+      DataService.sealDay(y.day);
+      return;
+    }
     if (s.dayComplete) return;
     const count = s.todayTasks.length;
     const item: FeedItem = {
@@ -787,6 +878,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       xp: st.xp,
       tasksDone: st.tasksDone,
       dayComplete: st.dayComplete,
+      yesterday: st.yesterday,
+      // Crossing NOON is a rollover of its own, and this is where it lands.
+      // The moment the server stops calling yesterday open, the screen stops
+      // being in yesterday-mode — it must never be sitting on a day every
+      // write is about to be refused for.
+      ...(st.yesterday && st.yesterday.open && !st.yesterday.sealed
+        ? {}
+        : { activeDay: 'today' as const }),
       // The server decides whether a broken streak is still today's news.
       // Set here rather than only by applyMissedDay(), because the penalty
       // happens at local midnight with the app closed: without this the
@@ -821,6 +920,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       ...supabaseService.getSquadState(),
       blockedUsers: supabaseService.getBlockedUsers(),
       ...st,
+      // Same noon-rollover rule as refreshDay(). `st` already carried
+      // `yesterday` in through the spread; this is only about the mode the
+      // check-in screen is left in.
+      ...(st.yesterday && st.yesterday.open && !st.yesterday.sealed
+        ? {}
+        : { activeDay: 'today' as const }),
       // AFTER the spread, for the same reason adoptSession() does it: st.meals
       // is the whole challenge's log, and every screen that reads `meals`
       // means today.
@@ -1129,10 +1234,18 @@ DataService.onRemoteChange(() => {
  * so this never fires against it.
  */
 DataService.onWriteRejected((write) => {
+  // The day is part of the key. Two days can be on screen at once, and a
+  // rollback that put back "today" for a refused write against yesterday
+  // would un-tick a task the user really had completed.
+  const day =
+    (write.op === 'complete' || write.op === 'uncomplete' || write.op === 'seal') &&
+    write.day !== undefined
+      ? write.day
+      : null;
   const key =
     write.op === 'complete' || write.op === 'uncomplete'
-      ? `${write.op}:${write.taskKey}`
-      : write.op;
+      ? `${write.op}:${day === null ? '' : `${day}:`}${write.taskKey}`
+      : `${write.op}${day === null ? '' : `:${day}`}`;
   const before = rollbacks.get(key);
   if (before) {
     rollbacks.delete(key);

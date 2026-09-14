@@ -37,10 +37,29 @@ end $$;
 
 create or replace procedure l_set_day(p_challenge uuid, p_day integer)
 language plpgsql as $$
+declare
+  v_shift integer;
+  v_tz text;
 begin
-  -- The challenge's own timezone, for the same reason t_set_day uses it.
+  -- THE HOUR IS NOW LOAD-BEARING (0011). A day closes at NOON the following
+  -- day in the challenge's own timezone, not at midnight, so "yesterday has
+  -- closed and is judgeable" is no longer true at every hour — these proofs
+  -- would pass all afternoon and fail all morning.
+  --
+  -- So the zone is chosen to put the challenge at 13:00 local, whatever time
+  -- the suite runs, and start_date is then anchored on that same zone. It is
+  -- still deliberately NOT the server's zone, which is what the Phase 12
+  -- regression (t_set_day on the server's current_date, challenge_day() on
+  -- the challenge's) needs to stay caught. The grace window's own behaviour
+  -- is proved in grace_window_test.sql, which moves the hour on purpose.
+  v_shift := 13 - extract(hour from (now() at time zone 'UTC'))::integer;
+  while v_shift < -11 loop v_shift := v_shift + 24; end loop;
+  while v_shift >  14 loop v_shift := v_shift - 24; end loop;
+  v_tz := case when v_shift >= 0 then 'Etc/GMT-' || v_shift
+                                 else 'Etc/GMT+' || (-v_shift) end;
   update public.challenges
-     set start_date = (now() at time zone timezone)::date - (p_day - 1),
+     set timezone = v_tz,
+         start_date = (now() at time zone v_tz)::date - (p_day - 1),
          last_evaluated_day = 1
    where id = p_challenge;
 end $$;

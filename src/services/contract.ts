@@ -64,9 +64,13 @@ import type {
  * service (blocked list, task config), which it re-reads wholesale.
  */
 export type RejectedWrite =
-  | { op: 'complete'; taskKey: TaskKey }
-  | { op: 'uncomplete'; taskKey: TaskKey }
-  | { op: 'seal' }
+  // `day` is present when the write was aimed at YESTERDAY during the grace
+  // window. The store has two days on screen and must put back the one it
+  // actually changed; a rollback that guessed "today" would silently re-tick
+  // a task on the wrong day.
+  | { op: 'complete'; taskKey: TaskKey; day?: number }
+  | { op: 'uncomplete'; taskKey: TaskKey; day?: number }
+  | { op: 'seal'; day?: number }
   | { op: 'journal' }
   | { op: 'milestone' }
   | { op: 'meal' }
@@ -76,19 +80,25 @@ export interface IDataService {
   loadScenario(scenario: Scenario): ScenarioState;
   /**
    * Task completion. The server validates the key against ITS frozen
-   * snapshot for ITS current day, so a modified client cannot complete a
-   * task today does not require. `at` is the display clock label the mirror
-   * carries until the next hydrate — the authoritative timestamp is the
-   * server's.
+   * snapshot for the day being written to, so a modified client cannot
+   * complete a task that day does not require. `at` is the display clock
+   * label the mirror carries until the next hydrate — the authoritative
+   * timestamp is the server's.
+   *
+   * `day` is optional and means "not today": during the grace window
+   * yesterday is still completable. It is a REQUEST. The server re-derives
+   * the open window from the challenge's own timezone and refuses anything
+   * outside it, so passing a day the client should not have gets an error,
+   * not a write.
    */
-  completeTask(taskKey: TaskKey, at: string): void;
-  uncompleteTask(taskKey: TaskKey): void;
+  completeTask(taskKey: TaskKey, at: string, day?: number): void;
+  uncompleteTask(taskKey: TaskKey, day?: number): void;
   /**
-   * Seals the server's current day. The server re-counts completions against
-   * its own snapshot and recomputes flame — a client cannot seal an
-   * incomplete day.
+   * Seals a day — the server's current one unless `day` says otherwise. The
+   * server re-counts completions against its own snapshot and recomputes
+   * flame, so a client cannot seal an incomplete day or a closed one.
    */
-  sealDay(): void;
+  sealDay(day?: number): void;
   /**
    * Ping a squadmate by display name. The daily quota is enforced by the
    * server; the client's own count is a courtesy pre-check, never authority.

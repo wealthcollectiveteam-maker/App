@@ -39,7 +39,12 @@ export function Skew({
   onPress?: () => void;
   /** Filled = solid accent with dark text. Outlined = hairline + accent text. */
   filled?: boolean;
-  tone?: 'accent' | 'muted';
+  /**
+   * `grace` swaps the blue for the ember reserved for the grace window. It is
+   * the same shape and the same weight — only the colour carries "this is
+   * yesterday", and it carries it everywhere at once.
+   */
+  tone?: 'accent' | 'muted' | 'grace';
   size?: 'sm' | 'md';
   disabled?: boolean;
   style?: ViewStyle;
@@ -47,16 +52,17 @@ export function Skew({
   accessibilityLabel?: string;
 }) {
   const muted = tone === 'muted' || disabled;
+  const hue = tone === 'grace' ? colors.grace : colors.accent;
   const background = filled
     ? muted
       ? colors.surfaceAlt
-      : colors.accent
+      : hue
     : 'transparent';
   const border = filled
     ? 'transparent'
     : muted
       ? colors.line
-      : colors.accent;
+      : hue;
   const text = filled
     ? muted
       ? colors.textMid

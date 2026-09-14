@@ -620,6 +620,17 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
               </View>
               {/* This member's OWN task count, never the viewer's. */}
               <SegmentBar done={Math.min(m.doneToday, total)} total={total} />
+              {/* Mid-window, "0 of 6" on today is true and misleading: the
+                  person may be up early finishing yesterday. Each member's
+                  noon is computed in THEIR challenge's timezone, so this
+                  appears and disappears per row, not per screen. Counts only,
+                  like every other figure on this roster. */}
+              {m.graceDay !== null && (
+                <Text style={styles.memberGrace}>
+                  {"Still finishing Day " + m.graceDay + " · " +
+                    m.graceDone + "/" + m.graceTasks + " · until noon"}
+                </Text>
+              )}
             </View>
             <Text style={styles.memberCount} maxFontSizeMultiplier={1.4}>
               {Math.min(m.doneToday, total)}/{total}
@@ -871,6 +882,13 @@ const styles = StyleSheet.create({
     alignItems: 'baseline',
     justifyContent: 'space-between',
     gap: 8,
+  },
+  memberGrace: {
+    fontFamily: font.semibold,
+    fontSize: 11,
+    letterSpacing: microTracking(11),
+    textTransform: 'uppercase',
+    color: colors.grace,
   },
   memberDay: {
     fontFamily: font.regular,

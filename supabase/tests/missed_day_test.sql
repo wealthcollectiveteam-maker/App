@@ -52,17 +52,29 @@ end $$;
 -- challenge is in the moment it is created.
 create or replace procedure t_set_day(p_challenge uuid, p_day integer)
 language plpgsql as $$
+declare
+  v_shift integer;
+  v_tz text;
 begin
-  -- Anchored on the CHALLENGE's timezone, not the server's date.
+  -- THE HOUR IS NOW LOAD-BEARING (0011). A day closes at NOON the following
+  -- day in the challenge's own timezone, not at midnight, so "yesterday has
+  -- closed and is judgeable" is no longer true at every hour — these proofs
+  -- would pass all afternoon and fail all morning.
   --
-  -- This read `current_date - (p_day - 1)`, which is the server's own day.
-  -- challenge_day() computes `(now() at time zone c.timezone)::date`, so for
-  -- any challenge not in the server's zone the two disagreed for exactly as
-  -- long as the calendars were on different dates — an hour a day for the
-  -- Europe/London fixture below, during which proof 3 failed with "medium
-  -- moved the day count (day = 5)" and nothing was wrong with the engine.
+  -- So the zone is chosen to put the challenge at 13:00 local, whatever time
+  -- the suite runs, and start_date is then anchored on that same zone. It is
+  -- still deliberately NOT the server's zone, which is what the Phase 12
+  -- regression (t_set_day on the server's current_date, challenge_day() on
+  -- the challenge's) needs to stay caught. The grace window's own behaviour
+  -- is proved in grace_window_test.sql, which moves the hour on purpose.
+  v_shift := 13 - extract(hour from (now() at time zone 'UTC'))::integer;
+  while v_shift < -11 loop v_shift := v_shift + 24; end loop;
+  while v_shift >  14 loop v_shift := v_shift - 24; end loop;
+  v_tz := case when v_shift >= 0 then 'Etc/GMT-' || v_shift
+                                 else 'Etc/GMT+' || (-v_shift) end;
   update public.challenges
-     set start_date = (now() at time zone timezone)::date - (p_day - 1),
+     set timezone = v_tz,
+         start_date = (now() at time zone v_tz)::date - (p_day - 1),
          last_evaluated_day = 1
    where id = p_challenge;
 end $$;
@@ -783,8 +795,14 @@ begin
   end loop;
 
   -- ...and the app's own RPCs still work.
-  if not has_function_privilege('authenticated', 'public.seal_day()', 'EXECUTE')
-     or not has_function_privilege('authenticated', 'public.get_or_freeze_today()', 'EXECUTE') then
+  -- 0011 gave seal_day an optional day, so its signature is seal_day(integer)
+  -- now. has_function_privilege() resolves a signature literally and does not
+  -- apply defaults, so the old zero-argument text no longer names a function
+  -- at all — which is the correct answer to "did the old arity survive?" and
+  -- exactly the ambiguity 0011's explicit DROP was there to prevent.
+  if not has_function_privilege('authenticated', 'public.seal_day(integer)', 'EXECUTE')
+     or not has_function_privilege('authenticated', 'public.get_or_freeze_today()', 'EXECUTE')
+     or not has_function_privilege('authenticated', 'public.get_day_window()', 'EXECUTE') then
     raise exception 'FAIL: the lockdown took the app''s own RPCs with it';
   end if;
 
