@@ -26,6 +26,8 @@ import { ScreenState } from '@/components/ScreenState';
 import { WorkoutSuggestion } from '@/components/WorkoutSuggestion';
 import type { OpenDay, TaskDef } from '@/data/types';
 import { useStartTimer } from '@/hooks/useStartTimer';
+import { dayDateLabel } from '@/lib/dayLabel';
+import { writeDay } from '@/lib/writeDay';
 import {
   selectQueue,
   selectTasks,
@@ -350,6 +352,8 @@ export default function CheckinScreen() {
   const startTimer = useStartTimer();
 
   const yesterday = useAppStore((s) => s.yesterday);
+  const todayClosesAt = useAppStore((s) => s.todayClosesAt);
+  const challengeTimezone = useAppStore((s) => s.challengeTimezone);
   const activeDay = useAppStore((s) => s.activeDay);
   const setActiveDay = useAppStore((s) => s.setActiveDay);
 
@@ -372,7 +376,27 @@ export default function CheckinScreen() {
   // Which day the deck is actually ticking. `grace` is non-null ONLY in
   // yesterday-mode, and every branch below keys off it, so there is one
   // switch rather than a scattering of conditions that could disagree.
-  const grace = activeDay === 'yesterday' && offerYesterday ? yesterday : null;
+  //
+  // PHASE 20: `target` comes from writeDay() — the identical call every write
+  // path makes. The day this screen NAMES and the day the database RECEIVES
+  // are now the same expression evaluated on the same state, not two
+  // conclusions reached separately and hoped to match.
+  const target = writeDay({
+    activeDay,
+    today: day,
+    yesterday: yesterday ? { day: yesterday.day, open: offerYesterday } : null,
+  });
+  const grace = target !== day && yesterday ? yesterday : null;
+
+  // THE DATE, not just the day number. "Day 18" does not tell anyone at
+  // 12:20 AM whether they are filling in the day that just ended or the one
+  // that just started; "Wednesday 10 September" does. Derived from the
+  // SERVER's boundary instant in the CHALLENGE's timezone, so a phone in
+  // another zone cannot make this label disagree with the write.
+  const targetDate = dayDateLabel(
+    grace ? grace.closesAt : todayClosesAt,
+    challengeTimezone,
+  );
 
   const tasks = grace ? grace.tasks : todayTasks;
   const tasksDone = grace ? grace.tasksDone : todayDone;
@@ -416,12 +440,35 @@ export default function CheckinScreen() {
 
         <View style={styles.header}>
           <Text style={[styles.title, grace ? { color: colors.grace } : null]}>
-            {grace ? 'Day ' + grace.day : 'Check-in'}
+            {'Day ' + target}
           </Text>
+          {targetDate ? (
+            <Micro color={grace ? colors.grace : colors.textMid}>
+              {targetDate.toUpperCase()}
+            </Micro>
+          ) : null}
           <Micro color={grace ? colors.grace : colors.textMid}>
             {doneCount} of {total} done
           </Micro>
         </View>
+
+        {/* BEFORE THE FIRST TAP, NOT AFTER. The DaySwitcher below offers the
+            choice, but a switcher is something you find by looking for it.
+            This says the previous day is still open in a sentence, in the
+            default state, so nobody fills in the wrong day and discovers the
+            option afterwards. */}
+        {offerYesterday && yesterday && !grace ? (
+          <View style={styles.stillOpenNotice}>
+            <Micro color={colors.grace} size={11}>
+              {'DAY ' + yesterday.day + ' IS STILL OPEN'}
+            </Micro>
+            <Serif size={15} style={{ marginTop: 6 }}>
+              {'You are filling in day ' + target +
+                '. Day ' + yesterday.day + ' is ' + yDone + ' of ' + yTotal +
+                ' and stays open until noon — switch below to finish it.'}
+            </Serif>
+          </View>
+        ) : null}
 
         {offerYesterday && yesterday ? (
           <DaySwitcher
@@ -556,6 +603,15 @@ const styles = StyleSheet.create({
   closedNotice: {
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.line,
+    backgroundColor: colors.surface,
+    padding: space.cardPad,
+    marginBottom: 18,
+  },
+  // Same shape as closedNotice, edged in the grace hue: this one is about a
+  // day still open, and the colour is the fastest thing on the screen to read.
+  stillOpenNotice: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.grace,
     backgroundColor: colors.surface,
     padding: space.cardPad,
     marginBottom: 18,

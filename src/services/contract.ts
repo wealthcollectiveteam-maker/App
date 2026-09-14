@@ -85,11 +85,13 @@ export interface IDataService {
    * label the mirror carries until the next hydrate — the authoritative
    * timestamp is the server's.
    *
-   * `day` is optional and means "not today": during the grace window
-   * yesterday is still completable. It is a REQUEST. The server re-derives
-   * the open window from the challenge's own timezone and refuses anything
-   * outside it, so passing a day the client should not have gets an error,
-   * not a write.
+   * `day` names the day being written to. Every caller in this client passes
+   * it, today included (Phase 20): during the grace window two days are open,
+   * and "today" is exactly the value that changes underneath a tap. It stays
+   * optional in the type only for the mock. It is a REQUEST: the server
+   * re-derives the open window from the challenge's own timezone and refuses
+   * anything outside it, so naming a day that has closed gets an error, not a
+   * write.
    */
   completeTask(taskKey: TaskKey, at: string, day?: number): void;
   uncompleteTask(taskKey: TaskKey, day?: number): void;
@@ -208,8 +210,19 @@ export interface IDataService {
   resumeTimer(timer: ActiveTimer): Promise<void>;
   cancelTimer(): Promise<void>;
   getActiveTimer(): Promise<ActiveTimer | null>;
-  /** Records real elapsed training seconds against the completed task. */
-  completeTimedTask(taskKey: TaskKey, elapsedSeconds: number): Promise<void>;
+  /**
+   * Records real elapsed training seconds against the completed task.
+   *
+   * `day` is not optional in practice — every caller names it (Phase 20).
+   * It stays optional in the type only so the mock and older callers keep
+   * compiling; a caller that omits it is asking the server to choose, and
+   * the server choosing is the whole defect this phase removes.
+   */
+  completeTimedTask(
+    taskKey: TaskKey,
+    elapsedSeconds: number,
+    day?: number,
+  ): Promise<void>;
   // Nutrition — optional enrichment on meals; owner-read-only when synced.
   attachNutrition(mealId: string, nutrition: MealNutrition): Meal[];
   removeNutrition(mealId: string): Meal[];

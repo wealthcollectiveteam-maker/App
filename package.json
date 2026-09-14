@@ -60,6 +60,7 @@
     "test:units": "node --experimental-strip-types scripts/units.test.mjs",
     "test:tiers": "node --experimental-strip-types scripts/tiers.test.mjs",
     "test:prefs": "node --experimental-strip-types scripts/prefs.test.mjs",
+    "test:day-boundary": "node --experimental-strip-types scripts/day-boundary.test.mjs",
     "test:rls": "bash scripts/test-rls.sh"
   },
   "private": true

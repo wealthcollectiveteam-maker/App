@@ -422,6 +422,7 @@ export class MockDataService implements IDataService {
   async completeTimedTask(
     taskKey: TaskKey,
     elapsedSeconds: number,
+    _day?: number,
   ): Promise<void> {
     this.timedSessions.push({
       taskKey,

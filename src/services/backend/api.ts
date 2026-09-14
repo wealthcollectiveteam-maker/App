@@ -167,6 +167,8 @@ export interface ChallengeConfig {
   flame: number;
   /** Longest streak so far — challenges.best_flame. Drives the badges. */
   bestFlame: number;
+  /** challenges.timezone. The zone every day boundary is measured in. */
+  timezone: string | null;
   /** Days sealed complete. The other half of the You screen's stats. */
   perfectDays: number;
   /**
@@ -282,10 +284,12 @@ export const BackendApi = {
       []) as DayWindowRow[],
 
   /**
-   * `day` is optional and means "not today". The server checks it against its
-   * OWN window before writing, so a client that asks for a day it should not
-   * have is refused rather than trusted — passing it is a request, not an
-   * instruction.
+   * `day` names the day being written to, and this client always passes it.
+   * Omitted, it goes as p_day: null and the server's coalesce picks its own
+   * current day — which is how a tap at 00:20 once landed on a day the screen
+   * was not showing. A named day is checked against the server's OWN window
+   * before writing, so asking for one that has closed is refused rather than
+   * trusted — passing it is a request, not an instruction.
    */
   completeTask: (taskKey: TaskKey, durationSeconds?: number, day?: number) =>
     sb().rpc('complete_task', {
@@ -379,7 +383,9 @@ export const BackendApi = {
     ] = await Promise.all([
         sb()
           .from('challenges')
-          .select('base_tier, flame, best_flame, missed_notice_day, duration_days')
+          .select(
+            'base_tier, flame, best_flame, missed_notice_day, duration_days, timezone',
+          )
           .eq('id', challengeId)
           .single(),
         sb().from('custom_tasks').select('*').eq('challenge_id', challengeId),
@@ -426,6 +432,7 @@ export const BackendApi = {
         CHALLENGE.defaultDays) as ChallengeLength,
       flame: challenge?.flame ?? 0,
       bestFlame: challenge?.best_flame ?? 0,
+      timezone: (challenge?.timezone as string | undefined) ?? null,
       perfectDays: sealedResult.count ?? 0,
       missedDay: (challenge?.missed_notice_day ?? null) === currentDay,
       customTasks: (customs ?? []).map(

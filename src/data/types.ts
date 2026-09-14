@@ -373,6 +373,18 @@ export interface ScenarioState {
    * is here, and every write says which one it means.
    */
   yesterday: OpenDay | null;
+  /**
+   * When TODAY stops being completable — the server's own instant, noon in
+   * the CHALLENGE's timezone on the following day. Carried, never derived.
+   *
+   * Its only consumer is the date label (Phase 20, P3): every other label
+   * in this app is a day number, and a day number at 12:20 AM does not
+   * answer the question the user is actually asking. Optional because the
+   * mock scenarios have no server window to carry.
+   */
+  todayClosesAt?: string | null;
+  /** The challenge's IANA timezone, so a date label is right off-zone. */
+  challengeTimezone?: string | null;
   why: string;
   journal: JournalEntry[];
   meals: Meal[];

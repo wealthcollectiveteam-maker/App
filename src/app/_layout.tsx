@@ -25,6 +25,7 @@ import {
 } from '@/components/SessionGate';
 import { TimerConflictSheet } from '@/components/TimerConflictSheet';
 import { ToastHost } from '@/components/ToastHost';
+import { scheduleDayBoundaries } from '@/lib/writeDay';
 import { configurationError } from '@/services';
 import {
   handleColdLaunchNotification,
@@ -153,6 +154,40 @@ export default function RootLayout() {
     return () => sub.remove();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // THE DAY BOUNDARIES (Phase 20, P2; noon added in Phase 24). The two
+  // moments a day window goes stale with nobody touching the app: MIDNIGHT,
+  // when today rolls and yesterday opens, and NOON, when yesterday closes.
+  //
+  // The AppState listener above covers the app being reopened; it cannot
+  // cover the app being left open. At 12:20 AM on 2026-09-10 that gap was
+  // real: the screen was still showing the previous day while the server had
+  // already rolled, and thirteen seconds apart two taps landed on one day and
+  // eleven on another. Noon is the same gap the other way round — left open,
+  // the screen went on offering a yesterday the server had closed.
+  //
+  // ONE TIMER, NOT A POLL. It fires at whichever boundary comes first,
+  // refreshes, and re-arms for the next; see scheduleDayBoundaries() for why
+  // a noon fire can only re-arm for midnight. Both boundaries are on the
+  // CHALLENGE's wall clock, never the phone's, and the effect re-arms when
+  // that zone first arrives from the server. A device asleep through a
+  // boundary fires late or not at all; the foreground listener is the
+  // backstop for that. What stops a stale window becoming a wrong WRITE is not
+  // this timer: every write names the day the screen was showing, and the
+  // server refuses it if that day has since closed.
+  const challengeTimezone = useAppStore((s) => s.challengeTimezone);
+  useEffect(
+    () =>
+      scheduleDayBoundaries(
+        () => challengeTimezone,
+        () => {
+          if (useSessionStore.getState().status === 'signedIn') {
+            useAppStore.getState().refreshFromServer().catch(() => {});
+          }
+        },
+      ),
+    [challengeTimezone],
+  );
 
   if (!loaded) return null;
 

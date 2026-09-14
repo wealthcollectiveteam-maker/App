@@ -10,6 +10,7 @@ import {
   serializeFlag,
   serializePrefs,
 } from '@/lib/prefsStorage';
+import { writeDay, type DayView } from '@/lib/writeDay';
 import type { UnitPreference } from '@/lib/units';
 import {
   displayTierLabel,
@@ -75,6 +76,29 @@ export function localDateKey(ts: number = Date.now()): string {
   const m = (d.getMonth() + 1).toString().padStart(2, '0');
   const day = d.getDate().toString().padStart(2, '0');
   return `${d.getFullYear()}-${m}-${day}`;
+}
+
+/**
+ * The day-selection view, assembled in ONE place.
+ *
+ * Every write path and the check-in screen resolve their day from this,
+ * through writeDay(). Before Phase 20 the screen read `day` while the
+ * writes sent nothing at all, leaving the server to pick from its own
+ * clock at write time — so the day on screen and the day in the database
+ * were two answers to the same question, arrived at moments apart.
+ */
+export function dayView(s: {
+  activeDay: 'today' | 'yesterday';
+  day: number;
+  yesterday: { day: number; open: boolean } | null;
+}): DayView {
+  return {
+    activeDay: s.activeDay,
+    today: s.day,
+    yesterday: s.yesterday
+      ? { day: s.yesterday.day, open: s.yesterday.open }
+      : null,
+  };
 }
 
 /** Coarse local week key — gates the weekly check-in card. */
@@ -217,6 +241,19 @@ interface AppState extends ScenarioState {
    * snaps it back to 'today'.
    */
   activeDay: 'today' | 'yesterday';
+  /**
+   * The local calendar day on which the server's day window was last
+   * fetched, or null before the first fetch.
+   *
+   * Staleness is a calendar question, not an elapsed-time one: a window
+   * fetched at 23:59 is stale a minute later, and one fetched at 00:05 is
+   * good for another twenty-four hours. Read through dayWindowIsStale().
+   */
+  dayWindowFetchedOn: string | null;
+  /** Today's server boundary instant, for the date label. */
+  todayClosesAt: string | null;
+  /** The challenge's IANA zone, so the date label is right off-zone. */
+  challengeTimezone: string | null;
   setActiveDay: (which: 'today' | 'yesterday') => void;
   saveJournal: (text: string) => JournalEntry;
   logMeal: (text: string) => Meal;
@@ -388,6 +425,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   squads: [],
   activeSquadId: null,
   activeDay: 'today',
+  dayWindowFetchedOn: null,
+  todayClosesAt: null,
+  challengeTimezone: null,
   deferred: [],
   finishFeeling: null,
   finishFeelingText: '',
@@ -469,7 +509,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   completeTask: (key, options) => {
     const s0 = get();
     const y = s0.yesterday;
-    if (s0.activeDay === 'yesterday' && y && y.open) {
+    // THE day for this tap. The same call the check-in screen makes to decide
+    // what to render, so the two cannot disagree.
+    const target = writeDay(dayView(s0));
+    if (y && target === y.day) {
       if (y.tasksDone[key]) return;
       const at = formatClock();
       rememberForRollback(`complete:${y.day}:${key}`, {
@@ -514,16 +557,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       xp: s.xp + XP.task,
       feed: [item, ...feed],
     }));
-    // The server validates the key against ITS frozen snapshot for ITS
-    // current day. A rejection rolls the service mirror back, reaches the
-    // user as a toast, and unwinds the tick above through onWriteRejected.
-    if (options?.sync !== false) DataService.completeTask(key, at);
+    // NAMED, always. The server validates the key against ITS frozen
+    // snapshot for the day we asked for, and refuses one that has closed — a
+    // rejection rolls the service mirror back, reaches the user as a toast,
+    // and unwinds the tick above through onWriteRejected. What it will no
+    // longer do is quietly choose a different day than the one on screen.
+    if (options?.sync !== false) DataService.completeTask(key, at, target);
   },
 
   uncompleteTask: (key) => {
     const s0 = get();
     const y = s0.yesterday;
-    if (s0.activeDay === 'yesterday' && y && y.open) {
+    const target = writeDay(dayView(s0));
+    if (y && target === y.day) {
       if (!y.tasksDone[key]) return;
       rememberForRollback(`uncomplete:${y.day}:${key}`, {
         yesterday: y,
@@ -551,7 +597,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       delete next[key];
       return { tasksDone: next, xp: Math.max(0, s.xp - XP.task) };
     });
-    DataService.uncompleteTask(key);
+    DataService.uncompleteTask(key, target);
   },
 
   deferTask: (key) =>
@@ -564,7 +610,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   sealDay: () => {
     const s = get();
     const y = s.yesterday;
-    if (s.activeDay === 'yesterday' && y && y.open) {
+    const target = writeDay(dayView(s));
+    if (y && target === y.day) {
       if (y.sealed) return;
       rememberForRollback(`seal:${y.day}`, {
         yesterday: y,
@@ -621,8 +668,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       feed: [item, ...s.feed],
     });
     // seal_day() re-counts completions against the server's own snapshot —
-    // it will refuse a day the server does not consider finished.
-    DataService.sealDay();
+    // it will refuse a day the server does not consider finished. Named, like
+    // every other write, so it seals the day the screen was showing.
+    DataService.sealDay(target);
   },
 
   saveJournal: (text) => {
@@ -870,6 +918,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     set({
       day: st.day,
+      // Stamped with every window the server hands back, so the next render
+      // can tell whether the day on screen has since gone stale.
+      dayWindowFetchedOn: localDateKey(),
+      todayClosesAt: st.todayClosesAt ?? null,
+      challengeTimezone: st.challengeTimezone ?? null,
       durationDays: st.durationDays,
       tier: st.tier,
       flame: st.flame,

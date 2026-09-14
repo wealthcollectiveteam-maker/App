@@ -8,7 +8,8 @@ import {
   playCompletionEffects,
   postTimerNotifications,
 } from '@/services/timerEffects';
-import { useAppStore } from '@/store/useAppStore';
+import { writeDay } from '@/lib/writeDay';
+import { dayView, useAppStore } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
 
 /** Timer alerts respect the settings toggle (on by default). */
@@ -229,8 +230,14 @@ export const useTimerStore = create<TimerState>((set, get) => {
       // this path because it carries the elapsed duration, and complete_task()
       // ignores a second insert for the same task, so letting both fire would
       // be a race the duration can lose.
+      // Resolved BEFORE the local completion, from the same view the
+      // check-in screen renders: a timer can easily have been started
+      // yesterday and stopped today.
+      const timedDay = writeDay(dayView(useAppStore.getState()));
       useAppStore.getState().completeTask(active.taskKey, { sync: false });
-      DataService.completeTimedTask(active.taskKey, elapsed).catch(() => {});
+      DataService.completeTimedTask(active.taskKey, elapsed, timedDay).catch(
+        () => {},
+      );
       cancelTimerNotifications().catch(() => {});
       playCompletionEffects();
       toast('+20 XP');

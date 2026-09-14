@@ -404,6 +404,7 @@ export class SupabaseDataService implements IDataService {
     this.state.durationDays = config?.durationDays ?? CHALLENGE.defaultDays;
     this.state.flame = config?.flame ?? 0;
     this.state.bestFlame = config?.bestFlame ?? 0;
+    this.state.challengeTimezone = config?.timezone ?? null;
     this.state.perfectDays = config?.perfectDays ?? 0;
     // Server-owned. The penalty that set it was applied at local midnight by
     // the scheduled evaluator, which the user was almost certainly not
@@ -523,6 +524,8 @@ export class SupabaseDataService implements IDataService {
     this.state.durationDays = config?.durationDays ?? this.state.durationDays;
     this.state.flame = config?.flame ?? this.state.flame;
     this.state.bestFlame = config?.bestFlame ?? this.state.bestFlame;
+    this.state.challengeTimezone =
+      config?.timezone ?? this.state.challengeTimezone ?? null;
     this.state.perfectDays = config?.perfectDays ?? this.state.perfectDays;
     this.state.missedDay = config?.missedDay ?? this.state.missedDay;
     this.customTasks = config?.customTasks ?? this.customTasks;
@@ -758,10 +761,14 @@ export class SupabaseDataService implements IDataService {
   // day that has closed, and seal_day() re-counts completions itself rather
   // than trusting a client's tally.
   //
-  // `day` is only ever YESTERDAY, during the grace window. It is passed
-  // through untouched: the client is asking, not deciding. isGrace() answers
-  // "is this write aimed at the open previous day" from the mirror the server
-  // filled, never from the device's clock.
+  // `day` is ALWAYS named, today's writes included. It is passed through
+  // untouched: the client is asking, not deciding, and the server refuses a
+  // day that has closed. Until Phase 24 the today branches below dropped it
+  // and sent p_day: null, so the server chose from its own clock — the
+  // 2026-09-10 midnight defect, alive behind a store that had chosen
+  // correctly. isGrace() decides only which half of the MIRROR a write lands
+  // in, yesterday's or today's, from what the server filled, never from the
+  // device's clock.
 
   /**
    * The day window -> the mirror. Today lands in day/tasksDone/dayComplete as
@@ -776,6 +783,10 @@ export class SupabaseDataService implements IDataService {
   private applyDayWindow(rows: DayWindowRow[]): DayWindowRow | null {
     const today = rows.find((r) => r.is_today) ?? null;
     const prev = rows.find((r) => !r.is_today) ?? null;
+
+    // The server's instant for today's boundary, carried for the date
+    // label exactly as `open` and `closesAt` are carried for yesterday.
+    this.state.todayClosesAt = today?.closes_at ?? null;
 
     if (prev) {
       const done: Partial<Record<TaskKey, string>> = {};
@@ -824,7 +835,7 @@ export class SupabaseDataService implements IDataService {
     const previous = { ...this.state.tasksDone };
     this.state.tasksDone = { ...previous, [taskKey]: at };
     this.write(
-      () => api.completeTask(taskKey),
+      () => api.completeTask(taskKey, undefined, day),
       () => {
         this.state.tasksDone = previous;
       },
@@ -854,7 +865,7 @@ export class SupabaseDataService implements IDataService {
     delete next[taskKey];
     this.state.tasksDone = next;
     this.write(
-      () => api.uncompleteTask(taskKey),
+      () => api.uncompleteTask(taskKey, day),
       () => {
         this.state.tasksDone = previous;
       },
@@ -879,7 +890,7 @@ export class SupabaseDataService implements IDataService {
     const previous = this.state.dayComplete;
     this.state.dayComplete = true;
     this.write(
-      () => api.sealDay(),
+      () => api.sealDay(day),
       () => {
         this.state.dayComplete = previous;
       },
@@ -1460,7 +1471,11 @@ export class SupabaseDataService implements IDataService {
    * server's frozen snapshot for the server's current day — a lying client
    * cannot complete a task that today doesn't require.
    */
-  async completeTimedTask(taskKey: TaskKey, elapsedSeconds: number): Promise<void> {
+  async completeTimedTask(
+    taskKey: TaskKey,
+    elapsedSeconds: number,
+    day?: number,
+  ): Promise<void> {
     await AsyncStorage.removeItem(TIMER_STORAGE_KEY);
     const previous = { ...this.state.tasksDone };
     // Same clock format hydrate() reads back out of task_completions.
@@ -1469,7 +1484,14 @@ export class SupabaseDataService implements IDataService {
       minute: '2-digit',
     });
     this.state.tasksDone = { ...previous, [taskKey]: at };
-    const { error } = await api.completeTask(taskKey, Math.round(elapsedSeconds));
+    // Named like every other write (Phase 20): the timer is a today
+    // affordance, but "today" is exactly the value that changes underneath
+    // a long timer running across local midnight.
+    const { error } = await api.completeTask(
+      taskKey,
+      Math.round(elapsedSeconds),
+      day,
+    );
     if (error) {
       this.state.tasksDone = previous;
       // The timer's caller swallows this rejection, so without fail() a
