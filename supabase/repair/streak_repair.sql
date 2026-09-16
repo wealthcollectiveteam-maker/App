@@ -11,14 +11,28 @@
 --   rows themselves, so a database that does not match aborts rather than
 --   improvising.
 --
--- CURRENTLY SET FOR: PHASE 22 — archive 7729ffa2, day 19, ZERO ticks,
---   re-aimed at 2026-09-13 for a TWO-DAY carry.
+-- CURRENTLY SET FOR: PHASE 27 — archive 7729ffa2, day 23, ZERO ticks,
+--   aimed at 2026-09-16 for a ONE-DAY carry of an EMPTY day.
 --   The Phase 18 run (day 15, nine ticks) is the shape this file was born for.
---   What Phase 22 changed is documented below, not overwritten.
+--   The Phase 22 run (day 19, two-day carry, 2026-09-13) held: on production
+--   days 1-22 are all met, so three clean days ran on top of that repair
+--   before day 23 was missed. What each phase changed is documented below,
+--   not overwritten.
 --
---   THE CARRY IS NOW TWO DAYS, and they are not alike:
---     replacement day 1 (2026-09-12) -> archive day 20, complete and sealed
---     replacement day 2 (2026-09-13) -> archive day 21, empty, or no row yet
+--   THE CARRY IS NOW ONE DAY, AND IT IS EMPTY:
+--     replacement day 1 (2026-09-16, today) -> archive day 24, zero ticks
+--
+--   The replacement holds exactly one challenge_days row and nothing is on
+--   it. Every two-day rehearsal (A-K) had a COMPLETE first carried day; this
+--   shape has nothing to carry but the day itself, and it is rehearsed on its
+--   own as scenario L (supabase/repair/phase27_L_check.sql). What must come
+--   out: archive day 23 met and sealed; archive day 24 composed and left OPEN
+--   at 0 — unsealed, unjudged, outside the flame; flame 23, best_flame 23,
+--   last_evaluated_day 23; a second run a NO-OP.
+--
+--   PHASE 22's two-day rules still stand and are still rehearsed (A-K):
+--     replacement day 1 -> archive day 20, complete and sealed
+--     replacement day 2 -> archive day 21, empty, or no row yet
 --
 --   An EMPTY carried day is carried anyway: its snapshot is composed from the
 --   ARCHIVE's config so the day exists with the right tasks, no completion is
@@ -38,9 +52,10 @@
 --   * exactly one LIVE challenge for that owner
 --   * if P_RESTORE_FROM_RESTART: the live one's restarted_from points at an
 --     ENDED challenge whose ended_reason is 'missed_day'. The owner may hold
---     any number of OTHER ended challenges — PHASE 22: this account also holds
---     the Phase 18 replacement (ff81767a), already retired, which points at
---     the same archive. Nothing here may assume "exactly one ended row".
+--     any number of OTHER ended challenges — PHASE 27: this account holds the
+--     Phase 18 replacement (ff81767a) AND the Phase 22 one (3ad49dc5), both
+--     already retired, both pointing at the same archive. Nothing here may
+--     assume "exactly one ended row".
 --   * every day in P_REPAIR_DAYS exists on the archive, is CLOSED, is not
 --     already met, and has at least one completion (the `partial` evidence
 --     class from the S1 diagnostic)
@@ -213,7 +228,7 @@ declare
   -- one comparison and turns "the script ran against the wrong attempt" from a
   -- silent success into an abort. NULL skips the check.
   P_EXPECT_ARCHIVE     uuid := '7729ffa2-3679-410f-b7c8-98554504c2be';
-  P_EXPECT_REPLACEMENT uuid := '3ad49dc5-e7b8-4a0d-9ecb-8ec5a2ba99c3';
+  P_EXPECT_REPLACEMENT uuid := '488f68ff-86f1-4164-b2fe-e55793f72f1d';
 
   -- THE DATE GUARD. This run is written for ONE local date, and re-aimed only
   -- after re-rehearsing against the shape that date actually produces.
@@ -223,8 +238,12 @@ declare
   -- carry — replacement days 1 and 2 onto archive days 20 and 21 — which is a
   -- different shape and has its own rehearsal. Re-aiming this constant without
   -- re-rehearsing is the one thing it exists to prevent.
+  --
+  -- 2026-09-16 (PHASE 27): a ONE-day carry again, but of an EMPTY day — the
+  -- replacement started today and nothing on it is ticked. That shape had no
+  -- rehearsal until scenario L, which ran green before this constant moved.
   -- NULL skips the check entirely.
-  P_EXPECT_LOCAL_DATE date := date '2026-09-13';
+  P_EXPECT_LOCAL_DATE date := date '2026-09-16';
 
   -- Days on the ARCHIVED challenge the account holder has NAMED, and which the
   -- S1 diagnostic classed `partial` — the app was open, some tasks were
@@ -237,8 +256,8 @@ declare
   -- day here has to be a deliberate act rather than one more number in a row of
   -- numbers.
   --
-  -- PHASE 22: day 19 is `zero_ticks`.
-  P_NO_RECORD_DAYS integer[] := array[19];
+  -- PHASE 22: day 19 was `zero_ticks`. PHASE 27: day 23 is, again.
+  P_NO_RECORD_DAYS integer[] := array[23];
 
   -- Fold the replacement challenge back into the archive and make the archive
   -- live again. False = repair the named days only, leave the restart standing.
@@ -253,15 +272,21 @@ declare
   P_FEED_DISPOSITION text := 'delete';
 
   -- Addressed by id, and refused unless it is the row the brief described.
-  P_FEED_ITEM_ID      uuid := '475bf99b-f485-4df2-9f22-a584cfdcd123';
+  P_FEED_ITEM_ID      uuid := '544bc57b-bd4f-4ece-a93d-284d568270e7';
+  -- PHASE 27: the squad id is CARRIED OVER from Phase 22, not re-read from
+  -- production for this row. The delete below refuses unless the row's
+  -- squad_id equals it, so a stale value aborts the whole run rather than
+  -- deleting anything. Confirm before running:
+  --   select squad_id, author, kind, text from public.feed_items
+  --    where id = '544bc57b-bd4f-4ece-a93d-284d568270e7';
   P_FEED_EXPECT_SQUAD uuid := '1ffcc0c5-3578-4d89-bb67-16be6fd3bcf0';
   P_FEED_EXPECT_KIND  text := 'miss';
   P_FEED_EXPECT_TEXT  text :=
-    'missed Day 19. Hard rules — the challenge restarts at Day 1.';
+    'missed Day 23. Hard rules — the challenge restarts at Day 1.';
 
   -- Only read when P_FEED_DISPOSITION = 'rewrite'.
   P_FEED_TEXT text :=
-    'Day 19 was completed. The miss recorded here was a forgotten tap, not a '
+    'Day 23 was completed. The miss recorded here was a forgotten tap, not a '
     || 'missed day, and the record has been corrected.';
   P_FEED_KIND text := 'complete';
   -- ---------------------------------------------------------------------------
@@ -970,7 +995,7 @@ end $$;
 -- P_OWNER above, and the feed item id in row 12.
 -- =============================================================================
 with me as (select '5212e3ec-29ab-4bb0-b048-41088920e433'::uuid as uid),
-feed_target as (select '475bf99b-f485-4df2-9f22-a584cfdcd123'::uuid as id),
+feed_target as (select '544bc57b-bd4f-4ece-a93d-284d568270e7'::uuid as id),
 live as (select * from public.challenges
           where owner = (select uid from me) and ended_at is null),
 retired as (select * from public.challenges

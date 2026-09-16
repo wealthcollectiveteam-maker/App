@@ -148,8 +148,8 @@ begin
       format('archive has no challenge_days row above day %s — both carried days are the repair''s to compose', v_e));
 
     perform pg_temp.k_chk(v_a.flame = v_e - 1 and v_a.best_flame = v_a.flame,
-      format('archive flame %s, best_flame %s — equal, as on production (production flame 18)',
-             v_a.flame, v_a.best_flame));
+      format('archive flame %s, best_flame %s — equal, as on production (production flame %s)',
+             v_a.flame, v_a.best_flame, v_prod - 1));
 
   -- ===========================================================================
   elsif v_stage = 'after' then

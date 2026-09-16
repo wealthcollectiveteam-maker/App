@@ -55,6 +55,14 @@
 --                        this true right now, and raises if it cannot find one,
 --                        so a rehearsal run at an awkward hour fails loudly
 --                        instead of quietly testing the other branch.
+--   \set days    1|2     PHASE 27. How many days the replacement has run.
+--                        2 (Phase 22): the miss was judged yesterday at noon
+--                        and the replacement has yesterday and today.
+--                        1 (Phase 27): the miss was judged TODAY after noon
+--                        and the replacement has today alone — exactly one
+--                        challenge_days row. With 1 the missed day must have
+--                        closed, so `grace open` is refused: there is no
+--                        first carried day for the window to be about.
 --
 -- DATES ARE COMPUTED FROM TODAY in the chosen timezone, so the rehearsal
 -- reproduces "the miss was judged the day before yesterday, day 1 of the
@@ -78,7 +86,8 @@ begin
 end $$;
 
 select set_config('fx22.ticks', :'ticks', false),
-       set_config('fx22.grace', :'grace', false);
+       set_config('fx22.grace', :'grace', false),
+       set_config('fx22.days',  :'days',  false);
 
 insert into auth.users (id, email) values
   ('c1a7d2e9-63b4-4f08-9d51-8e2fb0a37c46', 'phase22-rehearsal@test.dev')
@@ -105,9 +114,14 @@ do $$
 declare
   v_uid      uuid := 'c1a7d2e9-63b4-4f08-9d51-8e2fb0a37c46';
   v_len      integer := 45;                    -- NOT production's 75
-  v_endday   integer := 23;                    -- NOT production's 19
+  -- NOT production's day. It was 23 while production sat on day 19; when
+  -- production reached day 23 (Phase 27) it moved, because a fixture that
+  -- shares the run's day number cannot show a substitution going wrong.
+  v_endday   integer := 31;
   v_grace    text := coalesce(current_setting('fx22.grace', true), 'open');
   v_ticks    text := coalesce(current_setting('fx22.ticks', true), 'all:absent');
+  v_days     integer := coalesce(current_setting('fx22.days', true), '2')::integer;
+  v_day1     date;                             -- the replacement's day 1
   v_tz       text;
   v_cand     text;
   v_arch     uuid;
@@ -151,10 +165,21 @@ begin
       'silently tests the other branch.', v_grace, now() at time zone 'UTC';
   end if;
 
+  if v_days not in (1, 2) then
+    raise exception 'fixture: days must be 1 or 2, got %', v_days;
+  end if;
+  if v_days = 1 and v_grace = 'open' then
+    raise exception
+      'fixture: a ONE-day replacement means the missed day was judged today, '
+      'after local noon; it cannot be seeded while the window is still open. '
+      'Use grace closed.';
+  end if;
+
   v_today := (now() at time zone v_tz)::date;
-  -- endday + 2 so that today is challenge_day(archive) = endday + 2, giving
-  -- the replacement TWO days: yesterday and today.
-  v_start := v_today - (v_endday + 1);
+  v_day1  := v_today - (v_days - 1);
+  -- today is challenge_day(archive) = endday + days, so the replacement has
+  -- exactly `days` days: with 2, yesterday and today; with 1, today alone.
+  v_start := v_today - (v_endday + v_days - 1);
 
   v_arch := public.create_challenge('hard', v_start, v_tz, v_len);
   update public.challenges set start_date = v_start, timezone = v_tz
@@ -238,15 +263,16 @@ begin
   -- it already carries the archive's own day number and must not move either.
   insert into public.meals (owner, day, text, created_at)
   values (v_uid, v_endday, 'Oats, before it all went wrong',
-          ((v_today - 2)::timestamp + time '07:30') at time zone v_tz);
+          ((v_today - v_days)::timestamp + time '07:30') at time zone v_tz);
 
-  -- And one written YESTERDAY MORNING, before the miss was judged at local
-  -- noon. The archive was still live, so it already carries the archive's day
-  -- number for that date — the same day the replacement's day 1 is about to be
+  -- And one written on the MORNING OF THE DAY IT ENDED (yesterday with two
+  -- days, today with one), before the miss was judged at local noon. The
+  -- archive was still live, so it already carries the archive's day number
+  -- for that date — the same day the replacement's day 1 is about to be
   -- carried onto. It must not move, and it must not be renumbered twice.
   insert into public.meals (owner, day, text, created_at)
   values (v_uid, v_endday + 1, 'Toast, the morning it ended',
-          ((v_today - 1)::timestamp + time '07:30') at time zone v_tz);
+          (v_day1::timestamp + time '07:30') at time zone v_tz);
 
   -- ---- THE ENGINE JUDGES THE EMPTY DAY -------------------------------------
   -- Not hand-written. evaluate_challenge() sets outcome 'missed', leaves
@@ -276,10 +302,22 @@ begin
   -- silently skips them — which is exactly what the first run of this fixture
   -- showed: 2 rows moved where 5 should have. The defect was here, not in the
   -- repair, and a fixture whose clock is wrong quietly tests the wrong thing.
-  update public.challenges
-     set ended_at = ((v_today - 1)::timestamp + time '12:05') at time zone v_tz
-   where id = v_arch;
-  update public.challenges set start_date = v_today - 1 where id = v_repl;
+  if v_days = 2 then
+    update public.challenges
+       set ended_at = ((v_today - 1)::timestamp + time '12:05') at time zone v_tz
+     where id = v_arch;
+    update public.challenges set start_date = v_today - 1 where id = v_repl;
+  else
+    -- ONE day (Phase 27): the miss was judged TODAY after local noon and the
+    -- replacement started today, which is exactly what the engine just did.
+    -- Only ended_at is nudged back, to just after the close, so that rows
+    -- written on the replacement's day are unambiguously younger than the
+    -- restart rather than sharing its instant.
+    update public.challenges
+       set ended_at = least(now() - interval '5 minutes',
+                            (v_today::timestamp + time '12:05') at time zone v_tz)
+     where id = v_arch;
+  end if;
 
   -- ---- THE SECOND RETIRED REPLACEMENT --------------------------------------
   -- The ff81767a analogue: an earlier attempt, already retired by an earlier
@@ -295,9 +333,10 @@ begin
   returning id into v_old;
 
   -- ---- WHAT THE ACCOUNT HOLDER ACTUALLY DID --------------------------------
-  -- restart_challenge() already froze the replacement's day 1. Day 2 is
-  -- frozen here only if the parameter says the app has been opened today.
-  for v_day in 1 .. 2 loop
+  -- restart_challenge() already froze the replacement's day 1. Day 2 exists
+  -- only with days = 2, and is frozen here only if the parameter says the
+  -- app has been opened today.
+  for v_day in 1 .. v_days loop
     if (case when v_day = 1 then v_d1 else v_d2 end) = 'absent' then
       delete from public.challenge_days
        where challenge_id = v_repl and day = v_day;
@@ -342,24 +381,29 @@ begin
     end;
   end if;
 
-  -- Day-numbered private rows written on the replacement's day 1 and day 2.
-  -- Every one of these must come across to the matching archive day.
+  -- Day-numbered private rows written on the replacement's day 1 (and day 2
+  -- when it has one). Every one of these must come across to the matching
+  -- archive day. When day 1 is TODAY the evening timestamps may still be in
+  -- the future, so they are clamped to now(): a row cannot be written later
+  -- than the moment it is written.
   insert into public.journal_entries (owner, day, text, created_at)
   values (v_uid, 1, 'Starting over. Again.',
-          ((v_today - 1)::timestamp + time '21:00') at time zone v_tz);
+          least(now(), (v_day1::timestamp + time '21:00') at time zone v_tz));
   insert into public.meals (owner, day, text, created_at)
   values (v_uid, 1, 'Chicken and rice',
-          ((v_today - 1)::timestamp + time '19:00') at time zone v_tz);
+          least(now(), (v_day1::timestamp + time '19:00') at time zone v_tz));
   insert into public.milestones (owner, title, done, hit_on_day, created_at)
   values (v_uid, 'First workout back', true, 1,
-          ((v_today - 1)::timestamp + time '18:00') at time zone v_tz);
+          least(now(), (v_day1::timestamp + time '18:00') at time zone v_tz));
   insert into public.workout_logs
     (owner, challenge_id, day, task_key, activity_type, duration_seconds)
   values (v_uid, v_repl, 1, 'workout1', 'Row', 2700);
   -- And one on day 2, today, which must land on the SECOND carried archive day
   -- even when that day has nothing ticked on it.
-  insert into public.journal_entries (owner, day, text, created_at)
-  values (v_uid, 2, 'Day two of the restart.', now());
+  if v_days = 2 then
+    insert into public.journal_entries (owner, day, text, created_at)
+    values (v_uid, 2, 'Day two of the restart.', now());
+  end if;
 
   insert into public.fx22 (k, v) values
     ('owner',       v_uid::text),
@@ -370,6 +414,7 @@ begin
     ('end_day',     v_endday::text),
     ('timezone',    v_tz),
     ('grace',       v_grace),
+    ('days',        v_days::text),
     ('local_date',  v_today::text),
     ('carry1',      (v_endday + 1)::text),
     ('carry2',      (v_endday + 2)::text),

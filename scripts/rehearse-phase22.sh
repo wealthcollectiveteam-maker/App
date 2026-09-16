@@ -14,7 +14,8 @@
 # never edited and is what ships. The substitution list is printed so you can
 # see exactly what differs between the rehearsed file and the shipped one.
 #
-# Scenarios (2026-09-13 re-aim — the carry is now TWO days):
+# Scenarios (2026-09-13 re-aim: a TWO-day carry, A-K; 2026-09-16 re-aim,
+# Phase 27: a ONE-day carry of an EMPTY day, L):
 #   A  day 1 complete+sealed, day 2 row exists EMPTY      sealed inside the window
 #   B  day 1 complete+sealed, day 2 row ABSENT            the app not opened today
 #   C  day 1 complete, CLOSED, day 2 EMPTY                day 1 is left UNSEALED: the
@@ -33,6 +34,11 @@
 #      asserted before the repair, the result after it, and then the real
 #      engine and app RPCs run over it to prove no flame is paid twice.
 #      supabase/repair/phase22_K_check.sql.
+#   L  PRODUCTION AS READ 2026-09-16 (PHASE 27): the replacement started
+#      TODAY and has exactly ONE challenge_days row, EMPTY. Nothing to carry
+#      but the day itself. Archive day end_day must end up met and sealed,
+#      archive day end_day+1 composed and left open at 0, flame = end_day,
+#      and a second run a NO-OP. supabase/repair/phase27_L_check.sql.
 #
 # Same fidelity caveat as test-rls.sh: this is Supabase's shape, not Supabase.
 # It proves the repair's logic against real PostgreSQL semantics — triggers,
@@ -66,8 +72,18 @@ echo "rehearse-phase22 — using the $RUNNER runner"
 if [ "$RUNNER" = docker ]; then
   if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-    docker run -d --name "$CONTAINER" -e POSTGRES_PASSWORD=postgres \
-      -p 55432:5432 "$IMAGE" >/dev/null
+    # The host port is a convenience for a local psql; every call in this file
+    # goes through docker exec. Windows reserves dynamic port ranges (netsh
+    # interface ipv4 show excludedportrange protocol=tcp) and on 2026-09-16
+    # 55432 sat inside one, so fall back to no host port rather than not
+    # rehearsing at all.
+    if ! docker run -d --name "$CONTAINER" -e POSTGRES_PASSWORD=postgres \
+          -p 55432:5432 "$IMAGE" >/dev/null 2>&1; then
+      docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+      echo "rehearse-phase22 — host port 55432 unavailable; container without a host port"
+      docker run -d --name "$CONTAINER" -e POSTGRES_PASSWORD=postgres \
+        "$IMAGE" >/dev/null
+    fi
   fi
   for _ in $(seq 1 60); do
     docker exec "$CONTAINER" pg_isready -U postgres >/dev/null 2>&1 && break
@@ -122,11 +138,15 @@ fx() { psql_run -X -At -d "$DB" -c "select v from public.fx22 where k = '$1'"; }
 # --- the substitution: production constants -> whatever this fixture minted ---
 PROD_OWNER=5212e3ec-29ab-4bb0-b048-41088920e433
 PROD_ARCH=7729ffa2-3679-410f-b7c8-98554504c2be
-PROD_REPL=3ad49dc5-e7b8-4a0d-9ecb-8ec5a2ba99c3
-PROD_FEED=475bf99b-f485-4df2-9f22-a584cfdcd123
+PROD_REPL=488f68ff-86f1-4164-b2fe-e55793f72f1d
+PROD_FEED=544bc57b-bd4f-4ece-a93d-284d568270e7
 PROD_SQUAD=1ffcc0c5-3578-4d89-bb67-16be6fd3bcf0
-PROD_DAY=19
-PROD_LOCAL_DATE=2026-09-13
+PROD_DAY=23
+PROD_LOCAL_DATE=2026-09-16
+# Scenario K is production's shape as it was on 2026-09-13 — day 19. Its
+# check takes the production day for LABELS only, and those labels should
+# keep describing the run K reproduces, not the current one.
+K_PROD_DAY=19
 
 rehearsal_copy() {
   # $1 = output basename, remaining args = extra sed expressions
@@ -148,10 +168,10 @@ run_sql() { psql_run -v ON_ERROR_STOP=1 -d "$DB" -P pager=off -f "$1" 2>&1 | sed
 # Deliberately WITHOUT ON_ERROR_STOP, for the scenarios that must raise.
 run_sql_expect_error() { psql_run -d "$DB" -P pager=off -f "$1" 2>&1 | sed 's/^psql:[^ ]* //'; }
 
-# seed <ticks d1:d2> <grace open|closed>
+# seed <ticks d1:d2> <grace open|closed> [days 1|2, default 2]
 seed() {
   build_db
-  psql_run -v ON_ERROR_STOP=1 -d "$DB" -P pager=off -v ticks="$1" -v grace="$2"     -f "$(sql_path supabase/repair/phase22_fixture.sql)" 2>&1     | sed 's/^psql:[^ ]* //' | grep -vE "^(SET|DO| set_config|-+$|\(1 row\)|$)"
+  psql_run -v ON_ERROR_STOP=1 -d "$DB" -P pager=off -v ticks="$1" -v grace="$2" -v days="${3:-2}"     -f "$(sql_path supabase/repair/phase22_fixture.sql)" 2>&1     | sed 's/^psql:[^ ]* //' | grep -vE "^(SET|DO| set_config|-+$|\(1 row\)|$)"
 }
 
 carry_check() {
@@ -379,7 +399,7 @@ psql_run -X -d "$DB" -P pager=off -c "
 # ---------------------------------------------------------------- K ---------
 k_check() {
   psql_run -v ON_ERROR_STOP=1 -X -d "$DB" -P pager=off \
-    -v stage="$1" -v prod_day="$PROD_DAY" \
+    -v stage="$1" -v prod_day="$K_PROD_DAY" \
     -f "$(sql_path supabase/repair/phase22_K_check.sql)" 2>&1 | sed 's/^psql:[^ ]* //'
 }
 
@@ -414,6 +434,62 @@ run_sql "$(tmp_path K_repair.sql)" | grep -E "NOTICE|ERROR"
 echo
 echo "----- K: PAY-ONCE — the real engine and app RPCs over the result -----"
 k_check payonce
+
+# ---------------------------------------------------------------- L ---------
+l_check() {
+  psql_run -v ON_ERROR_STOP=1 -X -d "$DB" -P pager=off \
+    -v stage="$1" -v prod_day="$PROD_DAY" \
+    -f "$(sql_path supabase/repair/phase27_L_check.sql)" 2>&1 | sed 's/^psql:[^ ]* //'
+}
+
+banner "SCENARIO L — PRODUCTION AS READ 2026-09-16 (PHASE 27): the replacement" \
+       "              started TODAY, has exactly ONE day row, and it is EMPTY"
+seed "none:absent" closed 1
+# Production's archive holds best_flame = flame (22 and 22); the fixture puts
+# best_flame above flame on purpose. L mirrors production, as K does, so that
+# "best_flame rises to the new flame" is actually proved.
+psql_run -v ON_ERROR_STOP=1 -X -q -d "$DB" \
+  -c "update public.challenges set best_flame = flame where id = '$(fx archive)';
+      update public.challenges set best_flame = (select flame from public.challenges where id = '$(fx archive)')
+       where id = '$(fx replacement)'"
+rehearsal_copy L_repair.sql
+echo
+echo "----- what this rehearsal changed in the shipped script -----"
+diff -u supabase/repair/streak_repair.sql "$TMP/L_repair.sql" | grep -E '^[-+][^-+]' || true
+sync_sql
+echo
+echo "----- L: BEFORE -----"
+psql_run -X -d "$DB" -P pager=off -c "
+  select left(id::text,8) as id,
+         case when ended_at is null then 'LIVE' else 'ended' end as state,
+         start_date, flame, best_flame, last_evaluated_day, ended_reason, ended_on_day
+    from public.challenges where owner = '$(fx owner)' order by start_date, ended_at nulls last;
+  select day, jsonb_array_length(task_snapshot) as tasks,
+         (select count(*) from public.task_completions tc
+           where tc.challenge_id = d.challenge_id and tc.day = d.day) as ticks,
+         (sealed_at is not null) as sealed
+    from public.challenge_days d where d.challenge_id = '$(fx replacement)' order by day;"
+echo
+echo "----- L: PRECONDITIONS — is this production's shape? -----"
+l_check before
+echo
+echo "----- L: THE REPAIR -----"
+run_sql "$(tmp_path L_repair.sql)"
+echo
+echo "----- L: STATE AFTER -----"
+state
+echo
+echo "----- L: ASSERTIONS -----"
+l_check after
+echo
+echo "----- L: THE CARRY, DAY BY DAY AND KEY BY KEY -----"
+carry_check
+echo
+echo "----- L: THE REPAIR A SECOND TIME — must be a NO-OP -----"
+run_sql "$(tmp_path L_repair.sql)" | grep -E "NOTICE|ERROR"
+echo
+echo "----- L: PAY-ONCE — the real engine and app RPCs over the result -----"
+l_check payonce
 
 echo
 echo "rehearse-phase22: done"
