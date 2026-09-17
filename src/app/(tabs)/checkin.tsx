@@ -27,9 +27,8 @@ import { WorkoutSuggestion } from '@/components/WorkoutSuggestion';
 import type { OpenDay, TaskDef } from '@/data/types';
 import { useStartTimer } from '@/hooks/useStartTimer';
 import { dayDateLabel } from '@/lib/dayLabel';
-import { writeDay } from '@/lib/writeDay';
+import { checkinDeck, type FinishedAction } from '@/lib/checkinDeck';
 import {
-  selectQueue,
   selectTasks,
   selectWorkoutSuggestions,
   useAppStore,
@@ -218,18 +217,25 @@ function TopCard({
  * with the time you checked it off. Read straight from the frozen snapshot
  * and the completion map, so it invents nothing.
  */
-function AllDone({ tasks, grace }: { tasks: TaskDef[]; grace: OpenDay | null }) {
-  const todayComplete = useAppStore((s) => s.dayComplete);
+function AllDone({
+  tasks,
+  grace,
+  finished,
+}: {
+  tasks: TaskDef[];
+  grace: OpenDay | null;
+  /** From checkinDeck(): seal here, celebrate, or show the receipt. */
+  finished: FinishedAction;
+}) {
   const todayDone = useAppStore((s) => s.tasksDone);
-  const today = useAppStore((s) => s.day);
   const sealDay = useAppStore((s) => s.sealDay);
   const router = useRouter();
 
-  // Which day this card is about. Everything below reads from here, so the
-  // finished-state card can never describe today while the deck behind it was
-  // yesterday's.
-  const day = grace ? grace.day : today;
-  const sealed = grace ? grace.sealed : todayComplete;
+  // Which day this card is about, and whether it is already locked in — both
+  // decided by the deck, so the finished-state card can never describe today
+  // while the deck behind it was yesterday's.
+  const day = finished.day;
+  const sealed = finished.kind === 'sealed';
   const tasksDone = grace ? grace.tasksDone : todayDone;
   const hue = grace ? colors.grace : colors.accent400;
 
@@ -275,9 +281,10 @@ function AllDone({ tasks, grace }: { tasks: TaskDef[]; grace: OpenDay | null }) 
         <PrimaryButton
           // Yesterday does not get the celebration screen: that screen is
           // about the day you are living, and it would be claiming a moment
-          // that already passed. Sealing happens here, in place.
+          // that already passed. Sealing happens here, in place — and it is
+          // the DECK that says so, not this card's own reading of the state.
           label={grace ? `Lock in Day ${day} →` : 'Lock in →'}
-          onPress={grace ? sealDay : () => router.push('/celebration')}
+          onPress={finished.kind === 'seal' ? sealDay : () => router.push('/celebration')}
           style={{ marginTop: 20 }}
         />
       )}
@@ -344,6 +351,7 @@ function DaySwitcher({
 export default function CheckinScreen() {
   const todayTasks = useAppStore(selectTasks);
   const todayDone = useAppStore((s) => s.tasksDone);
+  const todayComplete = useAppStore((s) => s.dayComplete);
   const day = useAppStore((s) => s.day);
   const deferred = useAppStore((s) => s.deferred);
   const completeTask = useAppStore((s) => s.completeTask);
@@ -357,36 +365,27 @@ export default function CheckinScreen() {
   const activeDay = useAppStore((s) => s.activeDay);
   const setActiveDay = useAppStore((s) => s.setActiveDay);
 
-  // THE WINDOW. Yesterday is offered only while the SERVER calls it open and
-  // there is still something to do on it. Nothing here is derived from this
-  // device's clock: the boundary is noon in the CHALLENGE's timezone, and a
-  // phone in another zone (or simply set wrong) must not be able to talk the
-  // screen into offering a day every write against it will be refused.
-  const yTotal = yesterday?.tasks.length ?? 0;
-  const yDone = yesterday
-    ? yesterday.tasks.filter((t) => yesterday.tasksDone[t.key]).length
-    : 0;
-  const offerYesterday =
-    !!yesterday && yesterday.open && !yesterday.sealed && yDone < yTotal;
-  // Closed, and it was never finished. Say so — do not simply take the option
-  // away and leave the user wondering whether they imagined it.
-  const closedUnfinished =
-    !!yesterday && !yesterday.open && !yesterday.sealed && yDone < yTotal;
-
-  // Which day the deck is actually ticking. `grace` is non-null ONLY in
-  // yesterday-mode, and every branch below keys off it, so there is one
-  // switch rather than a scattering of conditions that could disagree.
-  //
-  // PHASE 20: `target` comes from writeDay() — the identical call every write
-  // path makes. The day this screen NAMES and the day the database RECEIVES
-  // are now the same expression evaluated on the same state, not two
-  // conclusions reached separately and hoped to match.
-  const target = writeDay({
-    activeDay,
+  // THE DECISION, AS DATA (Phase 30, A1). Which day the deck is ticking,
+  // whether yesterday is offered, and what the finished-day card does — all
+  // from one pure function, so scripts/checkin-deck.test.mjs drives the same
+  // path this screen renders. The yesterday branch of that decision used to
+  // be a card no user could reach; see src/lib/checkinDeck.ts.
+  const deck = checkinDeck({
     today: day,
-    yesterday: yesterday ? { day: yesterday.day, open: offerYesterday } : null,
+    activeDay,
+    yesterday,
+    todayTasks,
+    todayDone,
+    todayComplete,
+    deferred,
   });
-  const grace = target !== day && yesterday ? yesterday : null;
+  const { offerYesterday, closedUnfinished, target, queue, finished } = deck;
+  const yTotal = deck.yesterdayTotal;
+  const yDone = deck.yesterdayDone;
+  // `grace` is non-null ONLY in yesterday-mode, and every branch below keys
+  // off it, so there is one switch rather than a scattering of conditions
+  // that could disagree.
+  const grace = deck.mode === 'yesterday' && yesterday ? yesterday : null;
 
   // THE DATE, not just the day number. "Day 18" does not tell anyone at
   // 12:20 AM whether they are filling in the day that just ended or the one
@@ -402,13 +401,6 @@ export default function CheckinScreen() {
   const tasksDone = grace ? grace.tasksDone : todayDone;
   const doneCount = tasks.filter((t) => tasksDone[t.key]).length;
   const total = tasks.length;
-  // Deferral is a today affordance: a day you are closing out has nowhere to
-  // push a task to.
-  const queue = selectQueue({
-    todayTasks: tasks,
-    tasksDone,
-    deferred: grace ? [] : deferred,
-  });
   const topKey = queue[0];
   const topTask = tasks.find((t) => t.key === topKey);
   const hue = grace ? colors.grace : colors.accent400;
@@ -465,7 +457,9 @@ export default function CheckinScreen() {
             <Serif size={15} style={{ marginTop: 6 }}>
               {'You are filling in day ' + target +
                 '. Day ' + yesterday.day + ' is ' + yDone + ' of ' + yTotal +
-                ' and stays open until noon — switch below to finish it.'}
+                (yDone === yTotal
+                  ? ' but not locked in — switch below to lock it in before noon.'
+                  : ' and stays open until noon — switch below to finish it.')}
             </Serif>
           </View>
         ) : null}
@@ -518,9 +512,9 @@ export default function CheckinScreen() {
                 suggestion={grace ? undefined : workoutSuggestions[topTask.key]}
               />
             </>
-          ) : (
-            <AllDone tasks={tasks} grace={grace} />
-          )}
+          ) : finished ? (
+            <AllDone tasks={tasks} grace={grace} finished={finished} />
+          ) : null}
         </View>
 
         <View style={styles.chips}>

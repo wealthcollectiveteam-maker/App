@@ -263,6 +263,7 @@ declare
   v_id    uuid;
   v_c     public.challenges;
   v_flame integer;
+  v_sealed timestamptz;
   v_out   text;
   v_judged integer;
 begin
@@ -297,10 +298,31 @@ begin
   -- The user finishes yesterday at 11am, through the RPC, and seals it.
   perform public.complete_task('water', null, 4);
   perform public.seal_day(4);
+  select flame into v_flame from public.challenges where id = v_id;
+  select sealed_at into v_sealed from public.challenge_days
+   where challenge_id = v_id and day = 4;
+  if v_flame <> 4 or v_sealed is null then
+    raise exception 'FAIL: seal_day(4) inside the window did not seal and pay: flame %, sealed_at %',
+      v_flame, v_sealed;
+  end if;
 
   -- Noon passes. The evaluator judges the day it has now closed.
   call t_set_clock(v_id, 5, 13);
   perform public.evaluate_challenge(v_id);
+
+  -- PAY-ONCE (0011:308-310), asserted directly rather than by arithmetic on
+  -- the final flame (Phase 30, A1): the client's seal paid the flame; the
+  -- evaluator's pass over the now-closed day must neither pay it again nor
+  -- re-stamp the seal. This is the contract the check-in screen's seal call
+  -- relies on when it seals yesterday inside the window.
+  if (select flame from public.challenges where id = v_id) <> v_flame then
+    raise exception 'FAIL: evaluate_challenge paid day 4 a second time: flame % -> %',
+      v_flame, (select flame from public.challenges where id = v_id);
+  end if;
+  if (select sealed_at from public.challenge_days
+       where challenge_id = v_id and day = 4) is distinct from v_sealed then
+    raise exception 'FAIL: the evaluator re-stamped sealed_at on a day the client had sealed';
+  end if;
 
   select outcome into v_out from public.challenge_days
    where challenge_id = v_id and day = 4;

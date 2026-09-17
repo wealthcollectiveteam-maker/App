@@ -61,7 +61,8 @@
     "test:tiers": "node --experimental-strip-types scripts/tiers.test.mjs",
     "test:prefs": "node --experimental-strip-types scripts/prefs.test.mjs",
     "test:day-boundary": "node --experimental-strip-types scripts/day-boundary.test.mjs",
-    "test:rls": "bash scripts/test-rls.sh"
+    "test:rls": "bash scripts/test-rls.sh",
+    "test:checkin-deck": "node --experimental-strip-types scripts/checkin-deck.test.mjs"
   },
   "private": true
 }
