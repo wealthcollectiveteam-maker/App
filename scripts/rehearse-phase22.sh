@@ -39,6 +39,11 @@
 #      but the day itself. Archive day end_day must end up met and sealed,
 #      archive day end_day+1 composed and left open at 0, flame = end_day,
 #      and a second run a NO-OP. supabase/repair/phase27_L_check.sql.
+#   M  PRODUCTION AS READ 2026-09-17 03:09 EDT (PHASE 28): the replacement has
+#      TWO day rows and BOTH are EMPTY. Archive day end_day+1 is yesterday,
+#      open only inside the grace window, so M seeds `grace open`. Both
+#      carried days must be composed and left open at 0; flame = end_day;
+#      second run a NO-OP. supabase/repair/phase28_M_check.sql.
 #
 # Same fidelity caveat as test-rls.sh: this is Supabase's shape, not Supabase.
 # It proves the repair's logic against real PostgreSQL semantics — triggers,
@@ -142,7 +147,7 @@ PROD_REPL=488f68ff-86f1-4164-b2fe-e55793f72f1d
 PROD_FEED=544bc57b-bd4f-4ece-a93d-284d568270e7
 PROD_SQUAD=1ffcc0c5-3578-4d89-bb67-16be6fd3bcf0
 PROD_DAY=23
-PROD_LOCAL_DATE=2026-09-16
+PROD_LOCAL_DATE=2026-09-17
 # Scenario K is production's shape as it was on 2026-09-13 — day 19. Its
 # check takes the production day for LABELS only, and those labels should
 # keep describing the run K reproduces, not the current one.
@@ -490,6 +495,59 @@ run_sql "$(tmp_path L_repair.sql)" | grep -E "NOTICE|ERROR"
 echo
 echo "----- L: PAY-ONCE — the real engine and app RPCs over the result -----"
 l_check payonce
+
+# ---------------------------------------------------------------- M ---------
+m_check() {
+  psql_run -v ON_ERROR_STOP=1 -X -d "$DB" -P pager=off \
+    -v stage="$1" -v prod_day="$PROD_DAY" \
+    -f "$(sql_path supabase/repair/phase28_M_check.sql)" 2>&1 | sed 's/^psql:[^ ]* //'
+}
+
+banner "SCENARIO M — PRODUCTION AS READ 2026-09-17 03:09 EDT (PHASE 28): TWO" \
+       "              carried days, BOTH EMPTY; yesterday still inside the window"
+seed "none:none" open 2
+psql_run -v ON_ERROR_STOP=1 -X -q -d "$DB" \
+  -c "update public.challenges set best_flame = flame where id = '$(fx archive)';
+      update public.challenges set best_flame = (select flame from public.challenges where id = '$(fx archive)')
+       where id = '$(fx replacement)'"
+rehearsal_copy M_repair.sql
+echo
+echo "----- what this rehearsal changed in the shipped script -----"
+diff -u supabase/repair/streak_repair.sql "$TMP/M_repair.sql" | grep -E '^[-+][^-+]' || true
+sync_sql
+echo
+echo "----- M: BEFORE -----"
+psql_run -X -d "$DB" -P pager=off -c "
+  select left(id::text,8) as id,
+         case when ended_at is null then 'LIVE' else 'ended' end as state,
+         start_date, flame, best_flame, last_evaluated_day, ended_reason, ended_on_day
+    from public.challenges where owner = '$(fx owner)' order by start_date, ended_at nulls last;
+  select day, jsonb_array_length(task_snapshot) as tasks,
+         (select count(*) from public.task_completions tc
+           where tc.challenge_id = d.challenge_id and tc.day = d.day) as ticks,
+         (sealed_at is not null) as sealed
+    from public.challenge_days d where d.challenge_id = '$(fx replacement)' order by day;"
+echo
+echo "----- M: PRECONDITIONS — is this production's shape? -----"
+m_check before
+echo
+echo "----- M: THE REPAIR -----"
+run_sql "$(tmp_path M_repair.sql)"
+echo
+echo "----- M: STATE AFTER -----"
+state
+echo
+echo "----- M: ASSERTIONS -----"
+m_check after
+echo
+echo "----- M: THE CARRY, DAY BY DAY AND KEY BY KEY -----"
+carry_check
+echo
+echo "----- M: THE REPAIR A SECOND TIME — must be a NO-OP -----"
+run_sql "$(tmp_path M_repair.sql)" | grep -E "NOTICE|ERROR"
+echo
+echo "----- M: PAY-ONCE — the real engine and app RPCs over the result -----"
+m_check payonce
 
 echo
 echo "rehearse-phase22: done"

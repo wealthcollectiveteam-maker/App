@@ -11,8 +11,26 @@
 --   rows themselves, so a database that does not match aborts rather than
 --   improvising.
 --
--- CURRENTLY SET FOR: PHASE 27 — archive 7729ffa2, day 23, ZERO ticks,
---   aimed at 2026-09-16 for a ONE-DAY carry of an EMPTY day.
+-- CURRENTLY SET FOR: PHASE 28 — archive 7729ffa2, day 23, ZERO ticks,
+--   aimed at 2026-09-17 for a TWO-DAY carry where BOTH days are EMPTY.
+--   (Phase 27 aimed this at 2026-09-16 with a one-day carry; the date guard
+--   refused when the date rolled and nothing was written. Scenario L still
+--   rehearses that shape; scenario M rehearses this one.)
+--
+--   THE CARRY IS TWO DAYS, BOTH EMPTY:
+--     replacement day 1 (2026-09-16, yesterday) -> archive day 24, zero ticks
+--     replacement day 2 (2026-09-17, today)     -> archive day 25, zero ticks
+--
+--   Archive day 24 is YESTERDAY. It is still open only because the noon
+--   grace window has not closed. RUN THIS BEFORE NOON America/New_York on
+--   2026-09-17: after noon, day 24 has closed with nothing on it, and the
+--   carry-over step refuses it as a fresh miss — correctly, and nothing is
+--   written. And once it has run, day 24 must still be FINISHED IN THE APP
+--   before noon, or the evaluator judges it at the close and the challenge
+--   ends again on day 24. The repair restores the attempt; it does not do
+--   yesterday's work.
+--
+--   PHASE 27's notes follow, kept for the record:
 --   The Phase 18 run (day 15, nine ticks) is the shape this file was born for.
 --   The Phase 22 run (day 19, two-day carry, 2026-09-13) held: on production
 --   days 1-22 are all met, so three clean days ran on top of that repair
@@ -242,8 +260,12 @@ declare
   -- 2026-09-16 (PHASE 27): a ONE-day carry again, but of an EMPTY day — the
   -- replacement started today and nothing on it is ticked. That shape had no
   -- rehearsal until scenario L, which ran green before this constant moved.
+  -- It was not run that day, and the guard refused at midnight.
+  --
+  -- 2026-09-17 (PHASE 28): TWO carried days, BOTH empty. Scenario M. Only
+  -- valid before local noon — see the header.
   -- NULL skips the check entirely.
-  P_EXPECT_LOCAL_DATE date := date '2026-09-16';
+  P_EXPECT_LOCAL_DATE date := date '2026-09-17';
 
   -- Days on the ARCHIVED challenge the account holder has NAMED, and which the
   -- S1 diagnostic classed `partial` — the app was open, some tasks were
