@@ -45,3 +45,9 @@ example
 
 # rehearsal scratch (scripts/rehearse-phase22.sh), removed on exit
 supabase/.rehearsal/
+
+# Phase briefs are workflow scratch, never source. One of them holds a pasted
+# production row with a personal address; none may enter history.
+/p*.txt
+/phase*.txt
+/_briefs/
