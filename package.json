@@ -46,6 +46,7 @@
     "@types/react": "~19.1.10",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~10.0.0",
+    "playwright-core": "^1.62.1",
     "typescript": "~5.9.2"
   },
   "scripts": {
@@ -60,9 +61,21 @@
     "test:units": "node --experimental-strip-types scripts/units.test.mjs",
     "test:tiers": "node --experimental-strip-types scripts/tiers.test.mjs",
     "test:prefs": "node --experimental-strip-types scripts/prefs.test.mjs",
+    "test:server-prefs": "node --experimental-strip-types scripts/server-prefs.test.mjs",
+    "test:health-card": "node --experimental-strip-types scripts/health-card.test.mjs",
+    "test:dist-guard": "node scripts/dist-guard.test.mjs",
+    "test:health-auth": "node --experimental-strip-types scripts/health-auth.test.mjs",
+    "predeploy": "node scripts/predeploy-check.mjs",
+    "test:ping-rollback": "node --experimental-strip-types scripts/ping-rollback.test.mjs",
     "test:day-boundary": "node --experimental-strip-types scripts/day-boundary.test.mjs",
+    "test:version-stamp": "node scripts/version-stamp.test.mjs",
     "test:rls": "bash scripts/test-rls.sh",
-    "test:checkin-deck": "node --experimental-strip-types scripts/checkin-deck.test.mjs"
+    "test:checkin-card": "node --experimental-strip-types scripts/checkin-card.test.mjs",
+    "test:checkin-deck": "node --experimental-strip-types scripts/checkin-deck.test.mjs",
+    "test:render": "node scripts/render-check.mjs",
+    "test:pages-guard": "node scripts/pages-guard.test.mjs",
+    "predeploy:dest": "node scripts/pages-check.mjs --before",
+    "postdeploy": "node scripts/pages-check.mjs --after"
   },
   "private": true
 }

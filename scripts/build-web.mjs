@@ -44,13 +44,24 @@
  *   BEFORE  — the credentials resolve at all (no .env, empty value, typo).
  *   AFTER   — the credentials are actually IN the bundle that was produced.
  *
+ * AND THE VERSION STAMP. An installed Home Screen web app is suspended and
+ * RESUMED by iOS rather than re-fetched, so a deploy can go unseen for ever
+ * and the user has no address bar to reload from. The app therefore checks a
+ * `version.json` against its own compiled-in build id — and this script is
+ * the only thing that writes either of them. One hash, taken from the bundle
+ * FILENAME Expo emitted, goes into the file and into the bundle in the same
+ * few lines below, and gate 3 re-reads both from disk afterwards to prove
+ * they match. They cannot drift apart by accident because nothing else is
+ * allowed to author them.
+ *
  * The "after" gate is the one that matters, and it is the only one that
  * would have caught the failure above: the environment was perfect that day
  * and the artifact was still dead. Never reduce this to the pre-flight check
  * alone — inspecting the input cannot prove anything about the output when a
  * cache sits between them.
  */
-import { execFileSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
+import { checkFingerprints } from './lib/distGuard.mjs';
 import {
   copyFileSync,
   existsSync,
@@ -60,7 +71,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -231,6 +242,124 @@ function stripEmptyTitles(dir) {
   }
 }
 
+/**
+ * GATE 3 (after the export): the running app and the file it checks against
+ * carry the same id.
+ *
+ * The id is the hash Expo put in the bundle filename. It is a hash of the
+ * bundle's own bytes, so it changes exactly when the code changes and never
+ * when it does not — rebuild identical source twice and no user is told an
+ * update exists. A timestamp would fail that test; a hand-kept version number
+ * would be forgotten.
+ *
+ * The stamp is applied AFTER the export, by rewriting a placeholder token
+ * inside the emitted JS. That is deliberate, not a hack around a build-time
+ * constant: the id IS the hash of the file, so writing it into the source
+ * beforehand would change the bytes it is a hash of. Rewriting afterwards
+ * leaves the filename a hash of the unstamped content — stable, and still a
+ * faithful fingerprint of the code.
+ *
+ * Every failure here is fatal. A build that exports cleanly but ships an
+ * unstamped bundle would compare `__RANKED_BUILD_ID__` against a real hash on
+ * every check and show every user a permanent "new version ready" banner that
+ * updating cannot clear.
+ */
+const BUILD_ID_TOKEN = '__RANKED_BUILD_ID__';
+
+function stampVersion(bundle) {
+  const name = bundle.slice(bundle.lastIndexOf(sep) + 1);
+  const hash = name.match(/^entry-([0-9a-f]+)\.js$/)?.[1];
+  if (!hash) {
+    throw new Error(
+      `Cannot read a build id out of the bundle filename "${name}".
+
+` +
+        `  Expected entry-<hex>.js. The version stamp derives the app's build
+` +
+        `  id from this hash, so without it the app cannot know which build it
+` +
+        `  is and the update banner cannot work. Refusing to ship an
+` +
+        `  unversioned build.`,
+    );
+  }
+
+  const js = readFileSync(bundle, 'utf8');
+  if (!js.includes(BUILD_ID_TOKEN)) {
+    throw new Error(
+      `The placeholder ${BUILD_ID_TOKEN} is not in the exported bundle.
+
+` +
+        `  ${bundle}
+
+` +
+        `  src/constants/build.ts is supposed to carry it as a string literal
+` +
+        `  for this script to rewrite. Either that file changed, or a
+` +
+        `  minifier folded it away. Without the rewrite the app would compare
+` +
+        `  the literal placeholder against a real hash on every check and show
+` +
+        `  a "new version ready" banner that updating can never clear.`,
+    );
+  }
+  writeFileSync(bundle, js.split(BUILD_ID_TOKEN).join(hash));
+
+  const builtAt = new Date();
+  writeFileSync(
+    join(dist, 'version.json'),
+    `${JSON.stringify(
+      {
+        buildId: hash,
+        bundle: name,
+        builtAt: builtAt.toISOString(),
+        builtAtReadable: builtAt.toString(),
+      },
+      null,
+      2,
+    )}
+`,
+  );
+
+  return hash;
+}
+
+/** Re-read both artifacts from disk. Neither is trusted from memory. */
+function assertVersionStampAgrees(bundle, hash) {
+  const manifestPath = join(dist, 'version.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  const js = readFileSync(bundle, 'utf8');
+
+  const problems = [];
+  if (manifest.buildId !== hash) {
+    problems.push(
+      `version.json buildId is ${manifest.buildId}, expected ${hash}`,
+    );
+  }
+  if (js.includes(BUILD_ID_TOKEN)) {
+    problems.push(`the placeholder ${BUILD_ID_TOKEN} survives in the bundle`);
+  }
+  if (!js.includes(hash)) {
+    problems.push(`the bundle does not contain the id ${hash}`);
+  }
+
+  if (problems.length) {
+    throw new Error(
+      `VERSION STAMP MISMATCH — ${problems.join('; ')}.
+
+` +
+        `  The app would compare its own build id against a different one on
+` +
+        `  every foreground. Depending on which way they disagree that is
+` +
+        `  either an update banner nobody can clear, or an update nobody is
+` +
+        `  ever told about. Do not deploy this.`,
+    );
+  }
+}
+
 function directorySize(dir) {
   let total = 0;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -270,6 +399,11 @@ const bundle = bundlePath();
 assertCredentialsInlined(credentials, bundle);
 assertNoSecretKey(bundle);
 
+// Both artifacts of the version stamp come from this one call, and the next
+// line re-reads them off disk to prove they agree.
+const buildId = stampVersion(bundle);
+assertVersionStampAgrees(bundle, buildId);
+
 writeFileSync(join(dist, '.nojekyll'), '');
 stripEmptyTitles(dist);
 
@@ -281,12 +415,64 @@ const routes = readdirSync(dist, { recursive: true }).filter(
   (f) => typeof f === 'string' && f.endsWith('.html'),
 );
 
+// ---------------------------------------------------------------------------
+// THE RENDER GATE. The last gate, and the only one that looks at the screen.
+//
+// Every gate above this one reads the bundle as TEXT: are the credentials in
+// it, is there no secret key, does the version stamp agree. All of them were
+// green on the build that shipped a Track screen with no weekly check-in card
+// on it, because a card that renders nothing is a perfectly well-formed
+// bundle. This one opens dist/ in a real browser and measures where things
+// actually are.
+//
+// It runs on EVERY build rather than on request, for the same reason the
+// credential check does: a gate you have to remember to run is a gate that
+// stops running. If no browser is installed it says so loudly and does not
+// pretend to have passed.
+// ---------------------------------------------------------------------------
+const render = spawnSync(
+  process.execPath,
+  [join(root, 'scripts', 'render-check.mjs'), dist],
+  { stdio: 'inherit', cwd: root },
+);
+if (render.status !== 0) {
+  throw new Error(
+    'render check FAILED — dist/ builds but does not put the screen on screen. ' +
+      'Nothing has been staged.',
+  );
+}
+
+// A PRE-FIX CLIENT MUST NOT EVEN BE PRODUCED, never mind copied.
+//
+// scripts/predeploy-check.mjs is the gate on the copy; this is the gate on
+// the build, and having both is deliberate. The copy gate is what stops a
+// stale dist/ that someone forgot to rebuild. This one stops the artifact
+// existing at all, so there is no window in which the dangerous file is
+// sitting on disk waiting for a mistake. See scripts/lib/distGuard.mjs for
+// what each fingerprint means and why it is checked as a property of the
+// bundle rather than as a build id.
+const guardFindings = checkFingerprints(readFileSync(bundle, 'utf8'));
+if (guardFindings.length > 0) {
+  throw new Error(
+    'health-truthfulness gate FAILED — this bundle is a pre-fix client and ' +
+      'must not be deployed:\n' +
+      guardFindings
+        .map(
+          (f) =>
+            `  ${f.kind === 'present' ? 'FOUND' : 'MISSING'}  ${f.id} — ${f.why}`,
+        )
+        .join('\n'),
+  );
+}
+
 console.log(`
 dist/ is ready to copy.
   ${routes.length - 1} routes exported, plus 404.html
   ${mb(directorySize(dist))} total
   credentials verified INSIDE ${bundle.slice(root.length + 1)}
   no service_role / sb_secret_ key in the bundle
+  health-truthfulness gate passed — no pre-fix fingerprint, both fixes present
+  version.json written — buildId ${buildId}, stamped into the bundle and verified
   .nojekyll written  —  without it GitHub Pages hides _expo/ and the site is blank
   404.html written   —  index.html shell; the router resolves the real path
 `);
