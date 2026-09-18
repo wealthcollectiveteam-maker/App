@@ -5,13 +5,16 @@ backend work. Keep this current when data handling changes.
 
 ## Apple Health (HealthKit) — read-only
 
-The app requests **read-only** access to exactly three things:
+The app requests **read-only** access to exactly five things — the five in the
+permission sheet, and no others:
 
 | Data type | Why it is read | What happens to it |
 |---|---|---|
 | Dietary energy consumed (today) | To offer a one-tap "mark diet complete?" prompt when food was logged in another app | Rendered in the prompt on-device; discarded on refresh |
 | Body mass (most recent sample) | To pre-fill the optional weekly weight check-in so it's a confirm, not a retype | Pre-fills an editable field on-device; only the value the user explicitly saves is stored |
 | Workouts (today) | To offer a "mark workout complete?" prompt when a workout at least as long as the tier's duration exists | Rendered in the prompt on-device; discarded on refresh |
+| Step count (today) | Shown on the Today's Health card so the day's activity is visible in the app it is being logged against | Rendered on-device; discarded on refresh |
+| Active energy burned (today) | Same card, same reason | Rendered on-device; discarded on refresh |
 
 Hard rules, enforced in `src/services/HealthService.ts`:
 
@@ -22,9 +25,19 @@ Hard rules, enforced in `src/services/HealthService.ts`:
   in-memory state (`healthReadings`) used to render prompts and pre-fill fields.
 - Health data is never used for advertising and never shared with third
   parties (Apple HealthKit rules; also just the right thing).
-- The connection is opt-out-able in Settings. When permission is denied,
+- **The connection is OPT-IN.** It starts off, and the only thing that asks
+  iOS for access is the user turning it on. When permission is denied,
   revoked, or HealthKit is unavailable (web, Android, Expo Go), every read
   resolves to null and the app behaves identically with no prompts or nags.
+- **The app is not told whether read access was granted, and does not claim
+  to know.** HealthKit reports no authorization status for read types — a
+  denied type returns no samples, identically to a type with no data — so
+  where a value is missing the app shows a dash and says it cannot tell which
+  it is, rather than displaying a zero or asserting a refusal.
+- **The connection itself is device-local and is never synced.** An Apple
+  Health grant is issued by iOS to one phone; `profile_private.health_enabled`
+  is written pinned `false` and never read back, so signing in elsewhere never
+  produces a switch that is on without a permission behind it.
 - **Never auto-complete:** health data only ever produces a prompt; the user
   confirms. Completion goes through the same path as a manual tap.
 
