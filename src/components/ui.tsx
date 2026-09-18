@@ -122,11 +122,19 @@ export function OutlineButton({
 export function Card({
   children,
   style,
+  testID,
 }: {
   children: React.ReactNode;
   style?: ViewStyle | ViewStyle[];
+  /** Forwarded so a card can be found by the render check. react-native-web
+   *  emits it as data-testid; on native it is inert. */
+  testID?: string;
 }) {
-  return <View style={[styles.card, style]}>{children}</View>;
+  return (
+    <View testID={testID} style={[styles.card, style]}>
+      {children}
+    </View>
+  );
 }
 
 /**

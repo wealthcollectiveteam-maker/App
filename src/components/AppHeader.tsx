@@ -36,7 +36,9 @@ export function AppHeader({ showStreak = false }: { showStreak?: boolean }) {
   );
 
   return (
-    <View style={[styles.bar, { paddingTop: insets.top + 10 }]}>
+    // testID -> data-testid on web: scripts/render-check.mjs measures this
+    // exact element across every tab (Phase 33).
+    <View testID="app-header" style={[styles.bar, { paddingTop: insets.top + 10 }]}>
       {DevMenu ? <DevMenu>{wordmark}</DevMenu> : wordmark}
 
       <View style={styles.right}>

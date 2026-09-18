@@ -31,6 +31,10 @@ import type {
   WorkoutLogInput,
 } from '@/data/types';
 import { normalizeInviteCode } from '@/lib/inviteCode';
+import type {
+  RemotePreferences,
+  SyncedPreferences,
+} from '@/lib/serverPrefs';
 import type { IDataService, RejectedWrite } from '@/services/contract';
 import {
   composeTaskSet,
@@ -50,7 +54,13 @@ export class MockDataService implements IDataService {
   private feeling: { feeling: string | null; text: string } | null = null;
   private blocked: BlockedUser[] = [];
   private reports: { feedItemId: string; reason: ReportReason }[] = [];
-  private pings: { toName: string; message: string; at: number }[] = [];
+  private pings: {
+    toName: string;
+    message: string;
+    at: number;
+    feedItemId?: string;
+  }[] = [];
+  private prefs: SyncedPreferences | null = null;
 
   loadScenario(scenario: Scenario): ScenarioState {
     this.state = buildScenario(scenario);
@@ -104,8 +114,12 @@ export class MockDataService implements IDataService {
     this.state.dayComplete = true;
   }
 
-  sendPing(toName: string, message: string): void {
-    this.pings.push({ toName, message, at: Date.now() });
+  // `feedItemId` is the store's optimistic feed row. The mock refuses
+  // nothing, so it is recorded and never used — the id exists on the
+  // interface for the backend, which has to be able to name that row back
+  // when the server rejects the send.
+  sendPing(toName: string, message: string, feedItemId?: string): void {
+    this.pings.push({ toName, message, at: Date.now(), feedItemId });
   }
 
   saveJournalEntry(day: number, text: string): JournalEntry {
@@ -367,6 +381,23 @@ export class MockDataService implements IDataService {
     this.state.why = why;
   }
 
+  /**
+   * ALWAYS null, and that is the answer rather than a gap. There is no
+   * account behind the mock, so there is nothing that could be the record for
+   * an account preference — and null is precisely what tells the store to
+   * keep what the device already holds. Returning an invented set here would
+   * make a dev build silently overwrite the tester's own settings.
+   */
+  getRemotePreferences(_current: SyncedPreferences): RemotePreferences | null {
+    return null;
+  }
+
+  savePreferences(prefs: SyncedPreferences): void {
+    // Recorded so a dev build behaves the same shape as the real one within a
+    // session. Nothing persists it: the mock has no account to persist to.
+    this.prefs = prefs;
+  }
+
   async deleteAccount(): Promise<void> {
     this.state = buildScenario('day1');
     this.blocked = [];
@@ -534,6 +565,20 @@ export class MockDataService implements IDataService {
 
   getMetricHistory(): MetricCheckin[] {
     return this.metricCheckins;
+  }
+
+  async updateMetricCheckin(
+    id: string,
+    weightKg: number | null,
+    mood: number | null,
+  ): Promise<void> {
+    this.metricCheckins = this.metricCheckins.map((c) =>
+      c.id === id ? { ...c, weightKg, mood } : c,
+    );
+  }
+
+  async deleteMetricCheckin(id: string): Promise<void> {
+    this.metricCheckins = this.metricCheckins.filter((c) => c.id !== id);
   }
 
   // ---- Editable daily tasks (day-start snapshots) ----

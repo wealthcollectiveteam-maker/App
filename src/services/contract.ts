@@ -26,6 +26,7 @@ import type {
   WorkoutLog,
   WorkoutLogInput,
 } from '@/data/types';
+import type { RemotePreferences, SyncedPreferences } from '@/lib/serverPrefs';
 
 /**
  * DataService contract. The app talks to this interface only; both the mock
@@ -74,6 +75,19 @@ export type RejectedWrite =
   | { op: 'journal' }
   | { op: 'milestone' }
   | { op: 'meal' }
+  // The optimistic feed row for a ping, by id. A ping's rollback is NOT
+  // "re-read the mirror": the service mirror never held the row — the store
+  // composes "pinged Sam" locally the instant the button is tapped, and the
+  // send is a fire-and-forget RPC. Before this existed the rollback was
+  // `() => {}`, so a refused ping (offline, out of quota, recipient no longer
+  // in the squad) left the sender's feed permanently showing a ping the
+  // recipient never received. `feedItemId` is that local row, so the undo
+  // removes the one row rather than replacing a feed that has moved on.
+  | { op: 'ping'; feedItemId: string }
+  // A preference the server refused. The device keeps the setting — it saved
+  // locally and IS honoured here — so this op deliberately restores nothing;
+  // see the store's listener.
+  | { op: 'prefs' }
   | { op: 'other' };
 
 export interface IDataService {
@@ -104,8 +118,13 @@ export interface IDataService {
   /**
    * Ping a squadmate by display name. The daily quota is enforced by the
    * server; the client's own count is a courtesy pre-check, never authority.
+   *
+   * `feedItemId` is the id of the optimistic "pinged Sam" row the caller has
+   * already put in its own feed. It is carried so a refusal can name that row
+   * back to the caller (RejectedWrite `ping`) and the row can be removed.
+   * Without it a ping the server never accepted stays on screen for good.
    */
-  sendPing(toName: string, message: string): void;
+  sendPing(toName: string, message: string, feedItemId?: string): void;
   saveJournalEntry(day: number, text: string): JournalEntry;
   getJournal(): JournalEntry[];
   logMeal(text: string, at?: number): Meal;
@@ -128,6 +147,34 @@ export interface IDataService {
    * name nobody else can see.
    */
   updateProfile(name: string, why: string): void;
+  /**
+   * PREFERENCES THAT BELONG TO THE ACCOUNT, NOT TO THE PHONE.
+   *
+   * Units, notification switches, health prompts and the weekly check-in card
+   * were device-only: the columns to hold them have existed since 0003/0004
+   * and nothing had ever written one. A friend moving to the native build
+   * therefore arrived with their unit preference re-derived from the phone's
+   * locale and every switch back at its default.
+   *
+   * Returns what the SERVER holds, MERGED OVER `current` — the caller's own
+   * values, which stand in for any column that is absent or of the wrong
+   * type. Null when there is no server to ask (the mock) or the account has
+   * not been hydrated yet. `synced: false` on the result means those values
+   * are DDL defaults rather than choices and must not be adopted over the
+   * device's own either — see lib/serverPrefs.ts.
+   */
+  getRemotePreferences(current: SyncedPreferences): RemotePreferences | null;
+  /**
+   * Save preferences — ALL of them, every time. Optimistic like every other
+   * write here: the setting has already been applied on the device, and a
+   * refusal is reported rather than reverted, because a preference that saved
+   * locally IS in force locally.
+   *
+   * The whole set rather than the one that changed, because the write may be
+   * the INSERT that creates the row, and a column left out of an INSERT takes
+   * a DDL default the app does not agree with — see lib/serverPrefs.ts.
+   */
+  savePreferences(prefs: SyncedPreferences): void;
   // Squad membership. Solo mode is squads === [] and squad === null; a user
   // may now hold several at once, and exactly one of them is ACTIVE.
   /**
@@ -234,6 +281,22 @@ export interface IDataService {
   // Optional weekly metrics — private to the owner, never social.
   saveMetricCheckin(weightKg: number | null, mood: number | null): MetricCheckin;
   getMetricHistory(): MetricCheckin[];
+  /**
+   * Correct or remove a past check-in.
+   *
+   * Both are async and both REJECT on refusal, unlike the optimistic writes
+   * above. A weight typed in the wrong unit is corrected once, deliberately,
+   * possibly weeks later — the one thing the screen must not do is show the
+   * new number, revert a moment later, and leave the user unsure which value
+   * is now in their history. So the mirror changes only after the server has
+   * said yes. Resolving means it happened; rejecting means nothing changed.
+   */
+  updateMetricCheckin(
+    id: string,
+    weightKg: number | null,
+    mood: number | null,
+  ): Promise<void>;
+  deleteMetricCheckin(id: string): Promise<void>;
   /**
    * Workout log — owner-only history of what was actually done. Composed
    * ONLY of app-owned data (our timer's duration, user-picked type, effort,

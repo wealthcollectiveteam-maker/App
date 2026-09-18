@@ -10,7 +10,9 @@ import {
   serializeFlag,
   serializePrefs,
 } from '@/lib/prefsStorage';
+import { undoPing } from '@/lib/pingRollback';
 import { writeDay, type DayView } from '@/lib/writeDay';
+import type { SyncedPreferences } from '@/lib/serverPrefs';
 import type { UnitPreference } from '@/lib/units';
 import {
   displayTierLabel,
@@ -41,8 +43,9 @@ import type {
   TaskKey,
   Tier,
 } from '@/data/types';
-import { DataService, supabaseService } from '@/services';
+import { DataService, isLiveBackend, supabaseService } from '@/services';
 import {
+  getHealthAuthDiagnostic,
   getHealthService,
   isHealthSimulated,
   setHealthSimulation,
@@ -109,12 +112,20 @@ export function localWeekKey(ts: number = Date.now()): string {
   return `${d.getFullYear()}-W${week}`;
 }
 
-/** On-device Apple Health readings. Render-only; never synced or logged. */
+/**
+ * On-device Apple Health readings. Render-only; never synced or logged.
+ *
+ * EVERY FIELD IS NULLABLE, AND null IS NOT ZERO. A null here means "we did
+ * not read this" — no permission, no data, or a query that could not run,
+ * and HealthKit will not say which. It must never be rendered as 0, and
+ * `workouts: null` must never be rendered as "no workouts today". `[]` is
+ * the only value that means the workout query ran and came back empty.
+ */
 export interface HealthReadings {
   dietaryKcal: number | null;
   steps: number | null;
   activeEnergyKcal: number | null;
-  workouts: HealthWorkout[];
+  workouts: HealthWorkout[] | null;
   bodyMass: BodyMassSample | null;
 }
 
@@ -122,12 +133,26 @@ const EMPTY_READINGS: HealthReadings = {
   dietaryKcal: null,
   steps: null,
   activeEnergyKcal: null,
-  workouts: [],
+  workouts: null,
   bodyMass: null,
 };
 
+/**
+ * healthEnabled STARTS FALSE, and that is a correctness fix, not a taste.
+ *
+ * `requestReadPermissions()` is called from exactly one place — this switch
+ * going true. While the default was true, a fresh install had the switch
+ * already ON and nothing ever asked: permission was never granted, every
+ * reading came back null, and the card drew them as zeroes. The switch was
+ * asserting a connection that had never been established.
+ *
+ * OFF is the only value that is true on a device that has never asked. It
+ * also makes the switch mean "ask me now" — turning it on is what presents
+ * the sheet — and it is what makes the first preference sync defensible
+ * (see lib/serverPrefs.ts and 0013_preference_sync.sql).
+ */
 const DEFAULT_HEALTH_PREFS: HealthPrefs = {
-  healthEnabled: true,
+  healthEnabled: false,
   dietPromptEnabled: true,
   workoutPromptEnabled: true,
   weightPrefillEnabled: true,
@@ -186,6 +211,25 @@ interface AppState extends ScenarioState {
   healthReadings: HealthReadings;
   /** Whether a HealthKit source can be queried right now. */
   healthAvailable: boolean;
+  /**
+   * Whether iOS has ever shown this device the Health permission sheet for
+   * our read types. NOT whether it was granted — HealthKit does not report
+   * read grants (see HealthService.HealthAuthRequestStatus).
+   *
+   * This is the belt to the default-false braces: a device carrying a
+   * `healthEnabled: true` blob written by an earlier build, or one that
+   * adopted a stale server row, must still land on the Connect state rather
+   * than on a card full of numbers nobody was allowed to read.
+   */
+  healthAsked: boolean;
+  /**
+   * What the OS literally returned for the auth-status question, plus its
+   * typeof. Diagnostic only — nothing branches on it; `healthAsked` is the
+   * decision. It exists because "Not connected for ever" and "permission
+   * denied" look identical on screen, and one of them is a marshalling bug.
+   * An authorization enum is not a health value (see HealthAuthDiagnostic).
+   */
+  healthAuthRaw: string | null;
   /** Health prompt dismissals: 'diet' | 'workout' -> local date dismissed. */
   healthPromptDismissed: Partial<Record<'diet' | 'workout', string>>;
   /**
@@ -284,17 +328,39 @@ interface AppState extends ScenarioState {
   /** One-tap log of a saved meal (name + attached nutrition). */
   logSavedMeal: (id: string) => void;
   setHealthPref: (key: keyof HealthPrefs, value: boolean) => void;
+  /** Present the permission sheet, then re-read. Safe to call twice. */
+  connectHealth: () => Promise<void>;
   refreshHealth: () => Promise<void>;
   dismissHealthPrompt: (kind: 'diet' | 'workout') => void;
   /** Mark a Health workout as used for a confirmed completion. */
   consumeHealthWorkout: (startISO: string) => void;
   toggleHealthSimulation: () => void;
   saveMetricCheckin: (weightKg: number | null, mood: number | null) => void;
+  /**
+   * Correct or remove a past check-in. Both REJECT if the server refused,
+   * having changed nothing — the screen keeps the user's value and says so
+   * rather than showing a success it cannot stand behind.
+   */
+  updateMetricCheckin: (
+    id: string,
+    weightKg: number | null,
+    mood: number | null,
+  ) => Promise<void>;
+  deleteMetricCheckin: (id: string) => Promise<void>;
   dismissCheckinCard: () => void;
+  /** Re-open the entry form for a week already handled. */
+  reopenCheckinCard: () => void;
   setWeeklyCheckinEnabled: (enabled: boolean) => void;
   setUnitPreference: (pref: UnitPreference) => void;
   /** Load persisted preference + check-ins (call once at app start). */
   hydratePersisted: () => Promise<void>;
+  /**
+   * Settle this device's preferences against the account's. Adopts the
+   * server's copy, or seeds the server from this device when the account has
+   * never recorded one. Safe to call repeatedly; waits for
+   * hydratePersisted() so it can never seed half-restored state.
+   */
+  reconcilePreferences: () => Promise<void>;
   /**
    * Ask the server what day it is and pull today back into step with it.
    * Called on every foreground. Silent on failure by design — see the
@@ -398,6 +464,15 @@ function localeUnitPreference(): UnitPreference {
 const CHECKINS_KEY = 'ranked.metricCheckins.v1';
 
 /**
+ * The local copy of the check-in history. It exists so the "Last check-in"
+ * line and the history screen still read correctly with no network; the
+ * server is the record.
+ */
+const persistCheckins = (checkins: MetricCheckin[]) => {
+  AsyncStorage.setItem(CHECKINS_KEY, JSON.stringify(checkins)).catch(() => {});
+};
+
+/**
  * Preferences that MUST survive a relaunch.
  *
  * All three of these were `set()` and nothing else, so every one of them
@@ -412,6 +487,91 @@ const CHECKINS_KEY = 'ranked.metricCheckins.v1';
  */
 function persist(key: string, value: object): void {
   AsyncStorage.setItem(key, serializePrefs(value)).catch(() => {});
+}
+
+/**
+ * ...AND THE ONES THAT MUST SURVIVE A NEW PHONE.
+ *
+ * The paragraph above is right about which alerts a phone shows. It is wrong
+ * about the rest, and Phase 17A is what made the difference matter: friends
+ * mid-challenge are moving from the web build to a native one. Units,
+ * notification switches, health prompts and the weekly check-in card are
+ * facts about a PERSON, and every one of them lived only in AsyncStorage —
+ * so the move re-derived units from the phone's locale (a browser on a
+ * laptop and a phone can easily disagree) and put every switch back to its
+ * default. Someone who deliberately turned notifications off and finds them
+ * on has had a choice reverted without being asked.
+ *
+ * The columns to hold them have existed since 0003/0004 and nothing had ever
+ * written one. These three pieces are what wire them up:
+ *
+ *   - every setter also calls DataService.savePreferences()
+ *   - reconcilePreferences() adopts the server's copy at sign-in and on every
+ *     refresh, or SEEDS the server from this device when the account has
+ *     never saved one (see lib/serverPrefs.ts for why that distinction is
+ *     load-bearing rather than fussy)
+ *   - the AsyncStorage copy stays, as a cache: it is what paints the first
+ *     frame on a cold launch, before any network read has answered.
+ *
+ * ORDERING. reconcilePreferences() must never run against half-restored
+ * device state, or it would seed the server with defaults the user never
+ * chose. hydratePersisted() is fired from the app root at mount and the
+ * network round trips of sign-in take far longer — but "far longer" is not a
+ * guarantee, so this is one.
+ */
+let devicePrefsStarted = false;
+/**
+ * Whether this session has already offered its preferences to an account that
+ * had none. ONCE, not once per refresh: reconcilePreferences() runs on every
+ * foreground and pull-to-refresh, and a seed that kept failing — 0013 not
+ * applied yet, say — would raise "that change didn't save" every time the app
+ * came back, for a change the user never made.
+ */
+let prefsSeedAttempted = false;
+let markDevicePrefsRestored: () => void = () => {};
+const devicePrefsRestored = new Promise<void>((resolve) => {
+  markDevicePrefsRestored = resolve;
+});
+
+/**
+ * One line naming what the OS returned for the auth-status question. Read by
+ * the dev sheet and by the device gate; nothing branches on it.
+ */
+function describeAuthDiagnostic(): string | null {
+  const d = getHealthAuthDiagnostic();
+  return d ? `${d.raw} (typeof ${d.typeOf}) -> ${d.parsedAs}` : null;
+}
+
+/** The account-level preferences as this device currently holds them. */
+function currentSyncedPreferences(s: {
+  unitPreference: UnitPreference;
+  notificationPrefs: NotificationPrefs;
+  healthPrefs: HealthPrefs;
+  weeklyCheckinEnabled: boolean;
+}): SyncedPreferences {
+  return {
+    unitPreference: s.unitPreference,
+    notifications: s.notificationPrefs,
+    health: s.healthPrefs,
+    weeklyCheckinEnabled: s.weeklyCheckinEnabled,
+  };
+}
+
+/**
+ * "The server says this week's check-in is already done."
+ *
+ * Returns a patch that only ever SETS the week — never clears it. Dismissing
+ * the card is a local act with no server record (see reopenCheckinCard), so a
+ * refresh that cleared this would reopen a card the user had just put away.
+ */
+function handledThisWeek(checkins: MetricCheckin[]): {
+  checkinHandledWeek?: string;
+} {
+  const week = localWeekKey();
+  const last = checkins[0];
+  return last && localWeekKey(last.timestamp) === week
+    ? { checkinHandledWeek: week }
+    : {};
 }
 
 const initialScenario = fromScenario('day1');
@@ -439,6 +599,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   healthPrefs: DEFAULT_HEALTH_PREFS,
   healthReadings: EMPTY_READINGS,
   healthAvailable: false,
+  healthAsked: false,
+  healthAuthRaw: null,
   healthPromptDismissed: {},
   healthWorkoutsConsumed: [],
   healthSimulated: false,
@@ -726,8 +888,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       pingsUsed: { date: today, count: used + 1 },
     });
     // The local count above is a courtesy pre-check; send_ping() enforces the
-    // real quota and rejects a recipient outside the squad.
-    DataService.sendPing(toName, text);
+    // real quota and rejects a recipient outside the squad — and `item.id` is
+    // how a refusal finds the row above again, so a ping that was never sent
+    // does not stay in the feed claiming it was.
+    DataService.sendPing(toName, text, item.id);
     return true;
   },
 
@@ -772,6 +936,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const next = { ...get().notificationPrefs, [key]: value };
     set({ notificationPrefs: next });
     persist(NOTIF_PREFS_KEY, next);
+    DataService.savePreferences(currentSyncedPreferences(get()));
   },
 
   attachNutrition: (mealId, nutrition) => {
@@ -809,17 +974,40 @@ export const useAppStore = create<AppState>((set, get) => ({
     const nextPrefs = { ...get().healthPrefs, [key]: value };
     set({ healthPrefs: nextPrefs });
     persist(HEALTH_PREFS_KEY, nextPrefs);
+    // The SWITCH syncs. No reading ever does — see PRIVACY_NOTES.md.
+    // healthEnabled itself is deliberately NOT among the synced columns:
+    // it stands for an OS grant that belongs to this phone, not to the
+    // account (lib/serverPrefs.ts).
+    DataService.savePreferences(currentSyncedPreferences(get()));
     if (key === 'healthEnabled') {
       if (value) {
-        const service = getHealthService();
-        service
-          .requestReadPermissions()
-          .then(() => get().refreshHealth())
-          .catch(() => {});
+        get().connectHealth().catch(() => {});
       } else {
+        // Turning it off drops the readings immediately. It does NOT clear
+        // healthAsked: iOS has been asked and will not un-ask, and claiming
+        // otherwise would be its own small lie.
         set({ healthReadings: EMPTY_READINGS });
       }
     }
+  },
+
+  /**
+   * The single place that asks iOS for Health access.
+   *
+   * `requestReadPermissions()` resolving true means THE REQUEST COMPLETED,
+   * never that anything was granted — so `healthAsked` is set from it and
+   * nothing else is inferred. Calling this when the sheet has already been
+   * shown is harmless: iOS presents nothing and resolves immediately.
+   */
+  connectHealth: async () => {
+    try {
+      const service = getHealthService();
+      if (!service.isAvailable()) return;
+      await service.requestReadPermissions();
+    } catch {
+      // A failed request is "still not asked". Nothing to record.
+    }
+    await get().refreshHealth();
   },
 
   refreshHealth: async () => {
@@ -828,9 +1016,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const service = getHealthService();
       const available = service.isAvailable();
+      // 'unknown' counts as not-asked: asking twice costs a silent no-op,
+      // assuming we were asked costs a card that claims a connection.
+      const asked =
+        available && (await service.getAuthRequestStatus()) === 'requested';
       const { healthPrefs } = get();
-      if (!available || !healthPrefs.healthEnabled) {
-        set({ healthReadings: EMPTY_READINGS, healthAvailable: available });
+      if (!available || !healthPrefs.healthEnabled || !asked) {
+        set({
+          healthReadings: EMPTY_READINGS,
+          healthAvailable: available,
+          healthAsked: asked,
+          healthAuthRaw: describeAuthDiagnostic(),
+        });
         return;
       }
       const [dietaryKcal, steps, activeEnergyKcal, workouts, bodyMass] =
@@ -844,6 +1041,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         healthReadings: { dietaryKcal, steps, activeEnergyKcal, workouts, bodyMass },
         healthAvailable: true,
+        healthAsked: true,
+        healthAuthRaw: describeAuthDiagnostic(),
       });
     } catch {
       set({ healthReadings: EMPTY_READINGS });
@@ -880,23 +1079,76 @@ export const useAppStore = create<AppState>((set, get) => ({
     const checkin = DataService.saveMetricCheckin(weightKg, mood);
     set((s) => {
       const metricCheckins = [checkin, ...s.metricCheckins];
-      AsyncStorage.setItem(CHECKINS_KEY, JSON.stringify(metricCheckins)).catch(
-        () => {},
-      );
+      persistCheckins(metricCheckins);
       return { metricCheckins, checkinHandledWeek: localWeekKey() };
+    });
+  },
+
+  updateMetricCheckin: async (id, weightKg, mood) => {
+    // The service call is the GATE, not the source of the new list: it throws
+    // when the server refuses and returns having written nothing otherwise.
+    // The store's own array stays authoritative for what is on screen, which
+    // also keeps a mock build (whose service mirror holds only this session's
+    // entries) from dropping restored history on an edit.
+    await DataService.updateMetricCheckin(id, weightKg, mood);
+    set((s) => {
+      const metricCheckins = s.metricCheckins.map((c) =>
+        c.id === id ? { ...c, weightKg, mood } : c,
+      );
+      persistCheckins(metricCheckins);
+      return { metricCheckins };
+    });
+  },
+
+  deleteMetricCheckin: async (id) => {
+    await DataService.deleteMetricCheckin(id);
+    set((s) => {
+      const removed = s.metricCheckins.find((c) => c.id === id);
+      const metricCheckins = s.metricCheckins.filter((c) => c.id !== id);
+      persistCheckins(metricCheckins);
+      // Deleting THIS week's check-in has to reopen the card. Otherwise the
+      // sticky "handled this week" flag leaves Track showing a read-back line
+      // for a row that no longer exists — or, once the last one is gone,
+      // showing nothing at all, with no way back to the history and no way to
+      // enter a replacement until the week turns over.
+      const thisWeek = localWeekKey();
+      const removedThisWeek =
+        removed != null && localWeekKey(removed.timestamp) === thisWeek;
+      const stillHandled = metricCheckins.some(
+        (c) => localWeekKey(c.timestamp) === thisWeek,
+      );
+      return removedThisWeek && !stillHandled
+        ? { metricCheckins, checkinHandledWeek: null }
+        : { metricCheckins };
     });
   },
 
   dismissCheckinCard: () => set({ checkinHandledWeek: localWeekKey() }),
 
+  // The way back from the summary row to the entry form. Checking in twice in
+  // one week is allowed — the rows are timestamped and the history holds both
+  // — so "handled this week" is a default, not a lock. Local only: nothing
+  // server-side records which week the card was collapsed for.
+  reopenCheckinCard: () => set({ checkinHandledWeek: null }),
+
   setWeeklyCheckinEnabled: (enabled) => {
     set({ weeklyCheckinEnabled: enabled });
     AsyncStorage.setItem(WEEKLY_CHECKIN_KEY, serializeFlag(enabled)).catch(() => {});
+    DataService.savePreferences(currentSyncedPreferences(get()));
   },
 
   setUnitPreference: (pref) => {
     set({ unitPreference: pref });
     AsyncStorage.setItem(UNIT_PREF_KEY, pref).catch(() => {});
+    // The device copy above is the cache that paints the first frame; this is
+    // the record. Without it a friend who set pounds in the browser opened the
+    // native build in kilograms, because nothing had ever asked the server.
+    //
+    // The WHOLE set goes, not just the field that changed: the write may be
+    // the INSERT that creates profile_private, and a column left out of an
+    // INSERT takes a DDL default that disagrees with this app. Same at all
+    // four call sites.
+    DataService.savePreferences(currentSyncedPreferences(get()));
   },
 
   refreshDay: async () => {
@@ -969,9 +1221,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     // A refresh that crosses local midnight is a rollover like any other:
     // yesterday's pending rollbacks describe a day that no longer exists.
     if (st.day !== s.day) rollbacks.clear();
+    // The server is the record for check-ins, and until now the store never
+    // read it: metricCheckins came only from this device's AsyncStorage, so a
+    // history written on another device — or before a reinstall — was
+    // invisible, and the row the user wants to correct might not have been on
+    // screen at all.
+    const metricCheckins = supabaseService.getMetricHistory();
+    persistCheckins(metricCheckins);
+    // Fix #2, second half: a check-in saved on the other client collapses the
+    // card here on the next refresh, instead of offering to record the week
+    // twice. Only ever sets — see handledThisWeek().
+    const handled = handledThisWeek(metricCheckins);
     set({
       ...supabaseService.getSquadState(),
       blockedUsers: supabaseService.getBlockedUsers(),
+      metricCheckins,
       ...st,
       // Same noon-rollover rule as refreshDay(). `st` already carried
       // `yesterday` in through the spread; this is only about the mode the
@@ -987,10 +1251,15 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? { deferred: [], healthPromptDismissed: {}, healthWorkoutsConsumed: [] }
         : {}),
       ...taskConfigMirror(st.tier, st.day),
+      ...handled,
     });
+    // refreshAll() re-read the profile rows, so a preference changed on the
+    // other client lands on the next pull-to-refresh or foreground.
+    get().reconcilePreferences().catch(() => {});
   },
 
   hydratePersisted: async () => {
+    devicePrefsStarted = true;
     try {
       const [pref, checkins, notif, health, weekly] = await Promise.all([
         AsyncStorage.getItem(UNIT_PREF_KEY),
@@ -1023,11 +1292,71 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (savedMeals.length) set({ savedMeals });
     } catch {
       // persisted state is a convenience; never block startup on it
+    } finally {
+      // Releases reconcilePreferences(), which must not seed the server from
+      // half-restored state. In the `catch` path too: a preference blob that
+      // would not parse is still an answer, and a reconcile that waited for
+      // one that never came would leave the account unsynced for the session.
+      markDevicePrefsRestored();
     }
+  },
+
+  /**
+   * SETTLE THIS DEVICE'S PREFERENCES AGAINST THE ACCOUNT'S.
+   *
+   * Three outcomes, and the middle one is the whole reason this is not a
+   * one-liner:
+   *
+   *   null              no server to ask (mock), or no hydrate has answered
+   *                     yet, or the profile read failed. Change nothing.
+   *   synced: false     the account has never saved a preference, so those
+   *                     columns hold DDL defaults — 'metric', health off —
+   *                     which are NOT this app's defaults. Adopting them
+   *                     would flip an imperial user to metric and switch
+   *                     someone's health prompts off: the same reverted-
+   *                     choice failure this fix exists to prevent, pointing
+   *                     the other way. Seed the server from this device.
+   *   synced: true      the server is the record. Adopt it, and refresh the
+   *                     device cache so the next cold launch paints it before
+   *                     any network read.
+   */
+  reconcilePreferences: async () => {
+    if (devicePrefsStarted) {
+      await devicePrefsRestored;
+    } else {
+      // Nothing has read the device's own copy yet. Do it here rather than
+      // waiting on a promise that would never resolve.
+      await get().hydratePersisted();
+    }
+    const current = currentSyncedPreferences(get());
+    const remote = DataService.getRemotePreferences(current);
+    if (!remote) return;
+    if (!remote.synced) {
+      if (prefsSeedAttempted) return;
+      prefsSeedAttempted = true;
+      DataService.savePreferences(current);
+      return;
+    }
+    set({
+      unitPreference: remote.unitPreference,
+      notificationPrefs: remote.notifications,
+      healthPrefs: remote.health,
+      weeklyCheckinEnabled: remote.weeklyCheckinEnabled,
+    });
+    AsyncStorage.setItem(UNIT_PREF_KEY, remote.unitPreference).catch(() => {});
+    persist(NOTIF_PREFS_KEY, remote.notifications);
+    persist(HEALTH_PREFS_KEY, remote.health);
+    AsyncStorage.setItem(
+      WEEKLY_CHECKIN_KEY,
+      serializeFlag(remote.weeklyCheckinEnabled),
+    ).catch(() => {});
   },
 
   adoptSession: ({ name }) => {
     const st = DataService.loadScenario('day1');
+    // Live backend only: on the mock the service mirror holds nothing but
+    // this session's entries.
+    const serverCheckins = isLiveBackend ? DataService.getMetricHistory() : null;
     set({
       deferred: [],
       ...DataService.getSquadState(),
@@ -1037,6 +1366,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       screenState: 'ready',
       blockedUsers: DataService.getBlockedUsers(),
       profileName: name?.trim() || 'You',
+      // Adopting the mock's would wipe the restored history the moment a dev
+      // build signed in.
+      ...(serverCheckins
+        ? {
+            metricCheckins: serverCheckins,
+            // Fix #2: the week the check-in card is already handled for, from
+            // the SERVER's history rather than only this device's. A friend
+            // who checked in on the web on Monday and installed the app on
+            // Tuesday was shown the entry form again, as though the week were
+            // untouched.
+            ...handledThisWeek(serverCheckins),
+          }
+        : {}),
       ...st,
       // AFTER the spread: st.meals is the whole challenge's log (the backend
       // mirror keeps it for the "recent meals" chips), and every screen that
@@ -1044,10 +1386,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       meals: DataService.getMeals(),
       ...taskConfigMirror(st.tier, st.day),
     });
+    if (isLiveBackend) persistCheckins(get().metricCheckins);
+    // Fixes #1 and #4. Deliberately not awaited: this is the sign-in path and
+    // nothing on screen depends on the answer — it settles a moment later, or
+    // not at all if the account has no preferences to adopt.
+    get().reconcilePreferences().catch(() => {});
   },
 
   resetSession: () => {
     const st = DataService.loadScenario('day1');
+    // The next account on this device is a different account, and it may have
+    // no preferences of its own to adopt.
+    prefsSeedAttempted = false;
     // Weight and mood are private data with no owner once signed out; the
     // unit preference is a display setting and stays.
     // Weight and mood are private data with no owner once signed out. The
@@ -1287,6 +1637,31 @@ DataService.onRemoteChange(() => {
  * so this never fires against it.
  */
 DataService.onWriteRejected((write) => {
+  // A PING THE SERVER NEVER ACCEPTED. Handled first and separately because
+  // its undo is surgical, not a snapshot: the feed has almost certainly
+  // moved on since the row was composed (a squadmate ticked something, a
+  // reconciliation landed), and putting back the array as it was would take
+  // those rows out with it. Remove the one row, and give back the ping —
+  // an allowance is spent by a ping that was SENT.
+  if (write.op === 'ping') {
+    const s = useAppStore.getState();
+    useAppStore.setState(
+      undoPing({
+        feed: s.feed,
+        pingsUsed: s.pingsUsed,
+        feedItemId: write.feedItemId,
+        today: localDateKey(),
+      }),
+    );
+    return;
+  }
+  // A PREFERENCE THE SERVER REFUSED. Nothing on screen goes back, on
+  // purpose. The switch changed something about THIS device, it saved to
+  // this device, and it is in force here — flipping it back would be its own
+  // lie, and a louder one than the sync that did not happen. The service has
+  // already rolled its own mirror back, so nothing claims the server holds
+  // the value, and the toast has already said the change did not save.
+  if (write.op === 'prefs') return;
   // The day is part of the key. Two days can be on screen at once, and a
   // rollback that put back "today" for a refused write against yesterday
   // would un-tick a task the user really had completed.
@@ -1370,19 +1745,39 @@ export const selectPingsLeft = (s: {
 };
 
 /**
+ * CONNECTED means "this app has asked iOS for Health access and the user
+ * has left the switch on" — never "we have data" and never "we were
+ * granted access", because HealthKit will not report a read grant.
+ *
+ * Both the Today's Health card and the Settings switch read this one
+ * selector so they can never disagree about whether a connection exists.
+ */
+export const selectHealthConnected = (s: {
+  healthAvailable: boolean;
+  healthAsked: boolean;
+  healthPrefs: HealthPrefs;
+}): boolean =>
+  s.healthAvailable && s.healthAsked && s.healthPrefs.healthEnabled;
+
+/**
  * Match today's HealthKit workouts to incomplete workout tasks.
  * Chronological, one workout per task, qualifying = duration >= the task's
  * snapshot target. Suggestions only — the user always confirms (never
  * auto-complete), and completion goes through the existing path.
  */
 export const selectWorkoutSuggestions = (s: {
+  healthAvailable: boolean;
+  healthAsked: boolean;
   healthPrefs: HealthPrefs;
   healthReadings: HealthReadings;
   healthWorkoutsConsumed: string[];
   todayTasks: TaskDef[];
   tasksDone: Partial<Record<TaskKey, string>>;
 }): Partial<Record<TaskKey, HealthWorkout>> => {
-  if (!s.healthPrefs.healthEnabled || !s.healthPrefs.workoutPromptEnabled) {
+  // CONNECTED, not merely "the pref says on". A suggestion is a claim that
+  // Apple Health has a workout in it, and a device that was never asked has
+  // no standing to make one.
+  if (!selectHealthConnected(s) || !s.healthPrefs.workoutPromptEnabled) {
     return {};
   }
   const pendingWorkoutTasks = s.todayTasks.filter(
@@ -1391,7 +1786,8 @@ export const selectWorkoutSuggestions = (s: {
   if (pendingWorkoutTasks.length === 0) return {};
   const out: Partial<Record<TaskKey, HealthWorkout>> = {};
   // Chronological, minus workouts already used to confirm a completion.
-  const unclaimed = s.healthReadings.workouts.filter(
+  // `workouts: null` means the query never ran — no suggestions from it.
+  const unclaimed = (s.healthReadings.workouts ?? []).filter(
     (w) => !s.healthWorkoutsConsumed.includes(w.startISO),
   );
   for (const task of pendingWorkoutTasks) {
@@ -1408,10 +1804,12 @@ export const selectWorkoutSuggestions = (s: {
 
 /** Body-mass prefill: only a sample from the last 7 days qualifies. */
 export const selectWeightPrefillKg = (s: {
+  healthAvailable: boolean;
+  healthAsked: boolean;
   healthPrefs: HealthPrefs;
   healthReadings: HealthReadings;
 }): { kg: number; dateISO: string } | null => {
-  if (!s.healthPrefs.healthEnabled || !s.healthPrefs.weightPrefillEnabled) {
+  if (!selectHealthConnected(s) || !s.healthPrefs.weightPrefillEnabled) {
     return null;
   }
   const sample = s.healthReadings.bodyMass;

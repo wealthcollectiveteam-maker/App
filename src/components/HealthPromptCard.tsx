@@ -5,6 +5,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Card, OutlineButton } from '@/components/ui';
 import {
   localDateKey,
+  selectHealthConnected,
   selectTasks,
   useAppStore,
 } from '@/store/useAppStore';
@@ -25,8 +26,11 @@ export function HealthPromptCards() {
   const dismissed = useAppStore((s) => s.healthPromptDismissed);
   const dismissHealthPrompt = useAppStore((s) => s.dismissHealthPrompt);
   const completeTask = useAppStore((s) => s.completeTask);
+  const connected = useAppStore(selectHealthConnected);
 
-  if (!healthPrefs.healthEnabled) return null;
+  // CONNECTED, not merely "the pref says on" — a device that has never been
+  // shown the permission sheet cannot claim food was logged anywhere.
+  if (!connected) return null;
   const today = localDateKey();
 
   // Diet: food logged in another app today -> offer to mark diet complete.

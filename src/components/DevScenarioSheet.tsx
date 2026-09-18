@@ -101,6 +101,7 @@ export function DevScenarioSheet({ children }: { children: React.ReactNode }) {
   const leaveSquad = useAppStore((s) => s.leaveSquad);
   const joinSquad = useAppStore((s) => s.joinSquad);
   const healthSimulated = useAppStore((s) => s.healthSimulated);
+  const healthAuthRaw = useAppStore((s) => s.healthAuthRaw);
   const toggleHealthSimulation = useAppStore((s) => s.toggleHealthSimulation);
   const advanceDay = useAppStore((s) => s.advanceDay);
   const [open, setOpen] = useState(false);
@@ -238,6 +239,21 @@ export function DevScenarioSheet({ children }: { children: React.ReactNode }) {
               : 'Simulate local midnight: pending task edits take effect.'}
           </Text>
         </Pressable>
+
+        {/* WHAT THE OS SAID, verbatim. getRequestStatusForAuthorization is a
+            Nitro native call and the one place a marshalling surprise would
+            be invisible: a non-number falls to 'unknown', which the card
+            draws as "Not connected" for ever — identical on screen to a
+            denied permission. Reading the raw value settles it in seconds
+            instead of an hour. Dev builds only; this whole file is absent
+            from a production bundle (see AppHeader). */}
+        <View style={styles.scenarioRow}>
+          <Text style={styles.scenarioLabel}>Health auth status (raw)</Text>
+          <Text style={styles.scenarioSub}>
+            {healthAuthRaw ??
+              'not asked yet — open Track to trigger a refresh'}
+          </Text>
+        </View>
 
         <Pressable
           onPress={() => {

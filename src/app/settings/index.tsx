@@ -6,6 +6,7 @@ import {
 } from 'phosphor-react-native';
 import React, { useState } from 'react';
 import {
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -18,6 +19,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { NotificationPermissionBanner } from '@/components/NotificationPermissionBanner';
+import { BUILD_ID } from '@/constants/build';
 import { Card, Kicker, OutlineButton, SegmentedControl } from '@/components/ui';
 import { CHALLENGE_LENGTHS } from '@/constants/challenge';
 import {
@@ -31,22 +33,28 @@ import type {
   HealthPrefs,
   NotificationPrefs,
 } from '@/data/types';
-import { useAppStore } from '@/store/useAppStore';
+import { selectHealthConnected, useAppStore } from '@/store/useAppStore';
 import { useSessionStore } from '@/store/useSessionStore';
 import { toast } from '@/store/useToastStore';
 import { colors, font, radius, space } from '@/theme/tokens';
 
 /**
- * TEMPORARY — Phase 12B. The on-screen tab-bar diagnostic, reached the same
- * guarded-require way the dev scenario sheet is, so a build made without the
- * flag never requires the module. Delete this, the row it renders and
- * @/components/LayoutDebug once the layout is confirmed on device.
+ * The running build, short enough to read out loud.
+ *
+ * "It's broken for me and nobody else" is unanswerable without knowing which
+ * bundle each person is actually on — and an installed Home Screen web app
+ * can sit on an old one for as long as iOS keeps resuming it (see Phase 13).
+ * Eight hex characters is plenty to tell two builds apart over a message.
+ *
+ * A build the export never stamped has a placeholder here, not a hash, so it
+ * says so rather than printing eight characters of nonsense. Detected by
+ * SHAPE, never by comparing against the placeholder text: the build script
+ * rewrites every occurrence of that token in the bundle, so such a comparison
+ * would become `hash === hash` and silently read as true.
  */
-const LayoutDebug: typeof import('@/components/LayoutDebug') | null =
-  __DEV__ || process.env.EXPO_PUBLIC_LAYOUT_DEBUG === '1'
-    ? // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require('@/components/LayoutDebug')
-    : null;
+const BUILD_LABEL = /^[0-9a-f]{8,}$/.test(BUILD_ID)
+  ? `Build ${BUILD_ID.slice(0, 8)}`
+  : 'Build not stamped (development)';
 
 const PREF_ROWS: { key: keyof NotificationPrefs; label: string; sub: string }[] = [
   { key: 'timerAlerts', label: 'Timer alerts', sub: 'Running, halfway, 5-min and done notifications' },
@@ -232,6 +240,10 @@ export default function SettingsScreen() {
   const healthPrefs = useAppStore((s) => s.healthPrefs);
   const setHealthPref = useAppStore((s) => s.setHealthPref);
   const healthAvailable = useAppStore((s) => s.healthAvailable);
+  // The switch reads CONNECTED, not the stored preference. A phone that has
+  // never been shown the permission sheet must not show an ON switch, even
+  // if a blob from an older build says healthEnabled is true.
+  const healthConnected = useAppStore(selectHealthConnected);
   const weeklyCheckinEnabled = useAppStore((s) => s.weeklyCheckinEnabled);
   const setWeeklyCheckinEnabled = useAppStore((s) => s.setWeeklyCheckinEnabled);
   const unitPreference = useAppStore((s) => s.unitPreference);
@@ -365,17 +377,33 @@ export default function SettingsScreen() {
                 </Text>
               </View>
               <Switch
-                value={healthPrefs.healthEnabled}
+                value={healthConnected}
                 onValueChange={(v) => setHealthPref('healthEnabled', v)}
                 trackColor={{ false: colors.neutral800, true: colors.accent700 }}
                 thumbColor={
-                  healthPrefs.healthEnabled
-                    ? colors.accent300
-                    : colors.neutral500
+                  healthConnected ? colors.accent300 : colors.neutral500
                 }
               />
             </View>
-            {healthPrefs.healthEnabled &&
+            {/* ON means "this app has asked iOS", never "iOS said yes".
+                HealthKit does not report read grants, so the only place the
+                real answer lives is iOS Settings — say so, and go there. */}
+            {healthConnected && (
+              <Pressable
+                style={[styles.prefRow, styles.rowBorder]}
+                onPress={() => Linking.openSettings().catch(() => {})}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowLabel}>Health access</Text>
+                  <Text style={styles.rowSub}>
+                    On means this app has asked. iOS does not tell apps which
+                    categories were allowed — check or change it in Settings.
+                  </Text>
+                </View>
+                <CaretRight size={15} color={colors.neutral600} />
+              </Pressable>
+            )}
+            {healthConnected &&
               HEALTH_SUB_ROWS.map(({ key, label, sub }) => (
                 <View key={key} style={[styles.prefRow, styles.rowBorder]}>
                   <View style={{ flex: 1 }}>
@@ -597,41 +625,19 @@ export default function SettingsScreen() {
         </View>
       </Card>
 
-      {/* TEMPORARY — Phase 12B. Reads numbers off the running app so the tab
-          bar can be diagnosed from a screenshot. Absent from any build made
-          without EXPO_PUBLIC_LAYOUT_DEBUG=1. Remove with the panel. */}
-      {LayoutDebug ? (
-        <>
-          <Kicker style={styles.sectionKicker}>Layout debug (temporary)</Kicker>
-          <Card>
-            <Pressable
-              onPress={() => {
-                // The panel measures the tab bar, which is not on screen here
-                // — Settings is a stack screen above the tabs. Open it, then
-                // go back to where the bar is.
-                LayoutDebug.openPanel();
-                router.back();
-              }}
-              style={styles.prefRow}
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rowLabel}>Show layout numbers</Text>
-                <Text style={styles.rowSub}>
-                  Opens a read-only panel over the tabs with the viewport,
-                  safe-area and tab bar measurements. Screenshot it. Nothing
-                  here changes anything.
-                </Text>
-              </View>
-              <CaretRight size={15} color={colors.neutral600} />
-            </Pressable>
-          </Card>
-        </>
-      ) : null}
+      <Text style={styles.buildLine}>{BUILD_LABEL}</Text>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  buildLine: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: colors.neutral600,
+    textAlign: 'center',
+    marginTop: 18,
+  },
   content: {
     paddingHorizontal: space.screenX,
     paddingBottom: 40,

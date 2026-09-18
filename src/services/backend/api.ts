@@ -13,7 +13,7 @@ import type {
   WorkoutLog,
 } from '@/data/types';
 import { CHALLENGE } from '@/constants/challenge';
-import { toBackendError } from '@/services/contract';
+import { BackendError, toBackendError } from '@/services/contract';
 import type { SnapshotTask } from '@/services/taskProjection';
 
 import { getSupabase } from './supabaseClient';
@@ -660,11 +660,24 @@ export const BackendApi = {
   setWhy: (userId: string, why: string) =>
     sb().from('profile_private').upsert({ id: userId, why }),
 
-  /** Health PREFERENCES only — never health data. */
+  /**
+   * PREFERENCES only — never health data. The switches themselves (health
+   * prompts, notification alerts, the weekly check-in card), plus the marker
+   * that says these columns now hold choices rather than DDL defaults.
+   *
+   * `upsert` because profile_private may have no row yet: an account that
+   * never wrote a "why" has none. On conflict Postgres updates only the
+   * columns named here, so a notification toggle cannot blank someone's
+   * "why I started" or their completion reflection.
+   */
   setPreferences: (
     userId: string,
     prefs: Record<string, boolean>,
-  ) => sb().from('profile_private').upsert({ id: userId, ...prefs }),
+    syncedAt: string,
+  ) =>
+    sb()
+      .from('profile_private')
+      .upsert({ id: userId, ...prefs, prefs_synced_at: syncedAt }),
 
   saveCompletionFeeling: (_userId: string, feeling: string | null, text: string) =>
     sb().rpc('save_completion_feeling', { p_feeling: feeling, p_text: text }),
@@ -743,8 +756,68 @@ export const BackendApi = {
   setMealNutrition: (mealId: string, nutrition: MealNutrition | null) =>
     sb().from('meals').update({ nutrition }).eq('id', mealId),
 
+  /**
+   * Returns the assigned id — see logMeal. Without it the client could not
+   * address a row it had just written, so a correction made in the same
+   * session as the entry had nothing to aim at.
+   */
   saveMetricCheckin: (ownerId: string, weightKg: number | null, mood: number | null) =>
-    sb().from('metric_checkins').insert({ owner: ownerId, weight_kg: weightKg, mood }),
+    sb()
+      .from('metric_checkins')
+      .insert({ owner: ownerId, weight_kg: weightKg, mood })
+      .select('id, created_at')
+      .single(),
+
+  /**
+   * Correct a past check-in. Resolves only when the server has accepted it.
+   *
+   * COUNTING THE RETURNED ROWS IS THE POINT, not a formality. An UPDATE that
+   * RLS filters out is NOT an error: `using (owner = auth.uid())` removes the
+   * row from view, the statement matches nothing, and Postgres reports
+   * success with zero rows affected — PostgREST passes that through as 200
+   * with an empty array. supabase/tests/metric_checkins_test.sql proves it
+   * (c1). So does an id the database has never seen, which is how Quick Add
+   * once attached nutrition to a meal that did not exist yet. Either way, a
+   * client that trusts the absent `.error` shows a correction that never
+   * happened.
+   *
+   * `owner` is deliberately not in the payload. It is not even a writable
+   * column — 0010 grants UPDATE on (weight_kg, mood) only.
+   */
+  updateMetricCheckin: async (
+    id: string,
+    weightKg: number | null,
+    mood: number | null,
+  ): Promise<void> => {
+    const rows = unwrap(
+      await sb()
+        .from('metric_checkins')
+        .update({ weight_kg: weightKg, mood })
+        .eq('id', id)
+        .select('id'),
+      'correct check-in',
+    );
+    if (!rows || rows.length !== 1) {
+      throw new BackendError(
+        'conflict',
+        'That check-in could not be found — it may already have been deleted.',
+      );
+    }
+  },
+
+  /** Delete a past check-in. Same row-count contract as the update above. */
+  deleteMetricCheckin: async (id: string): Promise<void> => {
+    const rows = unwrap(
+      await sb().from('metric_checkins').delete().eq('id', id).select('id'),
+      'delete check-in',
+    );
+    if (!rows || rows.length !== 1) {
+      throw new BackendError(
+        'conflict',
+        'That check-in could not be found — it may already have been deleted.',
+      );
+    }
+  },
 
   listMetricCheckins: async (ownerId: string): Promise<MetricCheckin[]> => {
     const data = unwrap(

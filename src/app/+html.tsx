@@ -1,6 +1,7 @@
 import { ScrollViewStyleReset } from 'expo-router/html';
 import type { PropsWithChildren } from 'react';
 
+import { UPDATE_PARAM } from '@/constants/build';
 import { colors } from '@/theme/tokens';
 
 /**
@@ -39,6 +40,21 @@ import { colors } from '@/theme/tokens';
  *    ONE mechanism now owns the bottom inset, and it is the JS one in
  *    `(tabs)/_layout.tsx` — the only one that also works on native. Do not
  *    reintroduce a CSS rule for it; two writers of one property is the bug.
+ *
+ * 5. TAKING `?v=` BACK OUT, BEFORE ANYTHING ELSE RUNS. Tapping UPDATE loads
+ *    the current path with `?v=<build id>` on it — a URL the browser has
+ *    never seen, which is what forces a genuinely fresh document instead of
+ *    the suspended one iOS would otherwise resume. Once that document is
+ *    being parsed the param has done its whole job, and leaving it in the
+ *    address means a shared link carries a build hash that is wrong after the
+ *    next deploy.
+ *
+ *    It is stripped HERE, in a blocking inline script, rather than in a React
+ *    effect. An effect was tried and it does not hold: expo-router reads
+ *    window.location as it mounts, and the first redirect it performs writes
+ *    the query it captured back into the address — so the param reappeared on
+ *    the next route, `/auth?v=…`. Running before the deferred bundle means
+ *    the router never sees the param at all and has nothing to restore.
  *
  * The colours come from the token file like everywhere else. `manifest.json`
  * in `public/` repeats them as literals because JSON cannot import — if the
@@ -81,11 +97,32 @@ export default function Root({ children }: PropsWithChildren) {
         <ScrollViewStyleReset />
 
         <style dangerouslySetInnerHTML={{ __html: backgroundStyle }} />
+        <script dangerouslySetInnerHTML={{ __html: stripUpdateParam }} />
       </head>
       <body>{children}</body>
     </html>
   );
 }
+
+/**
+ * Runs before the app bundle, so expo-router boots on an address that never
+ * had the param. Deliberately defensive: this is the first script on every
+ * page, and a throw here would stop the document.
+ */
+const stripUpdateParam = `
+try {
+  var u = new URL(window.location.href);
+  if (u.searchParams.has(${JSON.stringify(UPDATE_PARAM)})) {
+    u.searchParams.delete(${JSON.stringify(UPDATE_PARAM)});
+    var q = u.searchParams.toString();
+    window.history.replaceState(
+      window.history.state,
+      '',
+      u.pathname + (q ? '?' + q : '') + u.hash
+    );
+  }
+} catch (e) {}
+`;
 
 const backgroundStyle = `
 html, body, #root {

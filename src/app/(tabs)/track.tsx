@@ -403,6 +403,7 @@ export default function TrackScreen() {
         style={{ flex: 1, backgroundColor: colors.bg }}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
+        testID="track-scroll"
       >
         <View style={styles.header}>
           <Text style={styles.title}>Track</Text>
@@ -417,7 +418,7 @@ export default function TrackScreen() {
         {tab === 'MILESTONES' && <MilestonesTab />}
         {/* Health readings sit under the tab content: on-device only, and
             never the loudest thing on the screen. */}
-        <View style={{ marginTop: 16, gap: 12 }}>
+        <View testID="track-tail" style={{ marginTop: 16, gap: 12 }}>
           <TodaysHealthCard />
           <WeeklyCheckinCard />
         </View>

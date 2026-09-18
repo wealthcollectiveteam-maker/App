@@ -33,6 +33,12 @@ import type {
 } from '@/data/types';
 import { normalizeInviteCode } from '@/lib/inviteCode';
 import {
+  privateColumnsFor,
+  readRemotePreferences,
+  type RemotePreferences,
+  type SyncedPreferences,
+} from '@/lib/serverPrefs';
+import {
   api,
   type DayWindowRow,
   type MySquadRow,
@@ -147,6 +153,30 @@ export class SupabaseDataService implements IDataService {
   private pendingTier: Tier | null = null;
   private squadId: string | null = null;
   private squads: SquadSummary[] = [];
+
+  /**
+   * The two preference-bearing rows exactly as the server sent them, as of
+   * the last hydrate. Null until a hydrate has answered — which is what stops
+   * the store adopting an empty set over the device's own settings during a
+   * cold launch, and what makes "the profile read failed" different from
+   * "this account has never saved a preference".
+   *
+   * Kept RAW rather than as domain values because a column that is missing or
+   * of the wrong type must fall back to what the DEVICE currently believes,
+   * and only the caller knows that. lib/serverPrefs.ts does the merge.
+   */
+  private prefRows: {
+    unit: unknown;
+    priv: Record<string, unknown> | null;
+  } | null = null;
+
+  /**
+   * Preference writes still in flight. A hydrate that landed between the tap
+   * and the round trip would otherwise re-read the OLD row and hand the store
+   * back the setting the user has just changed — the switch flicking itself
+   * back for half a second, which reads as a bug whichever way it ends up.
+   */
+  private prefWritesInFlight = 0;
 
   /** Surfaced to the UI so a rejected optimistic write is never silent. */
   onError: ((error: BackendError) => void) | null = null;
@@ -447,6 +477,18 @@ export class SupabaseDataService implements IDataService {
 
     if (profile) this.state.xp = profile.xp;
     if (priv) this.state.why = typeof priv.why === 'string' ? priv.why : '';
+    // Preferences (fixes #1 and #4). Gated on `profile`, not on `priv`:
+    // ensureProfile() guarantees a profiles row exists before hydrate() is
+    // ever called, so a null profile means THE READ FAILED, while a null priv
+    // with a live profile genuinely means "no preferences row yet". Without
+    // that distinction a flaky read would look identical to a fresh account
+    // and the store would seed the server on every bad connection.
+    //
+    // Not while a preference write is in flight: this read predates the tap
+    // and handing it back would flick the switch the user just moved.
+    if (profile && this.prefWritesInFlight === 0) {
+      this.prefRows = { unit: profile.unit_preference, priv };
+    }
     if (journal) this.state.journal = journal;
     if (meals) this.state.meals = meals;
     if (milestones) this.state.milestones = milestones;
@@ -904,20 +946,140 @@ export class SupabaseDataService implements IDataService {
    * The daily quota is the server's to enforce (send_ping raises when it is
    * spent); a rejection surfaces through onError like any other write.
    */
-  sendPing(toName: string, message: string): void {
+  /**
+   * A ping, and the one write whose optimistic state lives ENTIRELY in the
+   * store: this mirror never held the row. The store composes "pinged Sam"
+   * the instant the button is tapped, because that is the whole feedback the
+   * action has, and the send is a fire-and-forget RPC.
+   *
+   * So the rollback that matters is not this method's — there is nothing here
+   * to undo, and `() => {}` is the honest mirror rollback — it is the
+   * rejection OP, which names the store's row back to it. Without that, a
+   * refused ping (offline, out of quota, recipient no longer in the squad)
+   * left the sender looking at a ping the recipient never received, for the
+   * rest of the challenge. The toast said it had not saved; the feed said it
+   * had; the feed is what people believe.
+   *
+   * BOTH early exits below emit it too. Those are refusals the client makes
+   * on its own — no round trip, no write() to carry the op — and they were
+   * the likelier of the two paths to strand a row: `No squadmate named Sam`
+   * is exactly what a stale roster produces.
+   */
+  sendPing(toName: string, message: string, feedItemId?: string): void {
+    const op: RejectedWrite = feedItemId
+      ? { op: 'ping', feedItemId }
+      : { op: 'other' };
     const id = this.resolveMemberId(toName);
     if (!id) {
       this.fail(new BackendError('unknown', `No squadmate named ${toName}`));
+      this.emitRejected(op);
       return;
     }
     const squadId = this.squadId;
     if (!squadId) {
       this.fail(new BackendError('unknown', 'No squad to ping into'));
+      this.emitRejected(op);
       return;
     }
     this.write(
       () => api.sendPing(id, message, squadId),
+      // Nothing in the mirror to put back; the store's row is undone by `op`.
       () => {},
+      op,
+    );
+  }
+
+  /**
+   * What the server holds for this account's preferences, merged over what
+   * the caller currently believes.
+   *
+   * Null means "no answer yet" — no hydrate has completed, or the profile
+   * read failed — and the caller must change nothing. `synced: false` means
+   * the account has never saved a preference, so the values are DDL defaults
+   * and must not be adopted either; the caller seeds the server from its own
+   * state instead. Only `synced: true` makes the server the record.
+   */
+  getRemotePreferences(current: SyncedPreferences): RemotePreferences | null {
+    if (!this.prefRows) return null;
+    return readRemotePreferences(
+      { unit_preference: this.prefRows.unit },
+      this.prefRows.priv,
+      current,
+    );
+  }
+
+  /**
+   * Save preferences — the whole set, every time.
+   *
+   * `prefs_synced_at` goes with them, and it is what turns these columns from
+   * DDL defaults into recorded choices for every later client — see
+   * 0013_preference_sync.sql and lib/serverPrefs.ts.
+   *
+   * ON REFUSAL THE SETTING IS NOT REVERTED, and that is deliberate. The user
+   * changed something about this device and it took effect on this device
+   * immediately; flipping the switch back would be its own lie, and a louder
+   * one. What rolls back is this mirror — so the app never claims the server
+   * holds a value it rejected — and the failure is reported through the same
+   * toast as every other refused write.
+   */
+  savePreferences(prefs: SyncedPreferences): void {
+    const before = this.prefRows;
+    const stamp = new Date().toISOString();
+    const columns = privateColumnsFor(prefs);
+    // Optimistic: the mirror answers the next getRemotePreferences() with
+    // what was just chosen, marked as recorded.
+    this.prefRows = {
+      unit: prefs.unitPreference,
+      priv: { ...(before?.priv ?? {}), ...columns, prefs_synced_at: stamp },
+    };
+    const rollback = () => {
+      this.prefRows = before;
+    };
+    // Wraps a write so hydrate() can tell one is outstanding. Synchronous
+    // throws are counted out too — requireUser() throws that way, and a
+    // counter that only decremented on the happy path would wedge the mirror
+    // shut against every later refresh.
+    const tracked =
+      <T,>(run: () => PromiseLike<T>) =>
+      (): PromiseLike<T> => {
+        this.prefWritesInFlight += 1;
+        const done = () => {
+          this.prefWritesInFlight = Math.max(0, this.prefWritesInFlight - 1);
+        };
+        let pending: PromiseLike<T>;
+        try {
+          pending = run();
+        } catch (error) {
+          done();
+          throw error;
+        }
+        return Promise.resolve(pending).then(
+          (result) => {
+            done();
+            return result;
+          },
+          (error) => {
+            done();
+            throw error;
+          },
+        );
+      };
+    // TWO TABLES, so two writes, and both go every time. The unit preference
+    // is on `profiles` (squad-readable: a squadmate can already see your name
+    // and XP, and knowing you prefer pounds reveals nothing); the switches are
+    // on `profile_private` (owner-only, ever). The marker lives on the second
+    // row, so even a units-only change has to write both.
+    this.write(
+      tracked(() =>
+        api.setUnitPreference(this.requireUser(), prefs.unitPreference),
+      ),
+      rollback,
+      { op: 'prefs' },
+    );
+    this.write(
+      tracked(() => api.setPreferences(this.requireUser(), columns, stamp)),
+      rollback,
+      { op: 'prefs' },
     );
   }
 
@@ -1160,13 +1322,62 @@ export class SupabaseDataService implements IDataService {
     };
     const previous = this.metricCheckins;
     this.metricCheckins = [checkin, ...previous];
-    this.write(
+    // insertRow, not write(): the row is now correctable, and a correction
+    // made in the same session as the entry has to have a server id to aim
+    // at. Under write() the mirror kept the local `mc-…` id, an UPDATE on it
+    // would have matched zero rows, and — before the row-count check in
+    // api.updateMetricCheckin — returned no error either.
+    this.insertRow(
+      checkin.id,
       () => api.saveMetricCheckin(this.requireUser(), weightKg, mood),
+      (serverId) => {
+        this.metricCheckins = this.metricCheckins.map((c) =>
+          c.id === checkin.id ? { ...c, id: serverId } : c,
+        );
+      },
       () => {
         this.metricCheckins = previous;
       },
     );
     return checkin;
+  }
+
+  /**
+   * Correct a past check-in. Awaits the server and mutates NOTHING until it
+   * has agreed — the opposite of the optimistic writes around it, and
+   * deliberately so: this is a rare, deliberate correction of a number the
+   * user already knows is wrong, and showing them a second wrong number
+   * (theirs, briefly, then the old one back) would be worse than refusing.
+   */
+  async updateMetricCheckin(
+    id: string,
+    weightKg: number | null,
+    mood: number | null,
+  ): Promise<void> {
+    const serverId = await this.resolveId(id);
+    try {
+      await api.updateMetricCheckin(serverId, weightKg, mood);
+    } catch (error) {
+      // fail() so the toast host says what happened, then rethrow so the
+      // screen knows to keep the user's value in the field.
+      this.fail(error);
+      throw toBackendError(error);
+    }
+    this.metricCheckins = this.metricCheckins.map((c) =>
+      c.id === id ? { ...c, weightKg, mood } : c,
+    );
+  }
+
+  /** Same contract as updateMetricCheckin: the row goes when the server says. */
+  async deleteMetricCheckin(id: string): Promise<void> {
+    const serverId = await this.resolveId(id);
+    try {
+      await api.deleteMetricCheckin(serverId);
+    } catch (error) {
+      this.fail(error);
+      throw toBackendError(error);
+    }
+    this.metricCheckins = this.metricCheckins.filter((c) => c.id !== id);
   }
 
   saveWorkoutLog(input: WorkoutLogInput): WorkoutLog {

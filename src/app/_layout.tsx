@@ -25,6 +25,8 @@ import {
 } from '@/components/SessionGate';
 import { TimerConflictSheet } from '@/components/TimerConflictSheet';
 import { ToastHost } from '@/components/ToastHost';
+import { UpdateBanner } from '@/components/UpdateBanner';
+import { cleanUpdateParamFromUrl } from '@/lib/webUpdate';
 import { scheduleDayBoundaries } from '@/lib/writeDay';
 import { configurationError } from '@/services';
 import {
@@ -33,6 +35,7 @@ import {
 } from '@/services/timerEffects';
 import { useAppStore } from '@/store/useAppStore';
 import { useSessionStore } from '@/store/useSessionStore';
+import { useUpdateStore } from '@/store/useUpdateStore';
 import { remainingSeconds, useTimerStore } from '@/store/useTimerStore';
 import { colors } from '@/theme/tokens';
 
@@ -87,6 +90,22 @@ export default function RootLayout() {
   useEffect(() => {
     if (loaded) SplashScreen.hideAsync().catch(() => {});
   }, [loaded]);
+
+  // IS THERE A NEWER BUILD? Cold start half of the pair; the foreground half
+  // rides the AppState listener below. Nothing polls.
+  useEffect(() => {
+    useUpdateStore.getState().check().catch(() => {});
+  }, []);
+
+  // Belt to the inline script's braces. `?v=` is already gone before this
+  // component exists (see the strip in +html.tsx, and why it has to run
+  // there) — but the router rewrites the address on every navigation, and a
+  // build hash in a shared link is the kind of thing that comes back. Keyed
+  // on the route so any navigation that reintroduced it is undone; a no-op
+  // when there is nothing to strip, which is essentially always.
+  useEffect(() => {
+    cleanUpdateParamFromUrl();
+  }, [route]);
 
   // The emailed sign-in link arriving at a RUNNING app. The cold-launch
   // URL is bootstrap()'s job, not this listener's: read here as well, it
@@ -150,6 +169,12 @@ export default function RootLayout() {
       if (useSessionStore.getState().status === 'signedIn') {
         useAppStore.getState().refreshFromServer().catch(() => {});
       }
+      // Same event, second question: is the BUILD stale as well as the data?
+      // iOS resumes an installed web app rather than re-fetching it, so this
+      // is often the only moment the app touches the network at all. Not
+      // gated on being signed in — an out-of-date auth screen needs the fix
+      // as much as an out-of-date Home does.
+      useUpdateStore.getState().check().catch(() => {});
     });
     return () => sub.remove();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -200,6 +225,10 @@ export default function RootLayout() {
         <SafeAreaProvider style={{ flex: 1 }}>
           <View style={{ flex: 1, backgroundColor: colors.bg }}>
             <StatusBar style="light" />
+            {/* The one screen where an update is not a nicety but the only
+                exit: this build cannot reach a backend, and a redeploy is
+                the whole fix. */}
+            <UpdateBanner />
             <UnconfiguredBuildScreen />
           </View>
         </SafeAreaProvider>
@@ -228,34 +257,44 @@ export default function RootLayout() {
           {/* In flow, above the navigator: a build silently running on mock
               data is indistinguishable from a working one until data is lost. */}
           <MockModeBanner />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: colors.bg },
-            }}
-          >
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="auth" options={{ gestureEnabled: false }} />
-            <Stack.Screen
-              name="celebration"
-              options={{ presentation: 'transparentModal', animation: 'fade' }}
-            />
-            <Stack.Screen
-              name="finish"
-              options={{ presentation: 'transparentModal', animation: 'fade' }}
-            />
-            <Stack.Screen
-              name="timer"
-              options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
-            />
-          </Stack>
-          {/* Over the navigator, never instead of it: unmounting the Stack
-              would leave expo-router with nothing to navigate. */}
-          {(gating || status === 'error') && (
-            <View style={StyleSheet.absoluteFill}>
-              {status === 'error' ? <SessionErrorScreen /> : <SessionLoadingScreen />}
-            </View>
-          )}
+          {/* Also in flow, for the same reason — it must never cover a header,
+              a tab or the bar. Renders nothing unless an update is waiting. */}
+          <UpdateBanner />
+          {/* The gate overlay covers THIS view, not the whole app, so it stops
+              at the banner above it. Deliberate: "couldn't reach the server"
+              is exactly the state a user can be stuck in on a bad build, and
+              the update banner is the only control that can get them out of
+              it. An overlay that hid it would hide the fix. */}
+          <View style={{ flex: 1 }}>
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: colors.bg },
+              }}
+            >
+              <Stack.Screen name="(tabs)" />
+              <Stack.Screen name="auth" options={{ gestureEnabled: false }} />
+              <Stack.Screen
+                name="celebration"
+                options={{ presentation: 'transparentModal', animation: 'fade' }}
+              />
+              <Stack.Screen
+                name="finish"
+                options={{ presentation: 'transparentModal', animation: 'fade' }}
+              />
+              <Stack.Screen
+                name="timer"
+                options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }}
+              />
+            </Stack>
+            {/* Over the navigator, never instead of it: unmounting the Stack
+                would leave expo-router with nothing to navigate. */}
+            {(gating || status === 'error') && (
+              <View style={StyleSheet.absoluteFill}>
+                {status === 'error' ? <SessionErrorScreen /> : <SessionLoadingScreen />}
+              </View>
+            )}
+          </View>
           <ToastHost />
           <TimerConflictSheet />
         </View>

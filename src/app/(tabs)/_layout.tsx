@@ -7,19 +7,6 @@ import { AppHeader } from '@/components/AppHeader';
 import { TimerMiniBar } from '@/components/TimerMiniBar';
 import { colors, font, microTracking } from '@/theme/tokens';
 
-/**
- * TEMPORARY — Phase 12B. The on-screen layout diagnostic, reached through the
- * same guarded-require shape the dev scenario sheet uses, so that a build made
- * without the flag does not merely hide it: the module is never required and
- * Metro leaves it out. Delete this, `@/components/LayoutDebug`, and the row in
- * Settings once the tab bar is confirmed on a real iPhone.
- */
-const LayoutDebug: typeof import('@/components/LayoutDebug') | null =
-  __DEV__ || process.env.EXPO_PUBLIC_LAYOUT_DEBUG === '1'
-    ? // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require('@/components/LayoutDebug')
-    : null;
-
 const LABELS: Record<string, string> = {
   index: 'HOME',
   checkin: 'CHECK-IN',
@@ -56,10 +43,10 @@ function TabBar({ state, navigation }: TabBarProps) {
   return (
     <>
       <TimerMiniBar />
-      <View
-        ref={(node) => LayoutDebug?.captureTabBar(node)}
-        style={[styles.bar, { paddingBottom }]}
-      >
+      {/* testID is what the render check finds this by. react-native-web
+          emits it as data-testid, so scripts/render-check.mjs can measure the
+          real bar in a real browser rather than guessing at the DOM. */}
+      <View testID="tab-bar" style={[styles.bar, { paddingBottom }]}>
         {state.routes.map((route, index) => {
           const focused = state.index === index;
           const label = LABELS[route.name];
@@ -105,31 +92,39 @@ function TabBar({ state, navigation }: TabBarProps) {
   );
 }
 
+/**
+ * NO WRAPPER AROUND <Tabs>, ON PURPOSE (Phase 33). A `<View style={{ flex: 1 }}>`
+ * used to sit here so the Phase 12B debug overlay had something to be
+ * absolute inside. When it was removed a header shift-and-blur was reported
+ * on an iPhone and the wrapper was the suspect. It was measured, not argued:
+ * with and without it, under iPhone emulation in Chrome and in WebKit, the
+ * header sits at the same integral rect on every tab, no ancestor carries a
+ * transform or a promoted layer, and the only difference is one extra
+ * full-height div in the ancestor chain. It was also already absent from the
+ * bundle deployed on 9 September, a week before the report. Restoring it
+ * changes nothing measurable; scripts/render-check.mjs now asserts the
+ * header rect is identical and integral across every tab on every build.
+ */
 export default function TabLayout() {
   return (
-    <View style={{ flex: 1 }}>
-      <Tabs
-        tabBar={(props) => <TabBar {...props} />}
-        screenOptions={{
-          header: () => <AppHeader />,
-          headerShown: true,
-          sceneStyle: { backgroundColor: colors.bg },
-        }}
-      >
-        {/* Home is the only screen that carries STREAK beside the tier badge. */}
-        <Tabs.Screen
-          name="index"
-          options={{ header: () => <AppHeader showStreak /> }}
-        />
-        <Tabs.Screen name="checkin" />
-        <Tabs.Screen name="track" />
-        <Tabs.Screen name="squad" />
-        <Tabs.Screen name="you" />
-      </Tabs>
-      {/* TEMPORARY — Phase 12B tab-bar diagnostics. Remove with the rest of
-          @/components/LayoutDebug once the layout is confirmed on device. */}
-      {LayoutDebug ? <LayoutDebug.LayoutDebugOverlay /> : null}
-    </View>
+    <Tabs
+      tabBar={(props) => <TabBar {...props} />}
+      screenOptions={{
+        header: () => <AppHeader />,
+        headerShown: true,
+        sceneStyle: { backgroundColor: colors.bg },
+      }}
+    >
+      {/* Home is the only screen that carries STREAK beside the tier badge. */}
+      <Tabs.Screen
+        name="index"
+        options={{ header: () => <AppHeader showStreak /> }}
+      />
+      <Tabs.Screen name="checkin" />
+      <Tabs.Screen name="track" />
+      <Tabs.Screen name="squad" />
+      <Tabs.Screen name="you" />
+    </Tabs>
   );
 }
 

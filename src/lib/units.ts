@@ -58,14 +58,96 @@ export function formatHeight(cm: number, pref: UnitPreference): string {
   return `${Math.round(cm)} cm`;
 }
 
-/** Parse a typed weight in the user's preferred unit → canonical kg. */
+/**
+ * WHY THIS IS NOT parseFloat.
+ *
+ * parseFloat is a prefix parser: it reads as far as it understands and throws
+ * the rest away without telling anyone. parseFloat('9.2.3') is 9.2.
+ * parseFloat('92kg') is 92. parseFloat('92.') is 92. Every one of those is a
+ * typo the user would want to know about, and every one of them was silently
+ * accepted and stored as a weight they never typed.
+ *
+ * So the input is CLASSIFIED rather than coerced, and each way of being wrong
+ * gets its own answer the UI can say out loud.
+ */
+export type WeightInputProblem =
+  /** Letters, symbols, a lone separator — nothing numeric to read. */
+  | 'not-a-number'
+  /** '9.2.3'. Two decimal points is a typo, not a number. */
+  | 'two-points'
+  /** '1,234.5'. Comma AND point: which one is the decimal? Refuse to guess. */
+  | 'mixed-separators'
+  /** '92.' — a decimal point with nothing after it. */
+  | 'trailing-point'
+  /** '92.15'. Finer than the field accepts; rounding it silently is a lie. */
+  | 'too-precise';
+
+export type WeightInput =
+  | { kind: 'blank' }
+  /** The number as typed, in the DISPLAY unit. Never converted here. */
+  | { kind: 'value'; value: number }
+  | { kind: 'malformed'; problem: WeightInputProblem };
+
+/** How many decimal places the field accepts, in whichever unit is showing. */
+export const WEIGHT_DECIMALS = 1;
+
+/**
+ * LOCALE: a comma IS accepted as a decimal separator.
+ *
+ * Half the world's keyboards produce one, and a German user typing 92,1 means
+ * 92.1 and nothing else. Refusing would be correct and useless. What is NOT
+ * accepted is a string carrying both a comma and a point ('1,234.5'), because
+ * there the comma might be a thousands separator and guessing wrong moves the
+ * decimal point — the single worst thing this parser could do.
+ */
+export function parseWeightInput(input: string): WeightInput {
+  const raw = input.trim();
+  if (raw === '') return { kind: 'blank' };
+
+  const hasComma = raw.includes(',');
+  const hasPoint = raw.includes('.');
+  if (hasComma && hasPoint) {
+    return { kind: 'malformed', problem: 'mixed-separators' };
+  }
+  const text = hasComma ? raw.replace(/,/g, '.') : raw;
+
+  if ((text.match(/\./g) ?? []).length > 1) {
+    return { kind: 'malformed', problem: 'two-points' };
+  }
+  if (/^\d+\.$/.test(text)) {
+    return { kind: 'malformed', problem: 'trailing-point' };
+  }
+  if (!/^\d+(\.\d+)?$/.test(text)) {
+    return { kind: 'malformed', problem: 'not-a-number' };
+  }
+  const decimals = text.includes('.') ? text.split('.')[1].length : 0;
+  if (decimals > WEIGHT_DECIMALS) {
+    return { kind: 'malformed', problem: 'too-precise' };
+  }
+
+  const value = Number(text);
+  // A whole number is a whole number: '92' is as valid as '92.0' and nobody
+  // is made to type the '.0'.
+  if (!Number.isFinite(value) || value <= 0) {
+    return { kind: 'malformed', problem: 'not-a-number' };
+  }
+  return { kind: 'value', value };
+}
+
+/**
+ * Parse a typed weight in the user's preferred unit → canonical kg.
+ *
+ * Returns null for blank AND for malformed, which is why every caller that
+ * needs to tell the user WHICH goes through checkWeightEntry() instead. Kept
+ * for the callers that only need the number.
+ */
 export function parseWeightToKg(
   input: string,
   pref: UnitPreference,
 ): number | null {
-  const value = parseFloat(input.replace(',', '.'));
-  if (!Number.isFinite(value) || value <= 0) return null;
-  return pref === 'imperial' ? lbToKg(value) : value;
+  const parsed = parseWeightInput(input);
+  if (parsed.kind !== 'value') return null;
+  return pref === 'imperial' ? lbToKg(parsed.value) : parsed.value;
 }
 
 export const weightUnitLabel = (pref: UnitPreference) =>
@@ -109,7 +191,10 @@ const ORDINARY_MIN_KG = 40;
 
 export type WeightVerdict =
   | { kind: 'ok'; kg: number }
+  /** The field is empty. A mood-only check-in, which has always been allowed. */
   | { kind: 'empty' }
+  /** Something was typed and it is not a weight. `problem` says which way. */
+  | { kind: 'malformed'; problem: WeightInputProblem }
   | { kind: 'implausible'; kg: number }
   /** `kg` is what was typed; `meantKg` is the other unit's reading. */
   | { kind: 'ambiguous'; kg: number; meantKg: number; meantUnit: UnitPreference };
@@ -118,13 +203,20 @@ export function checkWeightEntry(
   input: string,
   pref: UnitPreference,
 ): WeightVerdict {
-  const kg = parseWeightToKg(input, pref);
-  if (kg == null) return { kind: 'empty' };
+  const parsed = parseWeightInput(input);
+  if (parsed.kind === 'blank') return { kind: 'empty' };
+  if (parsed.kind === 'malformed') {
+    return { kind: 'malformed', problem: parsed.problem };
+  }
+  // The number as typed, in the display unit — and the ONE conversion.
+  const typed = parsed.value;
+  const kg = pref === 'imperial' ? lbToKg(typed) : typed;
   if (kg < MIN_PLAUSIBLE_KG || kg > MAX_PLAUSIBLE_KG) {
     return { kind: 'implausible', kg };
   }
-  // The same digits read as the other unit.
-  const typed = parseFloat(input.replace(',', '.'));
+  // The same digits read as the other unit. Decimals go through here exactly
+  // as whole numbers do — 203.4 typed into a kilograms field is as much a
+  // pounds-shaped number as 203 is.
   const other: UnitPreference = pref === 'metric' ? 'imperial' : 'metric';
   const otherKg = other === 'imperial' ? lbToKg(typed) : typed;
   const ordinary = (v: number) => v >= ORDINARY_MIN_KG && v <= ORDINARY_MAX_KG;
@@ -132,4 +224,25 @@ export function checkWeightEntry(
     return { kind: 'ambiguous', kg, meantKg: otherKg, meantUnit: other };
   }
   return { kind: 'ok', kg };
+}
+
+/** What to tell the user, per way of being wrong. One place, so the UI cannot
+ *  invent its own wording for a case it forgot about. */
+export function weightProblemMessage(
+  problem: WeightInputProblem,
+  pref: UnitPreference,
+): string {
+  const unit = weightUnitLabel(pref);
+  switch (problem) {
+    case 'two-points':
+      return 'That has two decimal points.';
+    case 'mixed-separators':
+      return 'Use one decimal separator — a comma or a point, not both.';
+    case 'trailing-point':
+      return `Finish the decimal — 82.0 ${unit}, not 82.`;
+    case 'too-precise':
+      return `One decimal place — 82.4 ${unit}.`;
+    case 'not-a-number':
+      return 'That is not a weight.';
+  }
 }
