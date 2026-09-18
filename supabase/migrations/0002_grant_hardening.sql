@@ -30,7 +30,14 @@ grant update on
   public.profiles, public.profile_private, public.meals, public.milestones
 to authenticated;
 
-grant delete on public.blocked_users to authenticated;
+-- 0010: correcting a past weight check-in. COLUMN-level, so `owner` and `id`
+-- stay unwritable even if metrics_all is ever weakened — see 0010 for the
+-- reasoning and for the policy gate that guards this capability. It is
+-- repeated here because the revoke at the top of this file would otherwise
+-- strip it every time this converger is re-run.
+grant update (weight_kg, mood) on public.metric_checkins to authenticated;
+
+grant delete on public.blocked_users, public.metric_checkins to authenticated;
 
 grant execute on all functions in schema public to authenticated;
 

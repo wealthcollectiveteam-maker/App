@@ -27,7 +27,15 @@ declare
     'blocked_users','workout_logs'];
   upd_allow text[] := array['profiles','profile_private','meals','milestones',
     'workout_logs'];
-  del_allow text[] := array['blocked_users','workout_logs'];
+  del_allow text[] := array['blocked_users','workout_logs','metric_checkins'];
+  -- 0010: the only COLUMN-level write grant in the schema. Correcting a past
+  -- check-in changes a weight or a mood and nothing else, so `owner` and `id`
+  -- are not grantable — the owner-reassignment attack is refused by the
+  -- privilege layer before RLS is even consulted. Anything not listed here
+  -- must be unwritable on a table that has no table-level UPDATE.
+  col_upd_allow text[] := array['metric_checkins.weight_kg',
+    'metric_checkins.mood'];
+  c record;
   -- functions `authenticated` must NOT be able to execute (see the loop).
   server_only text[] := array[
     'evaluate_all_challenges()',
@@ -79,6 +87,21 @@ begin
        <> (t.tablename = any(upd_allow)) then
       raise exception 'FAIL: authenticated UPDATE grant wrong on %', qualified;
     end if;
+    -- Column granularity, in the same two-directional shape. A table-level
+    -- grant makes every column writable; without one, only the columns on
+    -- col_upd_allow may be. A column that quietly gains UPDATE fails here,
+    -- and so does one that loses it.
+    for c in
+      select attname from pg_attribute
+      where attrelid = qualified::regclass and attnum > 0 and not attisdropped
+    loop
+      if has_column_privilege('authenticated', qualified, c.attname, 'UPDATE')
+         <> (t.tablename = any(upd_allow)
+             or format('%s.%s', t.tablename, c.attname) = any(col_upd_allow)) then
+        raise exception 'FAIL: authenticated UPDATE grant wrong on %.%',
+          qualified, c.attname;
+      end if;
+    end loop;
     if has_table_privilege('authenticated', qualified, 'DELETE')
        <> (t.tablename = any(del_allow)) then
       raise exception 'FAIL: authenticated DELETE grant wrong on %', qualified;
@@ -112,7 +135,7 @@ begin
     end if;
   end loop;
 
-  raise notice 'PASS: privilege surface — anon holds nothing; authenticated writes match the allow-list exactly';
+  raise notice 'PASS: privilege surface — anon holds nothing; authenticated writes match the allow-list exactly, column grants included';
 end $$;
 
 -- Runtime probe as anon: the privilege wall fires before RLS ever runs.
