@@ -56,11 +56,32 @@ const BUILD_LABEL = /^[0-9a-f]{8,}$/.test(BUILD_ID)
   ? `Build ${BUILD_ID.slice(0, 8)}`
   : 'Build not stamped (development)';
 
-const PREF_ROWS: { key: keyof NotificationPrefs; label: string; sub: string }[] = [
+const PREF_ROWS: {
+  key: keyof NotificationPrefs;
+  label: string;
+  sub: string;
+  /**
+   * Set when the switch is a promise the app cannot keep yet. The row then
+   * shows this copy instead of `sub`, and the switch is disabled and OFF
+   * whatever the stored preference says — a stored "on" for a reminder
+   * nothing sends would be the UI claiming something that does not happen.
+   * The preference and its server column stay; A4 will read them.
+   */
+  unavailable?: string;
+}[] = [
   { key: 'timerAlerts', label: 'Timer alerts', sub: 'Running, halfway, 5-min and done notifications' },
   { key: 'pings', label: 'Pings', sub: 'When a squadmate pings you' },
   { key: 'squadActivity', label: 'Squad activity', sub: 'Completions and proof in your squad' },
-  { key: 'dailyReminder', label: 'Daily reminder', sub: 'An evening nudge if tasks are open' },
+  {
+    key: 'dailyReminder',
+    label: 'Daily reminder',
+    sub: 'An evening nudge if tasks are open',
+    // Phase 38A. Nothing in the app reads dailyReminder; the only
+    // notifications it schedules are the workout timer's. Until A4 builds
+    // the reminder, the row says so rather than offering a switch that
+    // quietly does nothing.
+    unavailable: 'Coming soon — the app cannot send reminders yet.',
+  },
 ];
 
 /**
@@ -301,26 +322,30 @@ export default function SettingsScreen() {
         <>
           <NotificationPermissionBanner />
           <Card>
-            {PREF_ROWS.map(({ key, label, sub }, i) => (
-              <View
-                key={key}
-                style={[styles.prefRow, i > 0 && styles.rowBorder]}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.rowLabel}>{label}</Text>
-                  <Text style={styles.rowSub}>{sub}</Text>
+            {PREF_ROWS.map(({ key, label, sub, unavailable }, i) => {
+              const on = !unavailable && prefs[key];
+              return (
+                <View
+                  key={key}
+                  style={[styles.prefRow, i > 0 && styles.rowBorder]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.rowLabel}>{label}</Text>
+                    <Text style={styles.rowSub}>{unavailable ?? sub}</Text>
+                  </View>
+                  <Switch
+                    value={on}
+                    disabled={!!unavailable}
+                    onValueChange={(v) => setPref(key, v)}
+                    trackColor={{
+                      false: colors.neutral800,
+                      true: colors.accent700,
+                    }}
+                    thumbColor={on ? colors.accent300 : colors.neutral500}
+                  />
                 </View>
-                <Switch
-                  value={prefs[key]}
-                  onValueChange={(v) => setPref(key, v)}
-                  trackColor={{
-                    false: colors.neutral800,
-                    true: colors.accent700,
-                  }}
-                  thumbColor={prefs[key] ? colors.accent300 : colors.neutral500}
-                />
-              </View>
-            ))}
+              );
+            })}
           </Card>
         </>
       )}
