@@ -107,7 +107,11 @@ done
 # preference_sync_test (17A part 2) covers the columns fixes #1 and #4 turned
 # into a live write surface — that the switches stay private and unwritable by
 # a squadmate, and that the unit preference is readable by one and still not
-# theirs to change.
+# theirs to change;
+# default_set_test (Phase 36) covers a brand-new user with the DEFAULT task
+# set of each tier completing every day-1 task through the real RPC — the
+# proof that nothing in the task set refuses a non-owner. It existed for three
+# days before it was on this list; a proof that never runs is not a proof.
 FAILED=0
 for t in supabase/tests/rls_test.sql \
          supabase/tests/missed_day_test.sql \
@@ -117,7 +121,8 @@ for t in supabase/tests/rls_test.sql \
          supabase/tests/grace_window_test.sql \
          supabase/tests/weight_precision_test.sql \
          supabase/tests/two_client_test.sql \
-         supabase/tests/preference_sync_test.sql; do
+         supabase/tests/preference_sync_test.sql \
+         supabase/tests/default_set_test.sql; do
   echo "===== $t"
   # Each suite raises on failure, so a non-zero exit is a real failure and
   # must not be swallowed by the pipe into grep.
