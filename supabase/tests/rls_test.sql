@@ -51,6 +51,11 @@ declare
     -- delete_account() should ever want that, and it reaches it as a
     -- SECURITY DEFINER. A grant would put "leave everything" on the API.
     'leave_all_squads()',
+    -- 0014: read by the evaluator alone. The window is a constant nobody
+    -- needs to ask for, and owner_is_active(uuid) takes an owner id, so a
+    -- grant would let any user ask whether somebody else has been ticking.
+    'feed_activity_window()',
+    'owner_is_active(uuid)',
     'sim_fill_day(uuid,integer)',
     -- 0011: the grace-window clock. All five take a `challenges` ROW rather
     -- than an id, so they leak nothing a client cannot already read — but

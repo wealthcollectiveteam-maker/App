@@ -24,7 +24,9 @@ insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000d5', 'day1@test.dev'),
   ('00000000-0000-0000-0000-0000000000d6', 'finished@test.dev'),
   ('00000000-0000-0000-0000-0000000000d7', 'watcher@test.dev'),
-  ('00000000-0000-0000-0000-0000000000d8', 'sim@test.dev')
+  ('00000000-0000-0000-0000-0000000000d8', 'sim@test.dev'),
+  ('00000000-0000-0000-0000-0000000000d9', 'dormant@test.dev'),
+  ('00000000-0000-0000-0000-0000000000da', 'active@test.dev')
 on conflict do nothing;
 
 -- Complete every task in a day's snapshot, without sealing. The engine's
@@ -840,6 +842,129 @@ begin
   raise notice 'PASS: only the evaluator can post a miss';
 end $$;
 reset role;
+
+-- =============================================================================
+-- PROOF 10 — THE FEED HEARS ONLY FROM THE LIVING (Phase 38B)
+--
+-- Measured on production, 2026-09-19: 122 miss items in a month, posted
+-- about accounts nobody had touched since August. The rule now: a miss is
+-- judged exactly as before, but the squad feed gets a row only if the author
+-- has a completion inside feed_activity_window() (7 days), on any of their
+-- challenges.
+--
+-- Two accounts, one fixture each — the PROOF 1 shape: Hard, in a squad, day 5
+-- today, days 2-3 done, day 4 one task short. The ONLY difference between
+-- them is when the completions happened: 30 days ago (dormant) or yesterday
+-- (active). Backdating those rows is the fixture describing history, not the
+-- app writing it; the evaluator's own rows carry now().
+--
+-- Against the 0011 evaluator the DORMANT block FAILS (a feed item appears).
+-- The ACTIVE block is the regression guard: it passes before and after, and
+-- it is here so that "silence the dormant" can never quietly become
+-- "silence everyone".
+-- =============================================================================
+do $$
+declare
+  v_uid   uuid := '00000000-0000-0000-0000-0000000000d9';
+  v_old   uuid;
+  v_new   uuid;
+  v_squad uuid;
+  old_c   public.challenges;
+  new_c   public.challenges;
+  v_feed  integer;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  insert into public.profiles (id, name) values (v_uid, 'Dormant') on conflict do nothing;
+  v_old := public.create_challenge('hard', current_date, 'America/Toronto');
+  select id into v_squad from public.create_squad('Dormant squad');
+
+  call t_set_day(v_old, 5);
+  call t_do_day(v_old, 2);
+  call t_do_day(v_old, 3);
+  call t_do_day(v_old, 4);
+  delete from public.task_completions
+   where challenge_id = v_old and day = 4 and task_key = 'water';
+  -- Nothing touched for 30 days. (0014's verification grid pins the window at
+  -- 7 days; this proof does not call it, so it can run against the 0011
+  -- evaluator and fail on the feed assertion rather than on a missing function.)
+  update public.task_completions
+     set completed_at = now() - interval '30 days'
+   where challenge_id = v_old;
+
+  perform public.evaluate_challenge(v_old);
+
+  -- Judged exactly as before: day 4 missed, attempt archived, restart on day 1.
+  select * into old_c from public.challenges where id = v_old;
+  if old_c.ended_reason is distinct from 'missed_day' or old_c.ended_on_day <> 4 then
+    raise exception 'FAIL (dormant): the miss was not judged (% / %)',
+      old_c.ended_reason, old_c.ended_on_day;
+  end if;
+  if (select outcome from public.challenge_days where challenge_id = v_old and day = 4) <> 'missed' then
+    raise exception 'FAIL (dormant): day 4 was not written as missed';
+  end if;
+  v_new := t_challenge(v_uid);
+  select * into new_c from public.challenges where id = v_new;
+  if v_new is null or v_new = v_old or new_c.flame <> 0 or new_c.restarted_from <> v_old then
+    raise exception 'FAIL (dormant): the restart did not happen as before';
+  end if;
+
+  -- And the squad heard NOTHING.
+  select count(*) into v_feed from public.feed_items
+   where author = v_uid and kind = 'miss';
+  if v_feed <> 0 then
+    raise exception 'FAIL (dormant): % miss item(s) reached the feed about an account with no completion in 30 days', v_feed;
+  end if;
+
+  raise notice 'PASS (dormant): the miss is judged and restarts, and the feed hears nothing';
+end $$;
+
+do $$
+declare
+  v_uid   uuid := '00000000-0000-0000-0000-0000000000da';
+  v_old   uuid;
+  v_squad uuid;
+  old_c   public.challenges;
+  v_feed  integer;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  insert into public.profiles (id, name) values (v_uid, 'Active') on conflict do nothing;
+  v_old := public.create_challenge('hard', current_date, 'America/Toronto');
+  select id into v_squad from public.create_squad('Active squad');
+
+  call t_set_day(v_old, 5);
+  call t_do_day(v_old, 2);
+  call t_do_day(v_old, 3);
+  call t_do_day(v_old, 4);
+  delete from public.task_completions
+   where challenge_id = v_old and day = 4 and task_key = 'water';
+  -- Completed yesterday.
+  update public.task_completions
+     set completed_at = now() - interval '1 day'
+   where challenge_id = v_old;
+
+  perform public.evaluate_challenge(v_old);
+
+  select * into old_c from public.challenges where id = v_old;
+  if old_c.ended_reason is distinct from 'missed_day' or old_c.ended_on_day <> 4 then
+    raise exception 'FAIL (active): the miss was not judged (% / %)',
+      old_c.ended_reason, old_c.ended_on_day;
+  end if;
+  if (select outcome from public.challenge_days where challenge_id = v_old and day = 4) <> 'missed' then
+    raise exception 'FAIL (active): day 4 was not written as missed';
+  end if;
+
+  -- Exactly one row, with today's text, unchanged.
+  select count(*) into v_feed from public.feed_items
+   where squad_id = v_squad and author = v_uid and kind = 'miss'
+     and text = 'missed Day 4. Hard rules — the challenge restarts at Day 1.';
+  if v_feed <> 1 then
+    raise exception 'FAIL (active): expected exactly 1 miss item for an account that completed yesterday, found %', v_feed;
+  end if;
+
+  raise notice 'PASS (active): the miss is judged and exactly one item reaches the feed, as before';
+end $$;
 
 drop procedure t_do_day(uuid, integer);
 drop procedure t_set_day(uuid, integer);
