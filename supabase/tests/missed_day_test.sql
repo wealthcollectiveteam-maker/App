@@ -26,7 +26,9 @@ insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000d7', 'watcher@test.dev'),
   ('00000000-0000-0000-0000-0000000000d8', 'sim@test.dev'),
   ('00000000-0000-0000-0000-0000000000d9', 'dormant@test.dev'),
-  ('00000000-0000-0000-0000-0000000000da', 'active@test.dev')
+  ('00000000-0000-0000-0000-0000000000da', 'active@test.dev'),
+  ('00000000-0000-0000-0000-0000000000db', 'restart-untouched@test.dev'),
+  ('00000000-0000-0000-0000-0000000000dc', 'restart-done@test.dev')
 on conflict do nothing;
 
 -- Complete every task in a day's snapshot, without sealing. The engine's
@@ -966,6 +968,149 @@ begin
   raise notice 'PASS (active): the miss is judged and exactly one item reaches the feed, as before';
 end $$;
 
+-- =============================================================================
+-- PROOF 11 — A RESTART'S DAY 1 IS JUDGED (Phase 38B-RIDER, A2)
+--
+-- Two accounts. Each misses day 4 on Hard exactly as in PROOF 1 and is
+-- restarted by the real evaluator; the restart's day 1 is today. Then the
+-- clock is moved so that day 1 has CLOSED (day 2, 13:00 local) — WITHOUT
+-- touching the cursor, because what restart_challenge wrote there is part of
+-- what is being proved (0 after 0015; 1 before).
+--
+--   (a) day 1 left untouched  -> judged 'missed', the restart is itself
+--                                restarted, and the miss names Day 1
+--   (b) day 1 fully ticked,   -> sealed, outcome 'met', flame 1, cursor 1.
+--       never sealed             Nobody is one flame short on a restart.
+--
+-- PROOF 5 above is the control: a FRESH challenge's day 1 is still never
+-- judged. PROOF 4 ("one restart, not three") must keep passing.
+--
+-- Against 0014 both blocks FAIL: the floor of 2 never visits day 1.
+-- =============================================================================
+create or replace procedure t_move_day(p_challenge uuid, p_day integer)
+language plpgsql as $$
+declare
+  v_shift integer;
+  v_tz text;
+begin
+  -- t_set_day, minus its `last_evaluated_day = 1`: the cursor stays what the
+  -- engine wrote.
+  v_shift := 13 - extract(hour from (now() at time zone 'UTC'))::integer;
+  while v_shift < -11 loop v_shift := v_shift + 24; end loop;
+  while v_shift >  14 loop v_shift := v_shift - 24; end loop;
+  v_tz := case when v_shift >= 0 then 'Etc/GMT-' || v_shift
+                                 else 'Etc/GMT+' || (-v_shift) end;
+  update public.challenges
+     set timezone = v_tz,
+         start_date = (now() at time zone v_tz)::date - (p_day - 1)
+   where id = p_challenge;
+end $$;
+
+do $$
+declare
+  v_uid   uuid := '00000000-0000-0000-0000-0000000000db';
+  v_old   uuid;
+  v_r1    uuid;
+  v_r2    uuid;
+  r1      public.challenges;
+  d1      public.challenge_days;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  insert into public.profiles (id, name) values (v_uid, 'Restart-untouched') on conflict do nothing;
+  v_old := public.create_challenge('hard', current_date, 'America/Toronto');
+  call t_set_day(v_old, 5);
+  call t_do_day(v_old, 2);
+  call t_do_day(v_old, 3);
+  perform public.evaluate_challenge(v_old);        -- day 4 missed -> restart
+  v_r1 := t_challenge(v_uid);
+  if v_r1 is null or v_r1 = v_old then
+    raise exception 'FIXTURE (a): no restart was created';
+  end if;
+  select * into r1 from public.challenges where id = v_r1;
+  if r1.last_evaluated_day <> 0 then
+    raise exception 'FAIL (a): the restart''s cursor is %, expected 0 — its day 1 is out of the evaluator''s reach',
+      r1.last_evaluated_day;
+  end if;
+
+  -- Day 1 untouched. Move to day 2, 13:00 local: day 1 has closed.
+  call t_move_day(v_r1, 2);
+  perform public.evaluate_challenge(v_r1);
+
+  select * into d1 from public.challenge_days where challenge_id = v_r1 and day = 1;
+  if d1.outcome is distinct from 'missed' or d1.evaluated_at is null then
+    raise exception 'FAIL (a): the restart''s untouched day 1 was not judged (outcome %, evaluated_at %)',
+      coalesce(d1.outcome, 'null'), coalesce(d1.evaluated_at::text, 'null');
+  end if;
+  select * into r1 from public.challenges where id = v_r1;
+  if r1.ended_reason is distinct from 'missed_day' or r1.ended_on_day <> 1 then
+    raise exception 'FAIL (a): the restart did not end on its day 1 (% / %)',
+      coalesce(r1.ended_reason, 'null'), coalesce(r1.ended_on_day::text, 'null');
+  end if;
+  v_r2 := t_challenge(v_uid);
+  if v_r2 is null or v_r2 in (v_old, v_r1)
+     or (select restarted_from from public.challenges where id = v_r2) <> v_r1 then
+    raise exception 'FAIL (a): the miss on day 1 did not restart again';
+  end if;
+
+  raise notice 'PASS (a): a restart''s untouched day 1 is judged missed and restarts again';
+end $$;
+
+do $$
+declare
+  v_uid   uuid := '00000000-0000-0000-0000-0000000000dc';
+  v_old   uuid;
+  v_r1    uuid;
+  r1      public.challenges;
+  d1      public.challenge_days;
+  v_n     integer;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  insert into public.profiles (id, name) values (v_uid, 'Restart-done') on conflict do nothing;
+  v_old := public.create_challenge('hard', current_date, 'America/Toronto');
+  call t_set_day(v_old, 5);
+  call t_do_day(v_old, 2);
+  call t_do_day(v_old, 3);
+  perform public.evaluate_challenge(v_old);        -- day 4 missed -> restart
+  v_r1 := t_challenge(v_uid);
+  if v_r1 is null or v_r1 = v_old then
+    raise exception 'FIXTURE (b): no restart was created';
+  end if;
+
+  -- Every task on the restart's day 1 ticked, none sealed — the grace-window
+  -- seal gap shape. Then day 1 closes.
+  call t_do_day(v_r1, 1);
+  call t_move_day(v_r1, 2);
+  v_n := public.evaluate_challenge(v_r1);
+
+  select * into d1 from public.challenge_days where challenge_id = v_r1 and day = 1;
+  if d1.outcome is distinct from 'met' or d1.sealed_at is null then
+    raise exception 'FAIL (b): the restart''s completed day 1 was not sealed and scored (outcome %, sealed_at %)',
+      coalesce(d1.outcome, 'null'), coalesce(d1.sealed_at::text, 'null');
+  end if;
+  select * into r1 from public.challenges where id = v_r1;
+  if r1.ended_at is not null then
+    raise exception 'FAIL (b): a completed day 1 ended the restart (%)', r1.ended_reason;
+  end if;
+  if r1.flame <> 1 or r1.last_evaluated_day <> 1 then
+    raise exception 'FAIL (b): flame % cursor % after a met day 1, expected 1 and 1',
+      r1.flame, r1.last_evaluated_day;
+  end if;
+  if v_n <> 1 then
+    raise exception 'FAIL (b): evaluate_challenge judged % day(s), expected exactly 1', v_n;
+  end if;
+
+  -- Pay-once: a second run pays nothing.
+  perform public.evaluate_challenge(v_r1);
+  if (select flame from public.challenges where id = v_r1) <> 1 then
+    raise exception 'FAIL (b): a second evaluation paid day 1 again';
+  end if;
+
+  raise notice 'PASS (b): a restart''s completed-but-unsealed day 1 is sealed, scored met and pays flame 1, once';
+end $$;
+
+drop procedure t_move_day(uuid, integer);
 drop procedure t_do_day(uuid, integer);
 drop procedure t_set_day(uuid, integer);
 drop function t_challenge(uuid);
