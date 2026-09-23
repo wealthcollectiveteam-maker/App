@@ -26,7 +26,13 @@ import {
 import type { TaskDef } from '@/data/types';
 import { useStartTimer } from '@/hooks/useStartTimer';
 import {
+  RESTART_NOTICE_COPY,
+  RESTART_NOTICE_LABEL,
+  statusNotice,
+} from '@/lib/streakStatus';
+import {
   selectDoneCount,
+  selectRestartNoticeDismissed,
   selectTasks,
   selectWorkoutSuggestions,
   useAppStore,
@@ -40,7 +46,19 @@ function StatusBanner() {
   const tier = useAppStore((s) => s.tier);
   const missedDay = useAppStore((s) => s.missedDay);
   const dayComplete = useAppStore((s) => s.dayComplete);
+  const restarted = useAppStore((s) => s.restarted);
+  const perfectDays = useAppStore((s) => s.perfectDays);
+  const restartNoticeDismissed = useAppStore(selectRestartNoticeDismissed);
+  const dismissRestartNotice = useAppStore((s) => s.dismissRestartNotice);
   const router = useRouter();
+  // Decided in src/lib/streakStatus.ts, not here, so streak-status.test.mjs
+  // drives the same decision this renders (Phase 38C).
+  const notice = statusNotice({
+    restarted,
+    sealedDays: perfectDays,
+    missedDay,
+    dismissed: restartNoticeDismissed,
+  });
 
   if (day >= durationDays && dayComplete) {
     return (
@@ -61,7 +79,32 @@ function StatusBanner() {
     );
   }
 
-  if (missedDay) {
+  if (notice === 'restart') {
+    // Survives past the judgement day: it is about the challenge, not about
+    // one morning. Gone once a day is sealed on this challenge, or dismissed.
+    return (
+      <View style={styles.banner}>
+        <View style={[styles.bannerRule, { backgroundColor: colors.textLow }]} />
+        <View style={styles.bannerBody}>
+          <Micro color={colors.textMid}>{RESTART_NOTICE_LABEL}</Micro>
+          <Serif style={{ marginTop: 6 }}>{RESTART_NOTICE_COPY}</Serif>
+          <Pressable
+            onPress={dismissRestartNotice}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss restart notice"
+            hitSlop={8}
+            style={styles.bannerDismiss}
+          >
+            <Micro size={10} color={colors.textLow}>
+              Dismiss
+            </Micro>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  if (notice === 'missed') {
     return (
       <View style={styles.banner}>
         <View style={[styles.bannerRule, { backgroundColor: colors.textLow }]} />
@@ -320,6 +363,10 @@ const styles = StyleSheet.create({
     letterSpacing: -0.4,
     color: colors.textHi,
     marginTop: 8,
+  },
+  bannerDismiss: {
+    alignSelf: 'flex-start',
+    marginTop: 12,
   },
   dayBlock: {
     flexDirection: 'row',

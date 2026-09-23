@@ -3,6 +3,11 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Micro, Skew } from '@/components/primitives';
+import {
+  HEADER_FIRST_COPY,
+  headerResetCopy,
+  streakHeader,
+} from '@/lib/streakStatus';
 import { selectTierLabel, useAppStore } from '@/store/useAppStore';
 import { colors, font, microTracking } from '@/theme/tokens';
 
@@ -28,6 +33,10 @@ export function AppHeader({ showStreak = false }: { showStreak?: boolean }) {
   const insets = useSafeAreaInsets();
   const tierLabel = useAppStore(selectTierLabel);
   const flame = useAppStore((s) => s.flame);
+  const bestFlame = useAppStore((s) => s.bestFlame);
+  // Decided in src/lib/streakStatus.ts, not here, so streak-status.test.mjs
+  // drives the same decision this renders (Phase 38C).
+  const header = streakHeader({ flame, bestFlame });
 
   const wordmark = (
     <Text style={styles.wordmark} selectable={false}>
@@ -46,8 +55,10 @@ export function AppHeader({ showStreak = false }: { showStreak?: boolean }) {
         {showStreak &&
           // A streak of 00 reads like a counter that failed. Before the
           // first sealed day there is no streak to show, so the header says
-          // what is actually true instead.
-          (flame > 0 ? (
+          // what is actually true instead — and "starts today" is only true
+          // for someone who has never had one. After a restart or a reset
+          // the streak is 0 because it was lost, and the header says that.
+          (header.kind === 'streak' ? (
             <View style={styles.streak}>
               <Micro size={11} color={colors.textMid}>
                 Streak
@@ -56,12 +67,14 @@ export function AppHeader({ showStreak = false }: { showStreak?: boolean }) {
                 style={styles.streakFigure}
                 maxFontSizeMultiplier={1.4}
               >
-                {String(flame).padStart(2, '0')}
+                {String(header.flame).padStart(2, '0')}
               </Text>
             </View>
           ) : (
             <Micro size={10} color={colors.textLow}>
-              Streak starts today
+              {header.kind === 'reset'
+                ? headerResetCopy(header.bestFlame)
+                : HEADER_FIRST_COPY}
             </Micro>
           ))}
       </View>

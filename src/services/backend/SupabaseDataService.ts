@@ -98,6 +98,8 @@ function emptyState(): ScenarioState {
     perfectDays: 0,
     xp: 0,
     missedDay: false,
+    restarted: false,
+    challengeId: null,
     dayComplete: false,
     tasksDone: {},
     yesterday: null,
@@ -440,6 +442,11 @@ export class SupabaseDataService implements IDataService {
     // the scheduled evaluator, which the user was almost certainly not
     // present for — so this is the only thing that can tell them.
     this.state.missedDay = config?.missedDay ?? false;
+    // Also server-owned, and unlike missedDay it does not expire at the next
+    // rollover: the restart notice reads this, so it can still be true on
+    // day 2 of the replacement challenge (Phase 38C).
+    this.state.restarted = config?.restarted ?? false;
+    this.state.challengeId = this.challengeId;
     this.customTasks = config?.customTasks ?? [];
     this.targetOverrides = config?.targetOverrides ?? {};
     this.overridesAtDayStart = { ...this.targetOverrides };
@@ -570,6 +577,8 @@ export class SupabaseDataService implements IDataService {
       config?.timezone ?? this.state.challengeTimezone ?? null;
     this.state.perfectDays = config?.perfectDays ?? this.state.perfectDays;
     this.state.missedDay = config?.missedDay ?? this.state.missedDay;
+    this.state.restarted = config?.restarted ?? this.state.restarted;
+    this.state.challengeId = this.challengeId;
     this.customTasks = config?.customTasks ?? this.customTasks;
     this.targetOverrides = config?.targetOverrides ?? this.targetOverrides;
     this.overridesAtDayStart = { ...this.targetOverrides };

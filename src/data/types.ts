@@ -361,6 +361,19 @@ export interface ScenarioState {
   perfectDays: number;
   xp: number;
   missedDay: boolean;
+  /**
+   * challenges.restarted_from is set: this challenge exists because a
+   * missed day ended the last one. Read by the restart notice (Phase 38C),
+   * which is derived from the challenge rather than from `missedDay` so it
+   * outlives the judgement day.
+   */
+  restarted: boolean;
+  /**
+   * The server's id for the challenge on screen. Optional because the mock
+   * scenarios have no server ids to carry. Its one consumer is the restart
+   * notice's dismissal, which is keyed per challenge.
+   */
+  challengeId?: string | null;
   dayComplete: boolean;
   tasksDone: Partial<Record<TaskKey, string>>; // key -> completion time label
   /**

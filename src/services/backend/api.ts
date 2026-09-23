@@ -185,6 +185,13 @@ export interface ChallengeConfig {
    * nothing at all.
    */
   missedDay: boolean;
+  /**
+   * challenges.restarted_from is set. Unlike missedDay this does not expire:
+   * a restarted challenge stays restarted, and the notice that explains it
+   * (Phase 38C) is derived from this plus the sealed-day count, not from a
+   * day number.
+   */
+  restarted: boolean;
   customTasks: CustomTask[];
   targetOverrides: Partial<Record<TaskKey, number>>;
   pendingTier: Tier | null;
@@ -384,7 +391,7 @@ export const BackendApi = {
         sb()
           .from('challenges')
           .select(
-            'base_tier, flame, best_flame, missed_notice_day, duration_days, timezone',
+            'base_tier, flame, best_flame, missed_notice_day, restarted_from, duration_days, timezone',
           )
           .eq('id', challengeId)
           .single(),
@@ -435,6 +442,7 @@ export const BackendApi = {
       timezone: (challenge?.timezone as string | undefined) ?? null,
       perfectDays: sealedResult.count ?? 0,
       missedDay: (challenge?.missed_notice_day ?? null) === currentDay,
+      restarted: (challenge?.restarted_from ?? null) !== null,
       customTasks: (customs ?? []).map(
         (c: {
           id: string;

@@ -247,6 +247,13 @@ interface AppState extends ScenarioState {
   unitPreference: UnitPreference;
   /** Week key when the check-in card was dismissed or saved. */
   checkinHandledWeek: string | null;
+  /**
+   * The challenge whose restart notice the user dismissed (Phase 38C), or
+   * null. Keyed on the challenge id so a later restart gets its own notice.
+   * Device-local, like the check-in dismissal: a second device shows the
+   * notice again until it too is dismissed or a day is sealed.
+   */
+  restartNoticeDismissedFor: string | null;
   /** Settings: permanently hide the weekly check-in card. */
   weeklyCheckinEnabled: boolean;
   /**
@@ -350,6 +357,8 @@ interface AppState extends ScenarioState {
   dismissCheckinCard: () => void;
   /** Re-open the entry form for a week already handled. */
   reopenCheckinCard: () => void;
+  /** Hide the restart notice for the challenge on screen. */
+  dismissRestartNotice: () => void;
   setWeeklyCheckinEnabled: (enabled: boolean) => void;
   setUnitPreference: (pref: UnitPreference) => void;
   /** Load persisted preference + check-ins (call once at app start). */
@@ -462,6 +471,13 @@ function localeUnitPreference(): UnitPreference {
   }
 }
 const CHECKINS_KEY = 'ranked.metricCheckins.v1';
+const RESTART_NOTICE_KEY = 'ranked.restartNoticeDismissed.v1';
+/**
+ * What the restart-notice dismissal is keyed on: the server's challenge id,
+ * or a fixed token on the mock, which has no ids to offer.
+ */
+const restartNoticeKey = (challengeId: string | null | undefined) =>
+  challengeId ?? 'mock';
 
 /**
  * The local copy of the check-in history. It exists so the "Last check-in"
@@ -608,6 +624,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   savedMeals: [],
   unitPreference: localeUnitPreference(),
   checkinHandledWeek: null,
+  restartNoticeDismissedFor: null,
   weeklyCheckinEnabled: true,
   ...initialScenario,
   ...initialTaskConfig,
@@ -1131,6 +1148,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   // server-side records which week the card was collapsed for.
   reopenCheckinCard: () => set({ checkinHandledWeek: null }),
 
+  dismissRestartNotice: () => {
+    const key = restartNoticeKey(get().challengeId);
+    set({ restartNoticeDismissedFor: key });
+    AsyncStorage.setItem(RESTART_NOTICE_KEY, key).catch(() => {});
+  },
+
   setWeeklyCheckinEnabled: (enabled) => {
     set({ weeklyCheckinEnabled: enabled });
     AsyncStorage.setItem(WEEKLY_CHECKIN_KEY, serializeFlag(enabled)).catch(() => {});
@@ -1196,6 +1219,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       // happens at local midnight with the app closed: without this the
       // banner never appeared for the case it exists for.
       missedDay: st.missedDay,
+      // Also the server's, and unlike missedDay it survives the rollover:
+      // the restart notice reads it (Phase 38C).
+      restarted: st.restarted,
+      challengeId: st.challengeId ?? null,
       ...(rolledOver
         ? {
             deferred: [],
@@ -1261,17 +1288,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   hydratePersisted: async () => {
     devicePrefsStarted = true;
     try {
-      const [pref, checkins, notif, health, weekly] = await Promise.all([
-        AsyncStorage.getItem(UNIT_PREF_KEY),
-        AsyncStorage.getItem(CHECKINS_KEY),
-        AsyncStorage.getItem(NOTIF_PREFS_KEY),
-        AsyncStorage.getItem(HEALTH_PREFS_KEY),
-        AsyncStorage.getItem(WEEKLY_CHECKIN_KEY),
-      ]);
+      const [pref, checkins, notif, health, weekly, restartDismissed] =
+        await Promise.all([
+          AsyncStorage.getItem(UNIT_PREF_KEY),
+          AsyncStorage.getItem(CHECKINS_KEY),
+          AsyncStorage.getItem(NOTIF_PREFS_KEY),
+          AsyncStorage.getItem(HEALTH_PREFS_KEY),
+          AsyncStorage.getItem(WEEKLY_CHECKIN_KEY),
+          AsyncStorage.getItem(RESTART_NOTICE_KEY),
+        ]);
       const updates: Partial<AppState> = {};
       if (pref === 'metric' || pref === 'imperial') {
         updates.unitPreference = pref;
       }
+      if (restartDismissed) updates.restartNoticeDismissedFor = restartDismissed;
       const storedNotif = restorePrefs(notif, DEFAULT_PREFS);
       if (storedNotif) updates.notificationPrefs = storedNotif;
       const storedHealth = restorePrefs(health, DEFAULT_HEALTH_PREFS);
@@ -1408,11 +1438,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       NOTIF_PREFS_KEY,
       HEALTH_PREFS_KEY,
       WEEKLY_CHECKIN_KEY,
+      RESTART_NOTICE_KEY,
     ]).catch(() => {});
     set({
       scenario: 'day1',
       squads: [],
       activeSquadId: null,
+      restartNoticeDismissedFor: null,
       deferred: [],
       finishFeeling: null,
       finishFeelingText: '',
@@ -1576,10 +1608,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   deleteAccount: async () => {
     // Throws if the server refused; everything below is the success path.
     await DataService.deleteAccount();
-    AsyncStorage.multiRemove([UNIT_PREF_KEY, CHECKINS_KEY]).catch(() => {});
+    AsyncStorage.multiRemove([
+      UNIT_PREF_KEY,
+      CHECKINS_KEY,
+      RESTART_NOTICE_KEY,
+    ]).catch(() => {});
     const st = fromScenario('day1');
     set({
       scenario: 'day1',
+      restartNoticeDismissedFor: null,
       deferred: [],
       finishFeeling: null,
       finishFeelingText: '',
@@ -1699,6 +1736,14 @@ DataService.onWriteRejected((write) => {
  */
 export const selectTasks = (s: { todayTasks: TaskDef[] }): TaskDef[] =>
   s.todayTasks;
+
+/** Whether the restart notice for the challenge ON SCREEN was dismissed. */
+export const selectRestartNoticeDismissed = (s: {
+  challengeId?: string | null;
+  restartNoticeDismissedFor: string | null;
+}): boolean =>
+  s.restartNoticeDismissedFor !== null &&
+  s.restartNoticeDismissedFor === restartNoticeKey(s.challengeId);
 
 /**
  * The tier tag the app displays: the base tier's label, or CUSTOM when any

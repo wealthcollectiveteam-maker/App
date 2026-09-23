@@ -74,6 +74,7 @@ export function buildScenario(scenario: Scenario): ScenarioState {
         perfectDays: 0,
         xp: 0,
         missedDay: false,
+        restarted: false,
         dayComplete: false,
         tasksDone: {},
         yesterday: null,
@@ -107,6 +108,7 @@ export function buildScenario(scenario: Scenario): ScenarioState {
         perfectDays: 11,
         xp: 1840,
         missedDay: false,
+        restarted: false,
         dayComplete: false,
         tasksDone: {
           workout1: '6:40 AM',
@@ -184,6 +186,7 @@ export function buildScenario(scenario: Scenario): ScenarioState {
         perfectDays: 12,
         xp: 1980,
         missedDay: true,
+        restarted: false,
         dayComplete: false,
         tasksDone: {},
         yesterday: null,
@@ -227,6 +230,7 @@ export function buildScenario(scenario: Scenario): ScenarioState {
         perfectDays: 75,
         xp: 8960,
         missedDay: false,
+        restarted: false,
         dayComplete: true,
         tasksDone: {
           workout1: '6:12 AM',
