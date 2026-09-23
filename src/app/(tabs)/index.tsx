@@ -26,6 +26,7 @@ import {
 import type { TaskDef } from '@/data/types';
 import { useStartTimer } from '@/hooks/useStartTimer';
 import {
+  dayOneLine,
   RESTART_NOTICE_COPY,
   RESTART_NOTICE_LABEL,
   statusNotice,
@@ -250,6 +251,8 @@ export default function HomeScreen() {
   const tier = useAppStore((s) => s.tier);
   const pending = useAppStore((s) => s.pendingChanges);
   const dayComplete = useAppStore((s) => s.dayComplete);
+  const restarted = useAppStore((s) => s.restarted);
+  const perfectDays = useAppStore((s) => s.perfectDays);
   const tasks = useAppStore(selectTasks);
   const doneCount = useAppStore(selectDoneCount);
   const workoutSuggestions = useAppStore(useShallow(selectWorkoutSuggestions));
@@ -258,6 +261,9 @@ export default function HomeScreen() {
   const pendingNote = hasPendingChanges(pending)
     ? pendingChangeLine(pending, tier)
     : null;
+  // The day-1 rule, decided in src/lib/streakStatus.ts (Phase 38D): null on
+  // a restart, whose day 1 IS judged. The screen renders what it returns.
+  const dayOne = dayOneLine({ day, restarted, sealedDays: perfectDays });
 
   return (
     <ScreenState>
@@ -288,6 +294,10 @@ export default function HomeScreen() {
           height={5}
           style={{ marginTop: 18 }}
         />
+
+        {/* A fact, stated once, for the person who signed up at 23:52 and
+            was handed a six-task day with six minutes left in it. */}
+        {dayOne && <Text style={styles.dayOneLine}>{dayOne}</Text>}
 
         {!!why && (
           <Serif style={{ marginTop: 16 }}>
@@ -431,6 +441,13 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   pendingNote: {
+    fontFamily: font.regular,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.textMid,
+    marginTop: 14,
+  },
+  dayOneLine: {
     fontFamily: font.regular,
     fontSize: 13,
     lineHeight: 19,

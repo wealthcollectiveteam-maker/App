@@ -28,6 +28,7 @@ import type { OpenDay, TaskDef } from '@/data/types';
 import { useStartTimer } from '@/hooks/useStartTimer';
 import { dayDateLabel } from '@/lib/dayLabel';
 import { checkinDeck, type FinishedAction } from '@/lib/checkinDeck';
+import { dayOneLine } from '@/lib/streakStatus';
 import {
   selectTasks,
   selectWorkoutSuggestions,
@@ -353,8 +354,15 @@ export default function CheckinScreen() {
   const todayDone = useAppStore((s) => s.tasksDone);
   const todayComplete = useAppStore((s) => s.dayComplete);
   const day = useAppStore((s) => s.day);
+  const restarted = useAppStore((s) => s.restarted);
+  const perfectDays = useAppStore((s) => s.perfectDays);
   const deferred = useAppStore((s) => s.deferred);
   const completeTask = useAppStore((s) => s.completeTask);
+  // The day-1 rule, decided in src/lib/streakStatus.ts (Phase 38D): null on
+  // a restart, whose day 1 IS judged. Keyed on the CURRENT day, not the
+  // deck's target, so a day 1 being finished inside the grace window on the
+  // morning of day 2 is not told its tasks stay open until noon "tomorrow".
+  const dayOne = dayOneLine({ day, restarted, sealedDays: perfectDays });
   const deferTask = useAppStore((s) => s.deferTask);
   const workoutSuggestions = useAppStore(useShallow(selectWorkoutSuggestions));
   const startTimer = useStartTimer();
@@ -443,6 +451,10 @@ export default function CheckinScreen() {
             {doneCount} of {total} done
           </Micro>
         </View>
+
+        {dayOne && !grace ? (
+          <Text style={styles.dayOneLine}>{dayOne}</Text>
+        ) : null}
 
         {/* BEFORE THE FIRST TAP, NOT AFTER. The DaySwitcher below offers the
             choice, but a switcher is something you find by looking for it.
@@ -569,6 +581,14 @@ const styles = StyleSheet.create({
     fontSize: 34,
     letterSpacing: -1,
     color: colors.textHi,
+  },
+  dayOneLine: {
+    fontFamily: font.regular,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.textMid,
+    marginTop: -6,
+    marginBottom: 18,
   },
   // ---- the grace window ----
   // A solid ember band across the full content width, dark text on it, the

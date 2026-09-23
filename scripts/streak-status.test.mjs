@@ -35,6 +35,10 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import {
+  DAY_ONE_LINE,
+  dayOneLine as fixedDayOneLine,
+  deadlineWord,
+  GRACE_DEADLINE_HOUR,
   HEADER_FIRST_COPY,
   headerResetCopy,
   statusNotice as fixedNotice,
@@ -60,10 +64,20 @@ function oldHeader({ flame }) {
 function oldNotice({ missedDay }) {
   return missedDay ? 'missed' : null;
 }
+// Phase 38D, D1. Before it the day-1 rule was written down in a code comment
+// (0007:630-631) and a test comment, and nowhere a user could read. A grep of
+// src/ found nothing. The old behaviour is therefore "no line, ever" — which
+// means only the SHOWN case can fail against it; the null cases below hold
+// against the old behaviour trivially, and are here to pin the fix, not to
+// distinguish it.
+function oldDayOneLine() {
+  return null;
+}
 
 const USE_OLD = process.argv.includes('--old');
 const streakHeader = USE_OLD ? oldHeader : fixedHeader;
 const statusNotice = USE_OLD ? oldNotice : fixedNotice;
+const dayOneLine = USE_OLD ? oldDayOneLine : fixedDayOneLine;
 if (USE_OLD) {
   console.log('RUNNING AGAINST THE OLD BEHAVIOUR (transcribed) — failures expected.\n');
 }
@@ -207,6 +221,58 @@ check('restarted && nothing sealed && not dismissed => notice, whatever the day 
   assert.equal(bad, 0, `${bad} of ${n} cases lost the restart notice`);
 });
 
+// ---- THE DAY-1 LINE (Phase 38D, D1) -----------------------------------------
+// The trap: 0015's floor skips day 1 ONLY when restarted_from is null. On a
+// restart, day 1 IS judged. So the line is true for a new challenge and false
+// for a restarted one, and the restart case must return null from THIS
+// function — not be hidden by the component drawing the restart notice first.
+const freshDay1 = { day: 1, restarted: false, sealedDays: 0 };
+
+check('new challenge, day 1, nothing sealed: the day-1 line is shown', () => {
+  assert.equal(dayOneLine(freshDay1), DAY_ONE_LINE, 'no line — the rule is still only a code comment');
+});
+
+check('RESTARTED challenge, day 1, nothing sealed: null — its day 1 IS judged (0015)', () => {
+  assert.equal(dayOneLine({ ...freshDay1, restarted: true }), null);
+});
+
+check('...and that restart shows the restart notice, from the same module', () => {
+  // Precedence is not a rendering-order accident: the module itself says
+  // "restart notice" and "no day-1 line" for the same state.
+  assert.equal(
+    statusNotice({ restarted: true, sealedDays: 0, missedDay: true, dismissed: false }),
+    'restart',
+  );
+  assert.equal(dayOneLine({ ...freshDay1, restarted: true }), null);
+});
+
+check('new challenge, day 2: null', () => {
+  assert.equal(dayOneLine({ ...freshDay1, day: 2 }), null);
+});
+
+check('new challenge, day 1, a day already sealed: null', () => {
+  assert.equal(dayOneLine({ ...freshDay1, sealedDays: 1 }), null);
+});
+
+check('the copy: one sentence, no exclamation mark, no second sentence', () => {
+  assert.doesNotMatch(DAY_ONE_LINE, /!/, 'an exclamation mark');
+  const terminals = (DAY_ONE_LINE.match(/[.!?]/g) ?? []).length;
+  assert.equal(terminals, 1, `${terminals} sentence terminators — one sentence only`);
+  assert.match(DAY_ONE_LINE, /\.$/, 'the one sentence ends with a full stop');
+  assert.doesNotMatch(DAY_ONE_LINE, /\p{Extended_Pictographic}/u, 'an emoji');
+});
+
+check('the deadline word is derived from grace_deadline_hour(), not typed', () => {
+  // 0011_grace_window.sql:55-58 returns 12. If that ever changes, the
+  // constant follows it and the copy follows the constant.
+  assert.equal(GRACE_DEADLINE_HOUR, 12);
+  assert.equal(deadlineWord(12), 'noon');
+  assert.equal(deadlineWord(10), '10 AM');
+  assert.equal(deadlineWord(14), '2 PM');
+  assert.equal(deadlineWord(0), 'midnight');
+  assert.match(DAY_ONE_LINE, new RegExp(`until ${deadlineWord(GRACE_DEADLINE_HOUR)} tomorrow`));
+});
+
 // ---- SOURCE ATTACHMENT ------------------------------------------------------
 // Read the screens' source so the test cannot drift away from the path it
 // covers — the same trade checkin-card.test.mjs and checkin-deck.test.mjs make.
@@ -222,6 +288,20 @@ if (!USE_OLD) {
     path.join(here, '..', 'src', 'app', '(tabs)', 'index.tsx'),
     'utf8',
   );
+  const checkin = readFileSync(
+    path.join(here, '..', 'src', 'app', '(tabs)', 'checkin.tsx'),
+    'utf8',
+  );
+  check('Home renders the day-1 line through dayOneLine()', () => {
+    assert.match(home, /dayOneLine\(\{/, 'index.tsx never calls dayOneLine');
+    assert.match(home, /\{dayOne && /, 'index.tsx does not render what dayOneLine returned');
+    assert.doesNotMatch(home, /never counted as a miss/, 'the copy is hardcoded in the component');
+  });
+  check('the check-in screen renders the day-1 line through dayOneLine()', () => {
+    assert.match(checkin, /from '@\/lib\/streakStatus'/, 'checkin.tsx does not import streakStatus');
+    assert.match(checkin, /dayOneLine\(\{/, 'checkin.tsx never calls dayOneLine');
+    assert.doesNotMatch(checkin, /never counted as a miss/, 'the copy is hardcoded in the component');
+  });
   check('AppHeader decides its copy through streakHeader()', () => {
     assert.match(header, /from '@\/lib\/streakStatus'/, 'AppHeader.tsx does not import streakStatus');
     assert.match(header, /streakHeader\(\{/, 'AppHeader.tsx never calls streakHeader');

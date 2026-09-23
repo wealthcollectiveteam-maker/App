@@ -154,3 +154,85 @@ export const RESTART_NOTICE_COPY =
   'A missed day ended the last run. Under Hard rules the clock resets, so ' +
   'this challenge started over at day 1. The streak is 0 until a day is ' +
   'sealed.';
+
+// ---------------------------------------------------------------------------
+// THE DAY-1 LINE (Phase 38D, D1)
+// ---------------------------------------------------------------------------
+
+/**
+ * grace_deadline_hour(), supabase/migrations/0011_grace_window.sql:55-58:
+ *
+ *   create or replace function public.grace_deadline_hour()
+ *   returns integer
+ *   language sql immutable
+ *   as $$ select 12 $$;
+ *
+ * A day stays completable until this hour on the FOLLOWING local day
+ * (day_closes_at, 0011:75-81). The client has no RPC for the value, so it is
+ * mirrored here with its source quoted, and the word in the copy is derived
+ * from it rather than typed. If the server's hour ever moves, this constant
+ * is the one place the client has to follow it.
+ */
+export const GRACE_DEADLINE_HOUR = 12;
+
+/** The hour as a person would say it: 12 is noon, 0 is midnight. */
+export function deadlineWord(hour: number): string {
+  if (hour === 12) return 'noon';
+  if (hour === 0 || hour === 24) return 'midnight';
+  const h = hour % 12 || 12;
+  return `${h} ${hour < 12 ? 'AM' : 'PM'}`;
+}
+
+export interface DayOneLineInput {
+  /** The current day, from the server's day window. */
+  day: number;
+  /** challenges.restarted_from is set. */
+  restarted: boolean;
+  /** Days sealed complete on THIS challenge. */
+  sealedDays: number;
+}
+
+/**
+ * One sentence. It states the rule and stops.
+ *
+ * "Never counted as a miss" is true because the evaluator's floor for a
+ * challenge with restarted_from null is 2 (0015:147), so its day 1 is never
+ * judged. "Stay open until noon tomorrow" is true because day 1 closes at
+ * day_closes_at(c, 1) — start_date + 1 at grace_deadline_hour() — and
+ * earliest_open_day() never goes below 1, so day 1 is on offer for the whole
+ * of that window.
+ */
+export const DAY_ONE_LINE =
+  'Day 1 is never counted as a miss, and its tasks stay open until ' +
+  `${deadlineWord(GRACE_DEADLINE_HOUR)} tomorrow.`;
+
+/**
+ * THE TRAP THIS FUNCTION EXISTS TO AVOID.
+ *
+ * Migration 0015 changed the evaluator's floor to
+ *
+ *   v_day := greatest(c.last_evaluated_day + 1,
+ *              case when c.restarted_from is null then 2 else 1 end);
+ *
+ * so day 1 is skipped ONLY on a challenge that is not a restart. On a
+ * restart, day 1 IS judged — that was the point of 0015. The sentence above
+ * is therefore true for a new challenge and false for a restarted one, and
+ * the person on a restarted day 1 is exactly the person the restart notice
+ * just apologised to. Telling them day 1 is free and then sealing a miss on
+ * it would be the worst thing this app could do, so `restarted` returns null
+ * HERE, in the same function the screens render from — not by the component
+ * happening to draw the restart notice first.
+ *
+ * "Today is the creation day" is not fetched separately: for a challenge
+ * that is not a restart, day 1 IS start_date (challenge_day(), 0001:250-256)
+ * and create_challenge() is always handed today (session.ts startDateFor),
+ * so day === 1 && !restarted is that condition. The line is a property of
+ * day 1 on a fresh challenge, not of the calendar — if a start date ever
+ * becomes choosable it stays true, because the floor does not move.
+ */
+export function dayOneLine(input: DayOneLineInput): string | null {
+  if (input.day !== 1) return null;
+  if (input.restarted) return null;
+  if (input.sealedDays > 0) return null;
+  return DAY_ONE_LINE;
+}
