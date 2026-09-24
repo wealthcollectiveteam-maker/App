@@ -115,6 +115,7 @@ done
 FAILED=0
 for t in supabase/tests/rls_test.sql \
          supabase/tests/missed_day_test.sql \
+         supabase/tests/start_tomorrow_test.sql \
          supabase/tests/challenge_length_test.sql \
          supabase/tests/squads_test.sql \
          supabase/tests/metric_checkins_test.sql \

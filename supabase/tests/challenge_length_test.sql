@@ -84,7 +84,7 @@ begin
   insert into public.profiles (id, name) values (v_uid, 'Len A') on conflict do nothing;
 
   -- No length argument: the pre-0008 shape of the call, still valid, still 75.
-  v_ch := public.create_challenge('hard', current_date, 'UTC');
+  v_ch := public.create_challenge('hard', 'UTC');
   if (select duration_days from public.challenges where id = v_ch) <> 75 then
     raise exception 'FAIL: a challenge created without a length is not 75';
   end if;
@@ -128,7 +128,7 @@ begin
   call l_login(v_uid);
   insert into public.profiles (id, name) values (v_uid, 'Len B') on conflict do nothing;
 
-  v_ch := public.create_challenge('medium', current_date, 'UTC', 30);
+  v_ch := public.create_challenge('medium', 'UTC', 30);
   call l_set_day(v_ch, 10);
   call l_do_day(v_ch, 1);
   call l_do_day(v_ch, 2);
@@ -178,7 +178,7 @@ begin
   call l_login(v_uid);
   insert into public.profiles (id, name) values (v_uid, 'Len C') on conflict do nothing;
 
-  v_ch := public.create_challenge('soft', current_date, 'UTC', 75);
+  v_ch := public.create_challenge('soft', 'UTC', 75);
   call l_set_day(v_ch, 52);
   call l_do_day(v_ch, 1);
   call l_do_day(v_ch, 20);
@@ -255,7 +255,7 @@ begin
   call l_login(v_uid);
   insert into public.profiles (id, name) values (v_uid, 'Len D') on conflict do nothing;
 
-  v_ch := public.create_challenge('medium', current_date, 'UTC', 45);
+  v_ch := public.create_challenge('medium', 'UTC', 45);
 
   -- Before the freeze — the one window in which this is allowed.
   perform public.add_setup_custom_task('Cold plunge', 3);

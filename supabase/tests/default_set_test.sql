@@ -57,7 +57,7 @@ begin
 
   -- A default set: the tier's standards and NOTHING else. No custom task,
   -- no override. Day 1 is today in the challenge's own zone.
-  v_ch := public.create_challenge(p_tier, current_date, 'UTC', 75);
+  v_ch := public.create_challenge(p_tier, 'UTC', 75);
   if (select count(*) from public.custom_tasks where challenge_id = v_ch) <> 0 then
     raise exception 'FAIL (%): fixture is not a default set — custom tasks exist', p_tier;
   end if;

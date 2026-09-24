@@ -112,7 +112,7 @@ language plpgsql as $$
 begin
   delete from public.challenges where owner = p_owner;
   call test_login(p_owner);
-  perform public.create_challenge('hard', current_date, 'UTC', p_days);
+  perform public.create_challenge('hard', 'UTC', p_days);
 end $$;
 
 -- =============================================================================
@@ -126,7 +126,7 @@ declare
 begin
   call test_login(v_uid);
   insert into public.profiles (id, name) values (v_uid, 'Late') on conflict do nothing;
-  v_id := public.create_challenge('hard', current_date, 'UTC', 75);
+  v_id := public.create_challenge('hard', 'UTC', 75);
 
   call t_set_clock(v_id, 5, 11);
   select * into v_c from public.challenges where id = v_id;
@@ -369,7 +369,7 @@ declare
 begin
   call test_login(v_uid);
   insert into public.profiles (id, name) values (v_uid, 'Miss') on conflict do nothing;
-  v_old := public.create_challenge('hard', current_date, 'UTC', 75);
+  v_old := public.create_challenge('hard', 'UTC', 75);
   select id into v_sq from public.create_squad('Grace squad');
 
   call t_set_clock(v_old, 5, 11);
@@ -430,7 +430,7 @@ declare
 begin
   call test_login(v_uid);
   insert into public.profiles (id, name) values (v_uid, 'Jwt') on conflict do nothing;
-  v_id := public.create_challenge('hard', current_date, 'UTC', 75);
+  v_id := public.create_challenge('hard', 'UTC', 75);
   call t_set_clock(v_id, 5, 11);
   call t_do_day(v_id, 3);
 end $$;
@@ -624,12 +624,12 @@ declare
 begin
   call test_login(v_a);
   insert into public.profiles (id, name) values (v_a, 'Mate') on conflict do nothing;
-  v_ca := public.create_challenge('hard', current_date, 'UTC', 75);
+  v_ca := public.create_challenge('hard', 'UTC', 75);
   select id, code into v_sq, v_code from public.create_squad('Window squad');
 
   call test_login(v_b);
   insert into public.profiles (id, name) values (v_b, 'Finish') on conflict do nothing;
-  v_cb := public.create_challenge('hard', current_date, 'UTC', 75);
+  v_cb := public.create_challenge('hard', 'UTC', 75);
   perform public.join_squad(v_code);
 
   -- Two members in DIFFERENT zones at the same instant: one mid-window at

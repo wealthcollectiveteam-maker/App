@@ -62,7 +62,7 @@ call test_login('00000000-0000-0000-0000-0000000017a1');
 
 insert into public.profiles (id, name) values (auth.uid(), 'Ada Prefs')
   on conflict (id) do nothing;
-select public.create_challenge('hard', current_date, 'UTC');
+select public.create_challenge('hard', 'UTC');
 select public.create_squad('Preference Crew');
 
 -- The invite code, captured while Ada can still read it. The squads policy is
@@ -190,7 +190,7 @@ set role authenticated;
 call test_login('00000000-0000-0000-0000-0000000017a2');
 insert into public.profiles (id, name) values (auth.uid(), 'Ben Prefs')
   on conflict (id) do nothing;
-select public.create_challenge('hard', current_date, 'UTC');
+select public.create_challenge('hard', 'UTC');
 select public.join_squad(:'pref_code');
 
 -- =====================  PROOF 4 — A SQUADMATE CANNOT READ THE SWITCHES  ====

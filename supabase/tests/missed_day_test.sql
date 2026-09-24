@@ -32,7 +32,10 @@ insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000dd', 'dormant-second-empty@test.dev'),
   ('00000000-0000-0000-0000-0000000000de', 'dormant-counter-reset@test.dev'),
   ('00000000-0000-0000-0000-0000000000df', 'dormant-never@test.dev'),
-  ('00000000-0000-0000-0000-0000000000e0', 'dormant-control@test.dev')
+  ('00000000-0000-0000-0000-0000000000e0', 'dormant-control@test.dev'),
+  ('00000000-0000-0000-0000-0000000000e1', 'day1-unsealed@test.dev'),
+  ('00000000-0000-0000-0000-0000000000e2', 'day1-sealed-by-hand@test.dev'),
+  ('00000000-0000-0000-0000-0000000000e3', 'day1-untouched@test.dev')
 on conflict do nothing;
 
 -- Complete every task in a day's snapshot, without sealing. The engine's
@@ -56,8 +59,9 @@ begin
 end $$;
 
 -- Put a challenge at day N by moving its start date back, and wind the
--- evaluator's cursor to "day 1 judged, nothing since" — the state a real
--- challenge is in the moment it is created.
+-- evaluator's cursor to 0 — "nothing visited yet", the state a real
+-- challenge is in the moment it is created (0017; it was 1 before, when day
+-- 1 was never visited at all).
 create or replace procedure t_set_day(p_challenge uuid, p_day integer)
 language plpgsql as $$
 declare
@@ -83,7 +87,7 @@ begin
   update public.challenges
      set timezone = v_tz,
          start_date = (now() at time zone v_tz)::date - (p_day - 1),
-         last_evaluated_day = 1
+         last_evaluated_day = 0
    where id = p_challenge;
 end $$;
 
@@ -111,7 +115,7 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Hard') on conflict do nothing;
-  v_old := public.create_challenge('hard', current_date, 'America/Toronto');
+  v_old := public.create_challenge('hard', 'America/Toronto');
   select id into v_squad from public.create_squad('Proof squad');
 
   -- A custom task and a lowered target: both must survive into the restart.
@@ -232,7 +236,7 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Unsealed') on conflict do nothing;
-  v_ch := public.create_challenge('hard', current_date, 'UTC');
+  v_ch := public.create_challenge('hard', 'UTC');
 
   call t_set_day(v_ch, 4);
   call t_do_day(v_ch, 2);   -- every task done
@@ -279,7 +283,7 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Medium') on conflict do nothing;
-  v_ch := public.create_challenge('medium', current_date, 'Europe/London');
+  v_ch := public.create_challenge('medium', 'Europe/London');
   perform id from public.create_squad('Medium squad');
 
   call t_set_day(v_ch, 4);
@@ -338,7 +342,7 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Gap') on conflict do nothing;
-  v_ch := public.create_challenge('hard', current_date, 'Australia/Sydney');
+  v_ch := public.create_challenge('hard', 'Australia/Sydney');
   perform id from public.create_squad('Gap squad');
 
   -- Today is day 6. The user was offline for days 3, 4 and 5 — no snapshot
@@ -397,7 +401,7 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Day1') on conflict do nothing;
-  v_ch := public.create_challenge('hard', current_date, 'UTC');
+  v_ch := public.create_challenge('hard', 'UTC');
 
   -- Signed up yesterday at 23:50 and did nothing. Today is day 2.
   call t_set_day(v_ch, 2);
@@ -424,7 +428,7 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Finished') on conflict do nothing;
-  v_ch := public.create_challenge('hard', current_date, 'UTC');
+  v_ch := public.create_challenge('hard', 'UTC');
 
   -- A completed run: 75 days done, then the user stopped opening the app.
   -- Today is day 78.
@@ -598,7 +602,7 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Sim') on conflict do nothing;
-  perform public.create_challenge('hard', current_date, 'UTC');
+  perform public.create_challenge('hard', 'UTC');
   perform public.get_or_freeze_today();
 
   -- DEFAULT DENY. sim_allowed_users ships empty, so every simulation raises
@@ -882,7 +886,7 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Dormant') on conflict do nothing;
-  v_old := public.create_challenge('hard', current_date, 'America/Toronto');
+  v_old := public.create_challenge('hard', 'America/Toronto');
   select id into v_squad from public.create_squad('Dormant squad');
 
   call t_set_day(v_old, 5);
@@ -936,7 +940,7 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Active') on conflict do nothing;
-  v_old := public.create_challenge('hard', current_date, 'America/Toronto');
+  v_old := public.create_challenge('hard', 'America/Toronto');
   select id into v_squad from public.create_squad('Active squad');
 
   call t_set_day(v_old, 5);
@@ -1022,7 +1026,7 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Restart-untouched') on conflict do nothing;
-  v_old := public.create_challenge('hard', current_date, 'America/Toronto');
+  v_old := public.create_challenge('hard', 'America/Toronto');
   call t_set_day(v_old, 5);
   call t_do_day(v_old, 2);
   call t_do_day(v_old, 3);
@@ -1072,7 +1076,7 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Restart-done') on conflict do nothing;
-  v_old := public.create_challenge('hard', current_date, 'America/Toronto');
+  v_old := public.create_challenge('hard', 'America/Toronto');
   call t_set_day(v_old, 5);
   call t_do_day(v_old, 2);
   call t_do_day(v_old, 3);
@@ -1154,7 +1158,7 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Dormant-2') on conflict do nothing;
-  v_old := public.create_challenge('hard', current_date, 'America/Toronto');
+  v_old := public.create_challenge('hard', 'America/Toronto');
   select id into v_squad from public.create_squad('Dormant-2 squad');
   -- History from an earlier life, the 573dabe6 shape: a best of 29 on a row
   -- with nothing done on it. The fixture describing the past, not the app.
@@ -1205,7 +1209,7 @@ begin
   end if;
 
   -- The person comes back and chooses to start again.
-  v_back := public.create_challenge('hard', current_date, 'America/Toronto');
+  v_back := public.create_challenge('hard', 'America/Toronto');
   select * into back_c from public.challenges where id = v_back;
   if back_c.restarted_from is not null then
     raise exception 'FAIL (a): the challenge a returning person starts is a restart';
@@ -1214,8 +1218,11 @@ begin
     raise exception 'FAIL (a): the returning person''s history did not come with them (best %, flame %)',
       back_c.best_flame, back_c.flame;
   end if;
-  if back_c.last_evaluated_day <> 1 then
-    raise exception 'FAIL (a): a fresh challenge should start at cursor 1 (%)', back_c.last_evaluated_day;
+  -- 0017: every new challenge starts at cursor 0 so day 1 is visited (and
+  -- paid if met); first_judged_day 2 is what keeps it from being a miss.
+  if back_c.last_evaluated_day <> 0 or back_c.first_judged_day <> 2 then
+    raise exception 'FAIL (a): a fresh challenge should start at cursor 0 with first_judged_day 2 (% / %)',
+      back_c.last_evaluated_day, back_c.first_judged_day;
   end if;
 
   raise notice 'PASS (a): the second empty run ends dormant — no replacement, no feed item, history kept and carried';
@@ -1232,7 +1239,7 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Counter-reset') on conflict do nothing;
-  v_old := public.create_challenge('hard', current_date, 'UTC');
+  v_old := public.create_challenge('hard', 'UTC');
 
   -- Run one, empty -> restart.
   call t_set_day(v_old, 3);
@@ -1283,7 +1290,7 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Never') on conflict do nothing;
-  v_old := public.create_challenge('hard', current_date, 'America/Los_Angeles');
+  v_old := public.create_challenge('hard', 'America/Los_Angeles');
 
   -- Signed up, never ticked anything. Run one (the fresh challenge) is
   -- empty and restarts; run two is empty and does not.
@@ -1323,7 +1330,7 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_uid, 'role','authenticated')::text, false);
   insert into public.profiles (id, name) values (v_uid, 'Control') on conflict do nothing;
-  v_old := public.create_challenge('hard', current_date, 'America/Toronto');
+  v_old := public.create_challenge('hard', 'America/Toronto');
 
   -- The PROOF 1 shape: days 2 and 3 done, day 4 missed. Restarts exactly as today.
   call t_set_day(v_old, 5);
@@ -1354,6 +1361,170 @@ begin
   end if;
 
   raise notice 'PASS (d): an active person''s miss restarts as today, and their first empty run restarts again';
+end $$;
+
+-- =============================================================================
+-- PROOF 13 — DAY 1 PAYS WHAT IT EARNED, ONCE (Phase 38F, F2)
+--
+-- Before 0017 the floor of 2 did two jobs: it kept day 1 of a fresh challenge
+-- from being judged a miss (right) and it kept the evaluator's retroactive
+-- seal away from it (wrong). A person who ticked every task on day 1 and did
+-- not tap seal lost that flame permanently. Production: every sealed row
+-- with a null outcome is a day 1.
+--
+-- THE PAY-ONCE QUESTION, answered before the fix was written. seal_day()
+-- seals only an OPEN day; the evaluator seals only a CLOSED one; both key on
+-- sealed_at. So the two payers never see the same day at the same time.
+--
+--   (a) day 1 met, never sealed, then it closes -> the evaluator seals it,
+--       outcome met, flame 1; a second run pays nothing        FAILS before
+--   (b) day 1 met and sealed BY HAND while open -> flame 1 at the tap; the
+--       evaluator later writes outcome met and pays nothing     guard
+--   (c) after (a), a hand seal of day 1 is refused: the day is closed, and
+--       flame stays 1                                            guard
+--   (d) day 1 untouched on a fresh challenge -> visited, nothing written,
+--       not a miss, cursor advances                              guard
+--
+-- (b), (c) and (d) pass before and after; they are here so the fix can never
+-- become "pay twice" or "judge day 1 after all".
+-- =============================================================================
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-0000000000e1';
+  v_ch  uuid;
+  c     public.challenges;
+  d1    public.challenge_days;
+  v_n   integer;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  insert into public.profiles (id, name) values (v_uid, 'Day1-unsealed') on conflict do nothing;
+  v_ch := public.create_challenge('hard', 'UTC');
+
+  -- Every task on day 1 ticked; seal never tapped. Then day 1 closes.
+  call t_do_day(v_ch, 1);
+  call t_move_day(v_ch, 2);
+  v_n := public.evaluate_challenge(v_ch);
+
+  select * into d1 from public.challenge_days where challenge_id = v_ch and day = 1;
+  select * into c  from public.challenges where id = v_ch;
+  if d1.sealed_at is null or d1.outcome is distinct from 'met' then
+    raise exception 'FAIL (a): a met, unsealed day 1 was not sealed and scored (sealed_at %, outcome %) — the flame is lost',
+      coalesce(d1.sealed_at::text, 'null'), coalesce(d1.outcome, 'null');
+  end if;
+  if c.flame <> 1 or c.best_flame <> 1 then
+    raise exception 'FAIL (a): flame % best % after a met day 1, expected 1 and 1', c.flame, c.best_flame;
+  end if;
+  if c.ended_at is not null then
+    raise exception 'FAIL (a): a met day 1 ended the challenge (%)', c.ended_reason;
+  end if;
+  if c.last_evaluated_day <> 1 or v_n <> 1 then
+    raise exception 'FAIL (a): cursor % / judged %, expected 1 / 1', c.last_evaluated_day, v_n;
+  end if;
+
+  -- PAY ONCE: a second run finds it sealed and pays nothing.
+  perform public.evaluate_challenge(v_ch);
+  if (select flame from public.challenges where id = v_ch) <> 1 then
+    raise exception 'FAIL (a): a second evaluation paid day 1 again';
+  end if;
+
+  raise notice 'PASS (a): a met, unsealed day 1 is sealed, scored met and pays flame 1, once';
+end $$;
+
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-0000000000e2';
+  v_ch  uuid;
+  c     public.challenges;
+  d1    public.challenge_days;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  insert into public.profiles (id, name) values (v_uid, 'Day1-by-hand') on conflict do nothing;
+  v_ch := public.create_challenge('hard', 'UTC');
+
+  -- Day 1 ticked and sealed by the person, while it is open.
+  perform public.get_or_freeze_today();
+  call t_do_day(v_ch, 1);
+  perform public.seal_day(1);
+  select * into c from public.challenges where id = v_ch;
+  if c.flame <> 1 then
+    raise exception 'FIXTURE (b): seal_day did not pay day 1 (flame %)', c.flame;
+  end if;
+
+  -- Then it closes and the evaluator visits it.
+  call t_move_day(v_ch, 2);
+  perform public.evaluate_challenge(v_ch);
+  select * into d1 from public.challenge_days where challenge_id = v_ch and day = 1;
+  select * into c  from public.challenges where id = v_ch;
+  if c.flame <> 1 then
+    raise exception 'FAIL (b): the evaluator paid a day seal_day had already paid (flame %)', c.flame;
+  end if;
+  if d1.outcome is distinct from 'met' or d1.evaluated_at is null then
+    raise exception 'FAIL (b): a hand-sealed day 1 was not scored met by the evaluator';
+  end if;
+
+  raise notice 'PASS (b): a day 1 sealed by hand is paid at the tap and only scored, not paid again, by the evaluator';
+end $$;
+
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-0000000000e1';
+  v_ch  uuid;
+  v_msg text;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  v_ch := t_challenge(v_uid);
+
+  -- (a) left day 1 sealed by the evaluator and closed. A hand seal now is
+  -- refused, so the two payers cannot meet on one day.
+  begin
+    perform public.seal_day(1);
+    raise exception 'FAIL (c): seal_day accepted a closed day 1';
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    if v_msg like 'FAIL%' then raise; end if;
+    if v_msg not like '%closed%' then
+      raise exception 'FAIL (c): seal_day refused for a reason other than the day being closed: %', v_msg;
+    end if;
+  end;
+  if (select flame from public.challenges where id = v_ch) <> 1 then
+    raise exception 'FAIL (c): flame moved on a refused seal';
+  end if;
+
+  raise notice 'PASS (c): after the evaluator sealed day 1, a hand seal is refused and flame stays 1';
+end $$;
+
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-0000000000e3';
+  v_ch  uuid;
+  c     public.challenges;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  insert into public.profiles (id, name) values (v_uid, 'Day1-untouched') on conflict do nothing;
+  v_ch := public.create_challenge('hard', 'UTC');
+
+  -- Day 1 frozen and untouched. It closes. Visited, and nothing written.
+  perform public.get_or_freeze_today();
+  call t_move_day(v_ch, 2);
+  perform public.evaluate_challenge(v_ch);
+  select * into c from public.challenges where id = v_ch;
+  if c.ended_at is not null then
+    raise exception 'FAIL (d): an untouched day 1 on a fresh challenge was judged a miss (%)', c.ended_reason;
+  end if;
+  if exists (select 1 from public.challenge_days
+              where challenge_id = v_ch and day = 1
+                and (outcome is not null or evaluated_at is not null or sealed_at is not null)) then
+    raise exception 'FAIL (d): something was written on an untouched, protected day 1';
+  end if;
+  if c.flame <> 0 then
+    raise exception 'FAIL (d): flame % on an untouched day 1', c.flame;
+  end if;
+
+  raise notice 'PASS (d): an untouched day 1 on a fresh challenge is passed over — not a miss, nothing written';
 end $$;
 
 drop procedure t_move_day(uuid, integer);

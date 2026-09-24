@@ -51,7 +51,7 @@ declare v_id uuid;
 begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', p_uid, 'role', 'authenticated')::text, false);
-  v_id := public.create_challenge('hard', current_date, 'UTC', p_days);
+  v_id := public.create_challenge('hard', 'UTC', p_days);
   perform public.get_or_freeze_today();
 end $$;
 

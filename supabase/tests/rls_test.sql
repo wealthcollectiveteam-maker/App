@@ -192,7 +192,7 @@ call test_login('00000000-0000-0000-0000-00000000000a');
 
 insert into public.profiles (id, name) values (auth.uid(), 'Ada');
 insert into public.profile_private (id, why) values (auth.uid(), 'Because I said I would.');
-select public.create_challenge('hard', current_date, 'UTC');
+select public.create_challenge('hard', 'UTC');
 select public.create_squad('Ada''s Squad');
 
 insert into public.journal_entries (owner, day, text) values (auth.uid(), 1, 'private journal');
@@ -221,7 +221,7 @@ create temporary table t_ctx as
 -- =====================  BEN JOINS THE SQUAD  =====================
 call test_login('00000000-0000-0000-0000-00000000000b');
 insert into public.profiles (id, name) values (auth.uid(), 'Ben');
-select public.create_challenge('hard', current_date, 'UTC');
+select public.create_challenge('hard', 'UTC');
 select public.join_squad((select invite_code from t_ctx));
 
 -- ---------------- PROOF 1: squadmate privacy ----------------

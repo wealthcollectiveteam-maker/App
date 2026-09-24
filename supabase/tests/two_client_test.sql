@@ -135,7 +135,7 @@ begin
     on conflict (id) do update set name = 'Two Client';
 
   -- "web", already running: creates the challenge and freezes day 1.
-  v_id  := public.create_challenge('hard', current_date, 'America/Toronto', 75);
+  v_id  := public.create_challenge('hard', 'America/Toronto', 75);
   v_web := public.get_or_freeze_today();
 
   -- "native", first launch, nothing stored locally. The ONLY question it
@@ -159,7 +159,7 @@ begin
   -- future client call create_challenge() anyway, the partial unique index
   -- (0007, challenges_one_active_owner) is the wall.
   begin
-    perform public.create_challenge('hard', current_date, 'Europe/London', 75);
+    perform public.create_challenge('hard', 'Europe/London', 75);
     raise exception 'FAIL: a second live challenge was created for one owner';
   exception
     when unique_violation then null;
