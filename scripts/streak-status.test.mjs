@@ -42,7 +42,6 @@ import {
   HEADER_FIRST_COPY,
   headerBestCopy,
   headerResetCopy,
-  restoreOffer as fixedRestoreOffer,
   statusNotice as fixedNotice,
   streakHeader as fixedHeader,
 } from '../src/lib/streakStatus.ts';
@@ -68,10 +67,6 @@ function oldHeader({ flame, bestFlame }) {
   if (bestFlame > 0) return { kind: 'reset', bestFlame };
   return { kind: 'first' };
 }
-// Before 0018 there was no way to reopen a missed day, so no offer existed.
-function oldRestoreOffer() {
-  return null;
-}
 function oldNotice({ missedDay }) {
   return missedDay ? 'missed' : null;
 }
@@ -89,7 +84,6 @@ const USE_OLD = process.argv.includes('--old');
 const streakHeader = USE_OLD ? oldHeader : fixedHeader;
 const statusNotice = USE_OLD ? oldNotice : fixedNotice;
 const dayOneLine = USE_OLD ? oldDayOneLine : fixedDayOneLine;
-const restoreOffer = USE_OLD ? oldRestoreOffer : fixedRestoreOffer;
 if (USE_OLD) {
   console.log('RUNNING AGAINST THE OLD BEHAVIOUR (transcribed) — failures expected.\n');
 }
@@ -235,39 +229,6 @@ check('the best is never shown below the streak, over the whole grid (sweep)', (
   assert.equal(bad, 0, `${bad} wrong cells`);
 });
 
-// ---- THE RESTORE OFFER (Phase 38G, G2) ----------------------------------------
-const restorable = {
-  challengeId: 'c1', day: 30, missedOn: '2026-09-22', restoreBy: '2026-09-29', daysLeft: 5,
-};
-
-check('a restart whose miss can still be reopened gets the offer', () => {
-  const o = restoreOffer({ restarted: true, restorable, restoreByLabel: 'September 29' });
-  assert.ok(o, 'no offer — the day cannot be reopened from the screen');
-  assert.equal(o.day, 30);
-  assert.equal(o.button, 'Reopen day 30');
-  assert.equal(
-    o.line,
-    'Day 30 can be reopened until September 29, and it still has to be completed for the run to continue.',
-  );
-});
-
-check('...and the copy is one plain sentence that promises no streak', () => {
-  const o = restoreOffer({ restarted: true, restorable, restoreByLabel: 'September 29' });
-  assert.doesNotMatch(o.line, /!/);
-  assert.equal((o.line.match(/[.!?]/g) ?? []).length, 1, 'one sentence');
-  assert.match(o.line, /still has to be completed/, 'it must say the day still has to be done');
-  assert.doesNotMatch(o.line, /streak (is )?back|restore(s|d) your streak/i, 'it must not promise the streak');
-});
-
-check('no offer when the server has nothing to reopen (guard)', () => {
-  assert.equal(restoreOffer({ restarted: true, restorable: null, restoreByLabel: '' }), null);
-  assert.equal(restoreOffer({ restarted: true, restorable: undefined, restoreByLabel: '' }), null);
-});
-
-check('no offer on a challenge that is not a restart (guard)', () => {
-  assert.equal(restoreOffer({ restarted: false, restorable, restoreByLabel: 'September 29' }), null);
-});
-
 check('a Medium/Soft reset (same challenge) keeps its one-day "Streak broken" banner', () => {
   assert.equal(
     statusNotice({ restarted: false, sealedDays: 12, missedDay: true, dismissed: false }),
@@ -402,9 +363,9 @@ if (!USE_OLD) {
     assert.match(header, /header\.best != null/, 'AppHeader.tsx never renders header.best');
     assert.match(header, /headerBestCopy\(header\.best\)/, 'the best copy is not the module\'s');
   });
-  check('the Home banner renders the restore offer through restoreOffer()', () => {
-    assert.match(home, /restoreOffer\(\{/, 'index.tsx never calls restoreOffer');
-    assert.doesNotMatch(home, /can be reopened until/, 'the copy is hardcoded in the component');
+  check('the restart notice no longer carries the restore (it is its own block)', () => {
+    assert.doesNotMatch(home, /restoreOffer\(/, 'index.tsx still decides the restore inside the notice');
+    assert.match(home, /<RestoreBlock/, 'Home does not render RestoreBlock');
   });
   check('the Home banner decides through statusNotice()', () => {
     assert.match(home, /from '@\/lib\/streakStatus'/, 'index.tsx does not import streakStatus');

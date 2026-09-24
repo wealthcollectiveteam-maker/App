@@ -22,6 +22,7 @@ import { useShallow } from 'zustand/react/shallow';
 
 import { Micro, PrimaryButton, Serif, Skew } from '@/components/primitives';
 import { RefreshableScrollView } from '@/components/RefreshableScrollView';
+import { RestoreBlock } from '@/components/RestoreBlock';
 import { ScreenState } from '@/components/ScreenState';
 import { WorkoutSuggestion } from '@/components/WorkoutSuggestion';
 import type { OpenDay, TaskDef } from '@/data/types';
@@ -468,6 +469,10 @@ export default function CheckinScreen() {
             This says the previous day is still open in a sentence, in the
             default state, so nobody fills in the wrong day and discovers the
             option afterwards. */}
+        {/* THE DOOR (Phase 38H): where the reopened day will appear once it
+            is reopened. Renders nothing unless the server offers one. */}
+        {!grace ? <RestoreBlock compact /> : null}
+
         {offerYesterday && yesterday && !grace ? (
           <View style={styles.stillOpenNotice}>
             <Micro color={colors.grace} size={11}>

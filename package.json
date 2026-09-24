@@ -74,6 +74,7 @@
     "test:checkin-deck": "node --experimental-strip-types scripts/checkin-deck.test.mjs",
     "test:streak-status": "node --experimental-strip-types scripts/streak-status.test.mjs",
     "test:start-choice": "node --experimental-strip-types scripts/start-choice.test.mjs",
+    "test:restore-offer": "node --experimental-strip-types scripts/restore-offer.test.mjs",
     "test:render": "node scripts/render-check.mjs",
     "test:pages-guard": "node scripts/pages-guard.test.mjs",
     "predeploy:dest": "node scripts/pages-check.mjs --before",
