@@ -12,6 +12,8 @@ import {
   checkAccount,
   createFirstChallenge,
   ensureProfile,
+  readChallengeStatus,
+  readLastEndedChallenge,
   saveWhy,
 } from '@/services/backend/session';
 import { getSupabase } from '@/services/backend/supabaseClient';
@@ -26,6 +28,8 @@ import { toast } from '@/store/useToastStore';
  *   loading   → resolving a stored session (the gate overlay is up)
  *   signedOut → no session; the email/code screen
  *   setup     → authenticated, but the account has no challenge yet
+ *   waiting   → the challenge exists and starts tomorrow (0017); there is
+ *               no day to hydrate yet, and no error either
  *   signedIn  → the mirror is hydrated and the tabs can render real data
  *   error     → signed in, but bootstrap failed; retry or sign out
  *
@@ -43,13 +47,32 @@ export type SessionStatus =
   | 'loading'
   | 'signedOut'
   | 'setup'
+  | 'waiting'
   | 'signedIn'
   | 'error';
+
+/** When day 1 is, for the waiting screen. Set only in status 'waiting'. */
+export interface WaitingFor {
+  /** YYYY-MM-DD in the challenge's zone. */
+  startDate: string;
+  timezone: string | null;
+}
+
+/**
+ * What setup knows about a returning person (Phase 38F, F3). null for a new
+ * account. `lastEndedReason` 'dormant' is the one value setup explains.
+ */
+export interface SetupContext {
+  lastEndedReason: string | null;
+  bestFlame: number;
+}
 
 interface SessionState {
   status: SessionStatus;
   userId: string | null;
   error: string | null;
+  waiting: WaitingFor | null;
+  setupContext: SetupContext | null;
   /** True once the first bootstrap has settled. */
   booted: boolean;
   /** Cold launch: apply a sign-in link, restore a session, or show sign-in. */
@@ -72,6 +95,7 @@ interface SessionState {
     why: string,
     durationDays: ChallengeLength,
     customTasks: SetupCustomTask[],
+    startTomorrow: boolean,
   ) => Promise<void>;
   signOut: () => Promise<void>;
   retry: () => Promise<void>;
@@ -93,6 +117,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   status: 'loading',
   userId: null,
   error: null,
+  waiting: null,
+  setupContext: null,
   booted: false,
 
   bootstrap: async () => {
@@ -186,8 +212,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // owns the answer. Anything other than "no challenge for user"
       // (offline, permission, expired JWT) throws instead of being read as
       // "new account" — that misread sends an EXISTING account to setup.
-      if ((await checkAccount()) === 'needs-challenge') {
-        set({ status: 'setup' });
+      const account = await checkAccount();
+      if (account === 'needs-challenge') {
+        // A returning person and a new one land on the same screen. The
+        // difference is one read, and one sentence (F3). Read BEFORE the
+        // status flips so the screen never renders the new-account version
+        // first and then corrects itself.
+        const setupContext = await readLastEndedChallenge(userId);
+        set({ status: 'setup', waiting: null, setupContext });
+        return;
+      }
+      // 0017: the challenge exists and day 1 is tomorrow. Nothing to
+      // hydrate — get_day_window() is empty by design — and nothing wrong.
+      // The waiting screen says when, and asks again on foreground.
+      if (account === 'not-started') {
+        const st = await readChallengeStatus();
+        set({
+          status: 'waiting',
+          waiting: st ? { startDate: st.start_date, timezone: st.timezone } : null,
+        });
         return;
       }
       const name = await ensureProfile(userId);
@@ -195,13 +238,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // without this the whole app renders an empty day 1 for a real account.
       await service.hydrate(userId);
       useAppStore.getState().adoptSession({ name });
-      set({ status: 'signedIn', error: null });
+      set({ status: 'signedIn', error: null, waiting: null, setupContext: null });
     } catch (error) {
       set({ status: 'error', error: describe(error) });
     }
   },
 
-  finishSetup: async (name, tier, why, durationDays, customTasks) => {
+  finishSetup: async (name, tier, why, durationDays, customTasks, startTomorrow) => {
     const userId = get().userId;
     if (!userId) {
       set({ status: 'signedOut' });
@@ -214,7 +257,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!tier) throw new Error('Choose a tier before starting.');
     await ensureProfile(userId, name);
     await saveWhy(userId, why);
-    await createFirstChallenge(tier, durationDays, customTasks);
+    await createFirstChallenge(tier, durationDays, customTasks, startTomorrow);
+    // Lands on 'signedIn' for a same-day start and on 'waiting' for a
+    // tomorrow start — the server's answer either way.
     await get().completeSignIn(userId);
   },
 
@@ -222,7 +267,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // Local state goes first: nothing should be able to render the previous
     // account's day, streak or journal while the network call is in flight.
     clearLocalAccount();
-    set({ status: 'signedOut', userId: null, error: null });
+    set({
+      status: 'signedOut',
+      userId: null,
+      error: null,
+      waiting: null,
+      setupContext: null,
+    });
     await AuthService.signOut();
   },
 

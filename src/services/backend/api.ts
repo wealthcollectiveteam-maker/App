@@ -151,6 +151,19 @@ export interface SquadStatusRow {
   grace_tasks: number | null;
 }
 
+/** One row of my_challenge_status() (0017). */
+export interface ChallengeStatusRow {
+  challenge_id: string;
+  /** YYYY-MM-DD in the challenge's own zone. */
+  start_date: string;
+  timezone: string;
+  /** challenge_day(): 0 the day before the start. */
+  day: number;
+  duration_days: number;
+  base_tier: string;
+  started: boolean;
+}
+
 /** One row of my_squads(): what the switcher needs, per squad. */
 export interface MySquadRow {
   id: string;
@@ -219,21 +232,59 @@ function toFeedKind(kind: string, mine: boolean): FeedKind {
 
 export const BackendApi = {
   // ---- challenge / day snapshots (server-owned) ----
+  /**
+   * The server computes the start date (0017): today in `timezone` on its
+   * own clock, plus one when `startTomorrow`. The client used to send a
+   * date; it no longer can.
+   */
   createChallenge: async (
     baseTier: Tier,
-    startDate: string,
     timezone: string,
     durationDays: ChallengeLength,
+    startTomorrow: boolean,
   ) =>
     unwrap(
       await sb().rpc('create_challenge', {
         p_base_tier: baseTier,
-        p_start_date: startDate,
         p_timezone: timezone,
         p_duration_days: durationDays,
+        p_start_tomorrow: startTomorrow,
       }),
       'create challenge',
     ) as string,
+
+  /**
+   * The most recently ENDED challenge, or null. What setup reads for a
+   * returning person (Phase 38F, F3): an owner whose last challenge ended as
+   * 'dormant' (0016) has no active challenge and lands on setup, and setup
+   * owes them one sentence about why. Owner-scoped by RLS; the id is passed
+   * so the query shape is explicit.
+   */
+  getLastEndedChallenge: async (userId: string) =>
+    unwrap(
+      await sb()
+        .from('challenges')
+        .select('ended_reason, ended_at, best_flame')
+        .eq('owner', userId)
+        .not('ended_at', 'is', null)
+        .order('ended_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      'load previous challenge',
+    ) as { ended_reason: string | null; ended_at: string; best_flame: number } | null,
+
+  /**
+   * The active challenge's clock, for the day before it starts — the one
+   * state in which get_day_window() is empty and get_or_freeze_today()
+   * refuses. null when there is no active challenge.
+   */
+  getChallengeStatus: async () => {
+    const rows = unwrap(
+      await sb().rpc('my_challenge_status'),
+      'load challenge status',
+    ) as ChallengeStatusRow[] | null;
+    return rows?.[0] ?? null;
+  },
 
   /**
    * A custom task that is part of day 1 rather than an edit to it.

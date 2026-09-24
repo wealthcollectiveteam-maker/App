@@ -21,6 +21,7 @@ import { MockModeBanner } from '@/components/MockModeBanner';
 import {
   SessionErrorScreen,
   SessionLoadingScreen,
+  SessionWaitingScreen,
   UnconfiguredBuildScreen,
 } from '@/components/SessionGate';
 import { TimerConflictSheet } from '@/components/TimerConflictSheet';
@@ -65,7 +66,12 @@ export default function RootLayout() {
   // "Settled" = the route on screen matches what the session allows. Until
   // it does, the gate overlay covers the navigator, so nobody ever sees a
   // frame of empty tabs before the redirect lands.
-  const settled = status === 'error' || (needsAuth ? inAuthRoute : !inAuthRoute);
+  // 'waiting' (0017: day 1 is tomorrow) is settled wherever the navigator
+  // is: the overlay covers it, and nothing underneath is read.
+  const settled =
+    status === 'error' ||
+    status === 'waiting' ||
+    (needsAuth ? inAuthRoute : !inAuthRoute);
   // Anything but a decided session, on the route that session allows.
   const gating = !booted || status === 'loading' || !settled;
 
@@ -168,6 +174,12 @@ export default function RootLayout() {
       // rather than degrading to an empty day 1.
       if (useSessionStore.getState().status === 'signedIn') {
         useAppStore.getState().refreshFromServer().catch(() => {});
+      }
+      // The day before a start-tomorrow challenge: the same foreground event
+      // asks the server again, so the morning after, opening the app lands
+      // on day 1 without a tap.
+      if (useSessionStore.getState().status === 'waiting') {
+        useSessionStore.getState().retry().catch(() => {});
       }
       // Same event, second question: is the BUILD stale as well as the data?
       // iOS resumes an installed web app rather than re-fetching it, so this
@@ -289,9 +301,15 @@ export default function RootLayout() {
             </Stack>
             {/* Over the navigator, never instead of it: unmounting the Stack
                 would leave expo-router with nothing to navigate. */}
-            {(gating || status === 'error') && (
+            {(gating || status === 'error' || status === 'waiting') && (
               <View style={StyleSheet.absoluteFill}>
-                {status === 'error' ? <SessionErrorScreen /> : <SessionLoadingScreen />}
+                {status === 'error' ? (
+                  <SessionErrorScreen />
+                ) : status === 'waiting' ? (
+                  <SessionWaitingScreen />
+                ) : (
+                  <SessionLoadingScreen />
+                )}
               </View>
             )}
           </View>

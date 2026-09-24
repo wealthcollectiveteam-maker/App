@@ -1,8 +1,11 @@
 import { getCalendars } from 'expo-localization';
 
 import type { ChallengeLength, SetupCustomTask, Tier } from '@/data/types';
-import { api } from '@/services/backend/api';
+import { type AccountState, classifyAccountError } from '@/lib/accountState';
+import { api, type ChallengeStatusRow } from '@/services/backend/api';
 import { toBackendError } from '@/services/contract';
+
+export type { AccountState };
 
 /**
  * Account bootstrap: everything that has to be true before the app can
@@ -34,33 +37,16 @@ function deviceTimezone(): string | null {
   }
 }
 
-function isoDate(year: number, month: number, day: number): string {
-  return `${year}-${`${month}`.padStart(2, '0')}-${`${day}`.padStart(2, '0')}`;
-}
-
 /**
- * The start date, read on the SAME clock as the timezone we send with it.
+ * Whether this account already has a challenge, and whether it has started.
  *
- * challenge_day() computes `(now() at time zone tz)::date - start_date + 1`.
- * Pairing a local date with a fallback zone of UTC would put a user in
- * UTC-5 on day 2 the moment they signed up after 19:00 — day 1's snapshot
- * would never exist. So the date follows whichever clock the zone names.
- */
-function startDateFor(timezone: string | null): string {
-  const now = new Date();
-  if (!timezone) {
-    return isoDate(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
-  }
-  return isoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
-}
-
-export type AccountState = 'ready' | 'needs-challenge';
-
-/**
- * Whether this account already has a challenge. `no challenge for user` is
- * the expected answer for a brand new sign-up and is the ONLY error swallowed
- * here — a network or permission failure still throws, because treating it as
- * "no challenge" would create a second challenge for an existing account.
+ * The server answers through get_or_freeze_today(), and exactly two of its
+ * refusals are states rather than errors: `no challenge for user` (a brand
+ * new sign-up: setup) and, since 0017, `challenge not started` (a start-
+ * tomorrow challenge, read the evening before: the waiting screen). The
+ * reading lives in lib/accountState.ts so a test can pin it. Anything else
+ * still throws, because treating a network or permission failure as "no
+ * challenge" would create a second challenge for an existing account.
  */
 export async function checkAccount(): Promise<AccountState> {
   try {
@@ -68,8 +54,31 @@ export async function checkAccount(): Promise<AccountState> {
     return 'ready';
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (/no challenge/i.test(message)) return 'needs-challenge';
+    const state = classifyAccountError(message);
+    if (state) return state;
     throw error;
+  }
+}
+
+/** The one read the waiting screen needs: when day 1 is. */
+export async function readChallengeStatus(): Promise<ChallengeStatusRow | null> {
+  return api.getChallengeStatus();
+}
+
+/**
+ * What setup needs to know about the person in front of it (Phase 38F, F3):
+ * how their last challenge ended, if one did. null for a genuinely new
+ * account. Never throws into the setup path — a failed read here would turn
+ * a new sign-up into an error screen, and the line it feeds is a courtesy.
+ */
+export async function readLastEndedChallenge(
+  userId: string,
+): Promise<{ lastEndedReason: string | null; bestFlame: number } | null> {
+  try {
+    const row = await api.getLastEndedChallenge(userId);
+    return row ? { lastEndedReason: row.ended_reason, bestFlame: row.best_flame } : null;
+  } catch {
+    return null;
   }
 }
 
@@ -78,23 +87,31 @@ export async function checkAccount(): Promise<AccountState> {
  * and its day-1 tier_history row, then get_or_freeze_today() freezes day 1's
  * task snapshot immediately — so the first screen the user sees is a real
  * day 1 with a real task list, not an empty projection.
+ *
+ * `startTomorrow` asks the server for a whole first day (0017). The server
+ * computes the date on its own clock in the device's zone; the client no
+ * longer sends one, so a phone with a wrong date cannot create a challenge
+ * on it. A challenge that starts tomorrow has no day to freeze tonight.
  */
 export async function createFirstChallenge(
   tier: Tier,
   durationDays: ChallengeLength,
   customTasks: SetupCustomTask[] = [],
+  startTomorrow = false,
 ): Promise<void> {
   // Re-checked rather than assumed: an owner may hold at most one LIVE
   // challenge (0007's partial unique index), so a retry after a half-failed
   // setup — challenge written, snapshot not — would come back as a
-  // duplicate-key error the user could do nothing about.
+  // duplicate-key error the user could do nothing about. A challenge that
+  // exists but has not started reads as 'not-started' here and is likewise
+  // not created twice.
   if ((await checkAccount()) === 'needs-challenge') {
     const timezone = deviceTimezone();
     await api.createChallenge(
       tier,
-      startDateFor(timezone),
       timezone ?? 'UTC',
       durationDays,
+      startTomorrow,
     );
   }
 
@@ -113,7 +130,11 @@ export async function createFirstChallenge(
     await api.addSetupCustomTask(name, task.timerMinutes);
   }
 
-  await api.getOrFreezeToday();
+  // Freezes day 1 when there is one to freeze. For a start-tomorrow
+  // challenge the server answers 'not-started' instead of a snapshot, and
+  // that is the right answer, not a failure: day 1 is frozen when it opens,
+  // with these custom tasks in it.
+  await checkAccount();
 }
 
 /**

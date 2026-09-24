@@ -3,6 +3,7 @@ import React from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { Card, OutlineButton } from '@/components/ui';
+import { localDateISO, waitingLine, waitingTitle } from '@/lib/startChoice';
 import { configurationError } from '@/services';
 import { useSessionStore } from '@/store/useSessionStore';
 import { colors, font, space } from '@/theme/tokens';
@@ -76,6 +77,53 @@ export function SessionErrorScreen() {
         {error ? <Text style={styles.detail}>{error}</Text> : null}
         <OutlineButton
           label="Retry"
+          onPress={() => {
+            retry().catch(() => {});
+          }}
+          style={{ marginTop: 16, alignSelf: 'stretch' }}
+        />
+        <OutlineButton
+          label="Sign out"
+          tone="neutral"
+          small
+          onPress={() => {
+            signOut().catch(() => {});
+          }}
+          style={{ marginTop: 10, alignSelf: 'stretch' }}
+        />
+      </Card>
+    </View>
+  );
+}
+
+/**
+ * THE DAY BEFORE THE START (Phase 38F). The challenge exists and day 1 is
+ * tomorrow. Nothing is wrong and nothing is asked. Without this screen the
+ * evening of a start-tomorrow sign-up was either an error (get_or_freeze_today
+ * refusing) or an empty setup form that let the person create a second
+ * challenge into the unique index. The copy is decided in lib/startChoice.ts
+ * and pinned by scripts/start-choice.test.mjs.
+ *
+ * It re-asks the server on foreground (root layout) and on the button; at
+ * midnight in the challenge's zone the next ask lands on day 1.
+ */
+export function SessionWaitingScreen() {
+  const waiting = useSessionStore((s) => s.waiting);
+  const retry = useSessionStore((s) => s.retry);
+  const signOut = useSessionStore((s) => s.signOut);
+  const today = localDateISO();
+  const start = waiting?.startDate ?? today;
+
+  return (
+    <View style={[styles.container, styles.centered]}>
+      <Card style={styles.card}>
+        <Text style={styles.title}>{waitingTitle(start, today)}</Text>
+        <Text style={styles.body}>{waitingLine(start, today)}</Text>
+        {waiting?.timezone ? (
+          <Text style={styles.detail}>Days turn at midnight, {waiting.timezone}.</Text>
+        ) : null}
+        <OutlineButton
+          label="Check again"
           onPress={() => {
             retry().catch(() => {});
           }}

@@ -21,6 +21,13 @@ import {
 } from '@/constants/challenge';
 import { buildTierTask, missedDayLine, TIERS } from '@/constants/tiers';
 import type { ChallengeLength, SetupCustomTask, Tier } from '@/data/types';
+import {
+  defaultStartChoice,
+  returningLine,
+  startButtonLabel,
+  startChoiceLine,
+  type StartChoice,
+} from '@/lib/startChoice';
 import { AuthService } from '@/services/backend/AuthService';
 import { useSessionStore } from '@/store/useSessionStore';
 import { toast } from '@/store/useToastStore';
@@ -268,11 +275,45 @@ function CustomTaskStep({
   );
 }
 
+/**
+ * When day 1 starts (Phase 38F). Two options, both always on screen; one
+ * preselected by the clock in lib/startChoice.ts, either changeable in a
+ * tap. Nine of eleven sign-ups on production were after 20:38 and were
+ * handed a full day with the evening gone.
+ */
+function StartCard({
+  choice,
+  selected,
+  onPress,
+}: {
+  choice: StartChoice;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityState={{ selected }}
+      accessibilityLabel={choice === 'today' ? 'Start today' : 'Start tomorrow'}
+      style={[styles.lengthCard, selected && styles.lengthCardSelected]}
+    >
+      <Text style={[styles.lengthLabel, selected && { color: colors.text }]}>
+        {choice === 'today' ? 'Today' : 'Tomorrow'}
+      </Text>
+    </Pressable>
+  );
+}
+
 export default function AuthScreen() {
   const insets = useSafeAreaInsets();
   const status = useSessionStore((s) => s.status);
   const completeSignIn = useSessionStore((s) => s.completeSignIn);
   const finishSetup = useSessionStore((s) => s.finishSetup);
+  const setupContext = useSessionStore((s) => s.setupContext);
+  // One sentence for a person whose last challenge ended as dormant (0016),
+  // null for everyone else. Decided in lib/startChoice.ts.
+  const returning = returningLine(setupContext?.lastEndedReason);
 
   const [step, setStep] = useState<Step>(status === 'setup' ? 'setup' : 'email');
   const [email, setEmail] = useState('');
@@ -286,6 +327,11 @@ export default function AuthScreen() {
   // treated differently.
   const [length, setLength] = useState<ChallengeLength>(CHALLENGE.defaultDays);
   const [customs, setCustoms] = useState<SetupCustomTask[]>([]);
+  // Preselected by the local hour, decided in lib/startChoice.ts: before
+  // 18:00 today, from 18:00 tomorrow. Both options stay on screen.
+  const [startChoice, setStartChoice] = useState<StartChoice>(() =>
+    defaultStartChoice(new Date().getHours()),
+  );
   const [why, setWhy] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -347,7 +393,7 @@ export default function AuthScreen() {
     setBusy(true);
     setError(null);
     try {
-      await finishSetup(name, tier, why, length, customs);
+      await finishSetup(name, tier, why, length, customs, startChoice === 'tomorrow');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start your challenge.');
     } finally {
@@ -528,10 +574,31 @@ export default function AuthScreen() {
                 "locked once you start" — which the app never was. */}
             <Text style={styles.hint}>Changes start tomorrow. Never today.</Text>
 
+            {/* Beside the start choice, not instead of it: a returning
+                person is also choosing when to begin. */}
+            {returning ? (
+              <Text style={[styles.hint, { marginTop: 28 }]}>{returning}</Text>
+            ) : null}
+            <Text style={[styles.pickTitle, { marginTop: returning ? 14 : 28 }]}>When?</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
+              {(['today', 'tomorrow'] as const).map((c) => (
+                <View key={c} style={{ flex: 1 }}>
+                  <StartCard
+                    choice={c}
+                    selected={startChoice === c}
+                    onPress={() => setStartChoice(c)}
+                  />
+                </View>
+              ))}
+            </View>
+            {/* One sentence on what the selected choice will do. Decided in
+                lib/startChoice.ts; this renders it. */}
+            <Text style={styles.hint}>{startChoiceLine(startChoice)}</Text>
+
             <PrimaryButton
               // Enabled without a tier on purpose: pressing it says WHICH
               // answer is missing, which a dead button never does.
-              label={busy ? 'Starting…' : 'Start day 01 →'}
+              label={startButtonLabel(startChoice, busy)}
               disabled={busy}
               onPress={startChallenge}
               style={{ marginTop: 18 }}
