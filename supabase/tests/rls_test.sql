@@ -56,6 +56,10 @@ declare
     -- grant would let any user ask whether somebody else has been ticking.
     'feed_activity_window()',
     'owner_is_active(uuid)',
+    -- 0016: takes a challenge id, so a grant would let any user ask whether
+    -- somebody else's challenge ever sealed a day. The evaluator alone
+    -- needs the answer.
+    'challenge_has_sealed_day(uuid)',
     'sim_fill_day(uuid,integer)',
     -- 0011: the grace-window clock. All five take a `challenges` ROW rather
     -- than an id, so they leak nothing a client cannot already read — but

@@ -28,7 +28,11 @@ insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000d9', 'dormant@test.dev'),
   ('00000000-0000-0000-0000-0000000000da', 'active@test.dev'),
   ('00000000-0000-0000-0000-0000000000db', 'restart-untouched@test.dev'),
-  ('00000000-0000-0000-0000-0000000000dc', 'restart-done@test.dev')
+  ('00000000-0000-0000-0000-0000000000dc', 'restart-done@test.dev'),
+  ('00000000-0000-0000-0000-0000000000dd', 'dormant-second-empty@test.dev'),
+  ('00000000-0000-0000-0000-0000000000de', 'dormant-counter-reset@test.dev'),
+  ('00000000-0000-0000-0000-0000000000df', 'dormant-never@test.dev'),
+  ('00000000-0000-0000-0000-0000000000e0', 'dormant-control@test.dev')
 on conflict do nothing;
 
 -- Complete every task in a day's snapshot, without sealing. The engine's
@@ -1108,6 +1112,248 @@ begin
   end if;
 
   raise notice 'PASS (b): a restart''s completed-but-unsealed day 1 is sealed, scored met and pays flame 1, once';
+end $$;
+
+-- =============================================================================
+-- PROOF 12 — A PERSON CAN STOP (Phase 38E, E1)
+--
+-- Production, 2026-09-24: the ten most recent challenges all had
+-- restarted_from set. A stopped Hard account restarted every grace window,
+-- forever. The rule: when a challenge is about to restart and this is the
+-- SECOND consecutive run with no sealed day, it ends as 'dormant' instead
+-- and nothing replaces it. The signal is challenge_days.sealed_at on the
+-- run's OWN rows — never best_flame, which restarts carry across.
+--
+--   (a) empty run, then a second empty run  -> dormant; no replacement;
+--       nothing in the feed even though the owner ticked something today;
+--       best_flame stays; the challenge the person starts when they come
+--       back carries it and is a fresh challenge, not a restart
+--   (b) empty run, a run with ONE sealed day, an empty run -> restarts,
+--       because the sealed day reset the count
+--   (c) never completed anything since signup -> dormant at the end of the
+--       second run, the same point as (a)
+--   (d) control: an active person who misses restarts exactly as today,
+--       and their empty restart restarts again (its parent had sealed days)
+--
+-- Against 0015, (a) and (c) FAIL: the second empty run restarts. (b) and (d)
+-- pass before and after — they are here so the rule can never quietly become
+-- "two restarts means dormant" or "any empty run means dormant". PROOF 4
+-- ("one restart, not three") keeps passing.
+-- =============================================================================
+do $$
+declare
+  v_uid   uuid := '00000000-0000-0000-0000-0000000000dd';
+  v_old   uuid;
+  v_r1    uuid;
+  v_back  uuid;
+  v_squad uuid;
+  r1      public.challenges;
+  back_c  public.challenges;
+  v_feed  integer;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  insert into public.profiles (id, name) values (v_uid, 'Dormant-2') on conflict do nothing;
+  v_old := public.create_challenge('hard', current_date, 'America/Toronto');
+  select id into v_squad from public.create_squad('Dormant-2 squad');
+  -- History from an earlier life, the 573dabe6 shape: a best of 29 on a row
+  -- with nothing done on it. The fixture describing the past, not the app.
+  update public.challenges set best_flame = 29 where id = v_old;
+
+  -- Run one, empty: day 3 today, day 2 untouched -> restart. A fresh
+  -- challenge always gets its one restart.
+  call t_set_day(v_old, 3);
+  perform public.evaluate_challenge(v_old);
+  v_r1 := t_challenge(v_uid);
+  if v_r1 is null or v_r1 = v_old then
+    raise exception 'FIXTURE (a): the first empty run did not restart';
+  end if;
+  select * into r1 from public.challenges where id = v_r1;
+  if r1.best_flame <> 29 or r1.flame <> 0 then
+    raise exception 'FIXTURE (a): restart did not carry best 29 / flame 0 (% / %)', r1.best_flame, r1.flame;
+  end if;
+
+  -- Run two, ALSO empty — but not silent: one task ticked today on day 1,
+  -- which makes the owner "active" by 0014's measure and seals nothing.
+  insert into public.task_completions (challenge_id, day, task_key)
+  select v_r1, 1, task_snapshot->0->>'key'
+    from public.challenge_days where challenge_id = v_r1 and day = 1;
+  call t_move_day(v_r1, 2);                       -- day 1 has closed
+  perform public.evaluate_challenge(v_r1);
+
+  select * into r1 from public.challenges where id = v_r1;
+  if r1.ended_reason is distinct from 'dormant' or r1.ended_on_day <> 1 then
+    raise exception 'FAIL (a): the second empty run ended as % on day %, expected dormant on day 1',
+      coalesce(r1.ended_reason, '(still running)'), coalesce(r1.ended_on_day::text, 'null');
+  end if;
+  if t_challenge(v_uid) is not null then
+    raise exception 'FAIL (a): a replacement challenge was created for a dormant account';
+  end if;
+  if (select outcome from public.challenge_days where challenge_id = v_r1 and day = 1) is distinct from 'missed' then
+    raise exception 'FAIL (a): the missed day 1 was not written as missed';
+  end if;
+  if r1.last_evaluated_day <> 1 then
+    raise exception 'FAIL (a): cursor is %, expected 1', r1.last_evaluated_day;
+  end if;
+  select count(*) into v_feed from public.feed_items
+   where author = v_uid and kind = 'miss';
+  if v_feed <> 0 then
+    raise exception 'FAIL (a): % miss item(s) reached the feed for a dormant ending', v_feed;
+  end if;
+  if r1.best_flame <> 29 then
+    raise exception 'FAIL (a): dormancy touched best_flame (%)', r1.best_flame;
+  end if;
+
+  -- The person comes back and chooses to start again.
+  v_back := public.create_challenge('hard', current_date, 'America/Toronto');
+  select * into back_c from public.challenges where id = v_back;
+  if back_c.restarted_from is not null then
+    raise exception 'FAIL (a): the challenge a returning person starts is a restart';
+  end if;
+  if back_c.best_flame <> 29 or back_c.flame <> 0 then
+    raise exception 'FAIL (a): the returning person''s history did not come with them (best %, flame %)',
+      back_c.best_flame, back_c.flame;
+  end if;
+  if back_c.last_evaluated_day <> 1 then
+    raise exception 'FAIL (a): a fresh challenge should start at cursor 1 (%)', back_c.last_evaluated_day;
+  end if;
+
+  raise notice 'PASS (a): the second empty run ends dormant — no replacement, no feed item, history kept and carried';
+end $$;
+
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-0000000000de';
+  v_old uuid;
+  v_r1  uuid;
+  v_r2  uuid;
+  v_r3  uuid;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  insert into public.profiles (id, name) values (v_uid, 'Counter-reset') on conflict do nothing;
+  v_old := public.create_challenge('hard', current_date, 'UTC');
+
+  -- Run one, empty -> restart.
+  call t_set_day(v_old, 3);
+  perform public.evaluate_challenge(v_old);
+  v_r1 := t_challenge(v_uid);
+  if v_r1 is null or v_r1 = v_old then
+    raise exception 'FIXTURE (b): the first empty run did not restart';
+  end if;
+
+  -- Run two: day 1 fully done (sealed by the evaluator), day 2 missed
+  -- -> restart. ONE sealed day.
+  call t_do_day(v_r1, 1);
+  call t_move_day(v_r1, 3);
+  perform public.evaluate_challenge(v_r1);
+  v_r2 := t_challenge(v_uid);
+  if v_r2 is null or v_r2 in (v_old, v_r1)
+     or (select restarted_from from public.challenges where id = v_r2) <> v_r1 then
+    raise exception 'FIXTURE (b): the run with a sealed day did not restart on its miss';
+  end if;
+  if not exists (select 1 from public.challenge_days
+                  where challenge_id = v_r1 and day = 1 and sealed_at is not null) then
+    raise exception 'FIXTURE (b): run two''s day 1 was not sealed';
+  end if;
+
+  -- Run three, empty. Its parent had a sealed day, so the count is 1, not 2.
+  call t_move_day(v_r2, 2);
+  perform public.evaluate_challenge(v_r2);
+  v_r3 := t_challenge(v_uid);
+  if (select ended_reason from public.challenges where id = v_r2) is distinct from 'missed_day' then
+    raise exception 'FAIL (b): an empty run after a run WITH a sealed day ended as %, expected missed_day (a restart)',
+      coalesce((select ended_reason from public.challenges where id = v_r2), '(still running)');
+  end if;
+  if v_r3 is null or v_r3 in (v_old, v_r1, v_r2)
+     or (select restarted_from from public.challenges where id = v_r3) <> v_r2 then
+    raise exception 'FAIL (b): the empty run after a sealed-day run did not restart';
+  end if;
+
+  raise notice 'PASS (b): one sealed day resets the count — the next empty run still restarts';
+end $$;
+
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-0000000000df';
+  v_old uuid;
+  v_r1  uuid;
+  r1    public.challenges;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  insert into public.profiles (id, name) values (v_uid, 'Never') on conflict do nothing;
+  v_old := public.create_challenge('hard', current_date, 'America/Los_Angeles');
+
+  -- Signed up, never ticked anything. Run one (the fresh challenge) is
+  -- empty and restarts; run two is empty and does not.
+  call t_set_day(v_old, 3);
+  perform public.evaluate_challenge(v_old);
+  v_r1 := t_challenge(v_uid);
+  if v_r1 is null or v_r1 = v_old then
+    raise exception 'FIXTURE (c): the fresh empty challenge did not get its one restart';
+  end if;
+
+  call t_move_day(v_r1, 2);
+  perform public.evaluate_challenge(v_r1);
+  select * into r1 from public.challenges where id = v_r1;
+  if r1.ended_reason is distinct from 'dormant' then
+    raise exception 'FAIL (c): a never-completed account''s second run ended as %, expected dormant',
+      coalesce(r1.ended_reason, '(still running)');
+  end if;
+  if t_challenge(v_uid) is not null then
+    raise exception 'FAIL (c): a never-completed account was restarted a second time';
+  end if;
+  if (select count(*) from public.challenges where owner = v_uid) <> 2 then
+    raise exception 'FAIL (c): expected exactly 2 challenges (fresh + one restart), found %',
+      (select count(*) from public.challenges where owner = v_uid);
+  end if;
+
+  raise notice 'PASS (c): never completed anything — dormant at the end of the second run, like everyone else';
+end $$;
+
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-0000000000e0';
+  v_old uuid;
+  v_r1  uuid;
+  v_r2  uuid;
+  old_c public.challenges;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  insert into public.profiles (id, name) values (v_uid, 'Control') on conflict do nothing;
+  v_old := public.create_challenge('hard', current_date, 'America/Toronto');
+
+  -- The PROOF 1 shape: days 2 and 3 done, day 4 missed. Restarts exactly as today.
+  call t_set_day(v_old, 5);
+  call t_do_day(v_old, 2);
+  call t_do_day(v_old, 3);
+  perform public.evaluate_challenge(v_old);
+  select * into old_c from public.challenges where id = v_old;
+  if old_c.ended_reason is distinct from 'missed_day' or old_c.ended_on_day <> 4 then
+    raise exception 'FAIL (d): an active person''s miss ended as % on day %, expected missed_day on day 4',
+      coalesce(old_c.ended_reason, '(still running)'), coalesce(old_c.ended_on_day::text, 'null');
+  end if;
+  v_r1 := t_challenge(v_uid);
+  if v_r1 is null or v_r1 = v_old then
+    raise exception 'FAIL (d): an active person''s miss did not restart';
+  end if;
+
+  -- Their restart is left empty. Its parent had two sealed days, so this is
+  -- the FIRST empty run: it restarts again.
+  call t_move_day(v_r1, 2);
+  perform public.evaluate_challenge(v_r1);
+  v_r2 := t_challenge(v_uid);
+  if (select ended_reason from public.challenges where id = v_r1) is distinct from 'missed_day' then
+    raise exception 'FAIL (d): the first empty run after an active run ended as %, expected missed_day',
+      coalesce((select ended_reason from public.challenges where id = v_r1), '(still running)');
+  end if;
+  if v_r2 is null or v_r2 in (v_old, v_r1) then
+    raise exception 'FAIL (d): the first empty run after an active run did not restart';
+  end if;
+
+  raise notice 'PASS (d): an active person''s miss restarts as today, and their first empty run restarts again';
 end $$;
 
 drop procedure t_move_day(uuid, integer);
