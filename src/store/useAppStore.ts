@@ -359,6 +359,13 @@ interface AppState extends ScenarioState {
   reopenCheckinCard: () => void;
   /** Hide the restart notice for the challenge on screen. */
   dismissRestartNotice: () => void;
+  /**
+   * 0018: reopen the missed day that ended the previous challenge. Server-
+   * owned and not optimistic: which challenge is alive changes underneath
+   * the mirror, so the caller re-hydrates the session afterwards. Throws
+   * with the server's reason.
+   */
+  restoreMissedDay: () => Promise<void>;
   setWeeklyCheckinEnabled: (enabled: boolean) => void;
   setUnitPreference: (pref: UnitPreference) => void;
   /** Load persisted preference + check-ins (call once at app start). */
@@ -1154,6 +1161,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     AsyncStorage.setItem(RESTART_NOTICE_KEY, key).catch(() => {});
   },
 
+  restoreMissedDay: async () => {
+    await DataService.restoreMissedDay();
+    set({ restorable: null });
+  },
+
   setWeeklyCheckinEnabled: (enabled) => {
     set({ weeklyCheckinEnabled: enabled });
     AsyncStorage.setItem(WEEKLY_CHECKIN_KEY, serializeFlag(enabled)).catch(() => {});
@@ -1223,6 +1235,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // the restart notice reads it (Phase 38C).
       restarted: st.restarted,
       challengeId: st.challengeId ?? null,
+      restorable: st.restorable ?? null,
       ...(rolledOver
         ? {
             deferred: [],

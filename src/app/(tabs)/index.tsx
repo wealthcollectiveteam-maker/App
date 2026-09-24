@@ -29,8 +29,10 @@ import {
   dayOneLine,
   RESTART_NOTICE_COPY,
   RESTART_NOTICE_LABEL,
+  restoreOffer,
   statusNotice,
 } from '@/lib/streakStatus';
+import { useSessionStore } from '@/store/useSessionStore';
 import {
   selectDoneCount,
   selectRestartNoticeDismissed,
@@ -40,6 +42,17 @@ import {
 } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
 import { colors, font, space } from '@/theme/tokens';
+
+/** "September 29" for a YYYY-MM-DD, read as a date and nothing else. */
+function calendarLabel(isoDate: string): string {
+  const d = new Date(`${isoDate}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return isoDate;
+  try {
+    return d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', timeZone: 'UTC' });
+  } catch {
+    return isoDate;
+  }
+}
 
 function StatusBanner() {
   const day = useAppStore((s) => s.day);
@@ -51,6 +64,10 @@ function StatusBanner() {
   const perfectDays = useAppStore((s) => s.perfectDays);
   const restartNoticeDismissed = useAppStore(selectRestartNoticeDismissed);
   const dismissRestartNotice = useAppStore((s) => s.dismissRestartNotice);
+  const restorable = useAppStore((s) => s.restorable);
+  const restoreMissedDay = useAppStore((s) => s.restoreMissedDay);
+  const setActiveDay = useAppStore((s) => s.setActiveDay);
+  const [restoring, setRestoring] = React.useState(false);
   const router = useRouter();
   // Decided in src/lib/streakStatus.ts, not here, so streak-status.test.mjs
   // drives the same decision this renders (Phase 38C).
@@ -60,6 +77,31 @@ function StatusBanner() {
     missedDay,
     dismissed: restartNoticeDismissed,
   });
+  // 0018: the missed day that ended the previous challenge, while it can
+  // still be reopened. Same module; the sentence is not written here.
+  const offer = restoreOffer({
+    restarted,
+    restorable,
+    restoreByLabel: restorable ? calendarLabel(restorable.restoreBy) : '',
+  });
+
+  const onRestore = async () => {
+    if (restoring) return;
+    setRestoring(true);
+    try {
+      await restoreMissedDay();
+      // Which challenge is alive just changed under the mirror: the whole
+      // session re-hydrates, and the reopened day arrives in the window as
+      // the open non-today day. Then the check-in screen, on that day.
+      await useSessionStore.getState().retry();
+      setActiveDay('yesterday');
+      router.navigate('/checkin');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not reopen the day.');
+    } finally {
+      setRestoring(false);
+    }
+  };
 
   if (day >= durationDays && dayComplete) {
     return (
@@ -89,6 +131,20 @@ function StatusBanner() {
         <View style={styles.bannerBody}>
           <Micro color={colors.textMid}>{RESTART_NOTICE_LABEL}</Micro>
           <Serif style={{ marginTop: 6 }}>{RESTART_NOTICE_COPY}</Serif>
+          {offer ? (
+            <>
+              {/* Honest about what happens next: the day reopens and still
+                  has to be completed. Restoring changes no flame. */}
+              <Text style={styles.restoreLine}>{offer.line}</Text>
+              <OutlineButton
+                label={restoring ? 'Reopening…' : offer.button}
+                small
+                disabled={restoring}
+                onPress={onRestore}
+                style={{ marginTop: 10, alignSelf: 'flex-start' }}
+              />
+            </>
+          ) : null}
           <Pressable
             onPress={dismissRestartNotice}
             accessibilityRole="button"
@@ -376,6 +432,13 @@ const styles = StyleSheet.create({
   },
   bannerDismiss: {
     alignSelf: 'flex-start',
+    marginTop: 12,
+  },
+  restoreLine: {
+    fontFamily: font.regular,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.textMid,
     marginTop: 12,
   },
   dayBlock: {

@@ -687,6 +687,11 @@ export class MockDataService implements IDataService {
     return { completed: days <= this.state.day };
   }
 
+  /** The mock holds no ended challenge to reopen; the offer never shows. */
+  async restoreMissedDay(): Promise<void> {
+    this.state.restorable = null;
+  }
+
   private pendingTargetChanges(currentTier: Tier): TargetChange[] {
     return pendingTargetChanges(
       currentTier,

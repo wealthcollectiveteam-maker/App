@@ -336,6 +336,13 @@ export interface IDataService {
    * deleted — the only thing that changes is where the run stops.
    */
   setChallengeDuration(days: ChallengeLength): Promise<{ completed: boolean }>;
+  /**
+   * 0018: reopen the missed day that ended the challenge this one replaced.
+   * Async and server-owned like setChallengeDuration, and for the same
+   * reason: it changes which challenge is alive, and the mirror must not
+   * guess that. It changes no flame. The caller re-hydrates afterwards.
+   */
+  restoreMissedDay(): Promise<void>;
   getPendingChanges(currentTier: Tier, day: number): PendingChanges;
   undoPendingChanges(day: number): void;
   /** Applies pending changes and freezes the new day's snapshot. */

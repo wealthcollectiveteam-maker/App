@@ -60,6 +60,12 @@ declare
     -- somebody else's challenge ever sealed a day. The evaluator alone
     -- needs the answer.
     'challenge_has_sealed_day(uuid)',
+    -- 0018: the reopened day's clock. A constant, and two helpers that take a
+    -- challenges ROW; the app reads get_day_window() and my_restorable_miss(),
+    -- which carry the answers.
+    'restore_window_days()',
+    'restored_day_closes_at(challenges)',
+    'restored_day_is_open(challenges)',
     'sim_fill_day(uuid,integer)',
     -- 0011: the grace-window clock. All five take a `challenges` ROW rather
     -- than an id, so they leak nothing a client cannot already read — but

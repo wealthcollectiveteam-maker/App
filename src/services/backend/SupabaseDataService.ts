@@ -20,6 +20,7 @@ import type {
   ReportReason,
   SavedMeal,
   Scenario,
+  RestorableMiss,
   ScenarioState,
   Squad,
   SquadMember,
@@ -100,6 +101,7 @@ function emptyState(): ScenarioState {
     missedDay: false,
     restarted: false,
     challengeId: null,
+    restorable: null,
     dayComplete: false,
     tasksDone: {},
     yesterday: null,
@@ -451,6 +453,10 @@ export class SupabaseDataService implements IDataService {
     this.targetOverrides = config?.targetOverrides ?? {};
     this.overridesAtDayStart = { ...this.targetOverrides };
     this.pendingTier = config?.pendingTier ?? null;
+    // 0018: can the missed day that ended the previous challenge still be
+    // reopened? A failed read reads as "no" — the offer is a courtesy and
+    // must never block a hydrate.
+    this.state.restorable = await this.readRestorable();
 
     // The snapshot is data; the UI needs a TaskDef. Mapped after the config
     // lands because a custom task's sub-line lives on custom_tasks, not in
@@ -583,6 +589,7 @@ export class SupabaseDataService implements IDataService {
     this.targetOverrides = config?.targetOverrides ?? this.targetOverrides;
     this.overridesAtDayStart = { ...this.targetOverrides };
     this.pendingTier = config?.pendingTier ?? null;
+    this.state.restorable = await this.readRestorable();
     if (profile) this.state.xp = profile.xp;
 
     // Only today's snapshot is replaced. Past days stay as they were frozen.
@@ -850,6 +857,7 @@ export class SupabaseDataService implements IDataService {
         isToday: false,
         open: prev.is_open,
         closesAt: prev.closes_at,
+        reopenedUntil: prev.reopened_until ?? null,
         tasks: prev.task_snapshot.map((t) =>
           taskFromSnapshot(t, this.customTasks, this.state.tier),
         ),
@@ -1882,6 +1890,35 @@ export class SupabaseDataService implements IDataService {
         this.pendingTier = previous;
       },
     );
+  }
+
+  /** 0018: the offer's one read, mapped to the store's shape. Never throws. */
+  private async readRestorable(): Promise<RestorableMiss | null> {
+    try {
+      const row = await api.getRestorableMiss();
+      return row
+        ? {
+            challengeId: row.challenge_id,
+            day: row.missed_day,
+            missedOn: row.missed_on,
+            restoreBy: row.restore_by,
+            daysLeft: row.days_left,
+          }
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 0018: reopen the missed day. Not optimistic, like setChallengeDuration:
+   * the answer is which challenge is now alive, and the mirror must not
+   * guess that. The caller re-hydrates afterwards; this returns once the
+   * server has done it, or throws with the server's reason.
+   */
+  async restoreMissedDay(): Promise<void> {
+    await api.restoreMissedDay();
+    this.state.restorable = null;
   }
 
   /**

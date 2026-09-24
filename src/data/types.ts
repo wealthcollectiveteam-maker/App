@@ -346,9 +346,23 @@ export interface OpenDay {
   open: boolean;
   /** ISO instant. When this day stops being completable. */
   closesAt: string;
+  /**
+   * ISO instant, only on a REOPENED day (0018): its real close, noon the
+   * day after the restore. Undefined on an ordinary yesterday.
+   */
+  reopenedUntil?: string | null;
   tasks: TaskDef[];
   tasksDone: Partial<Record<TaskKey, string>>;
   sealed: boolean;
+}
+
+/** The missed day that can still be reopened (0018), as the store holds it. */
+export interface RestorableMiss {
+  challengeId: string;
+  day: number;
+  missedOn: string;
+  restoreBy: string;
+  daysLeft: number;
 }
 
 export interface ScenarioState {
@@ -374,6 +388,11 @@ export interface ScenarioState {
    * notice's dismissal, which is keyed per challenge.
    */
   challengeId?: string | null;
+  /**
+   * 0018: the missed day that ended the challenge this one replaced, while
+   * it can still be reopened. Optional: the mock has none.
+   */
+  restorable?: RestorableMiss | null;
   dayComplete: boolean;
   tasksDone: Partial<Record<TaskKey, string>>; // key -> completion time label
   /**

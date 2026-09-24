@@ -123,6 +123,22 @@ export interface DayWindowRow {
   tasks_total: number;
   tasks_done: number;
   task_snapshot: SnapshotTask[];
+  /**
+   * 0018: set only on a REOPENED day — the missed day a restore put back in
+   * front of the person — and it is that day's real close: noon the day
+   * after the restore. `closes_at` on that row is the noon it already
+   * passed, kept so the date label stays right.
+   */
+  reopened_until: string | null;
+}
+
+/** One row of my_restorable_miss() (0018), or none. */
+export interface RestorableMissRow {
+  challenge_id: string;
+  missed_day: number;
+  missed_on: string;
+  restore_by: string;
+  days_left: number;
 }
 
 export interface SquadStatusRow {
@@ -340,6 +356,26 @@ export const BackendApi = {
   getDayWindow: async () =>
     (unwrap(await sb().rpc('get_day_window'), 'load day window') ??
       []) as DayWindowRow[],
+
+  /**
+   * 0018: the missed day that ended the challenge this one replaced, while
+   * it can still be reopened. null when there is nothing to reopen.
+   */
+  getRestorableMiss: async () => {
+    const rows = unwrap(
+      await sb().rpc('my_restorable_miss'),
+      'load restorable miss',
+    ) as RestorableMissRow[] | null;
+    return rows?.[0] ?? null;
+  },
+
+  /**
+   * 0018: reopen the missed day. The server decides everything — which
+   * challenge, whether the window is still open, whether it was restored
+   * before — and changes no flame. Throws with the server's own reason.
+   */
+  restoreMissedDay: async () =>
+    unwrap(await sb().rpc('restore_missed_day'), 'restore missed day') as string,
 
   /**
    * `day` names the day being written to, and this client always passes it.

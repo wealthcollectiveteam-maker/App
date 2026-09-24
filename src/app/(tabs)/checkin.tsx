@@ -251,7 +251,7 @@ function AllDone({
             {sealed
               ? `Day ${day} locked in`
               : grace
-                ? `Day ${day} — yesterday, all done`
+                ? `Day ${day} — all done`
                 : 'All done today'}
           </Micro>
           <Serif style={{ marginTop: 8 }}>
@@ -320,18 +320,22 @@ function DaySwitcher({
   active: 'today' | 'yesterday';
   onPick: (which: 'today' | 'yesterday') => void;
 }) {
-  const left = useCountdown(grace.closesAt);
+  // 0018: a reopened day is the open non-today day too, but it is not
+  // yesterday, and its close is its own. Named by what it is.
+  const reopened = !!grace.reopenedUntil;
+  const left = useCountdown(grace.reopenedUntil ?? grace.closesAt);
+  const otherName = reopened ? 'REOPENED' : 'YESTERDAY';
   return (
     <View style={styles.switcherWrap}>
       <View style={styles.switcher}>
         <Skew
-          label={`YESTERDAY · DAY ${grace.day} · ${graceDone}/${graceTotal}`}
+          label={`${otherName} · DAY ${grace.day} · ${graceDone}/${graceTotal}`}
           tone="grace"
           filled={active === 'yesterday'}
           size="sm"
           onPress={() => onPick('yesterday')}
           style={{ flex: 1 }}
-          accessibilityLabel={`Finish yesterday, day ${grace.day}, ${graceDone} of ${graceTotal} done`}
+          accessibilityLabel={`Finish ${reopened ? 'the reopened day' : 'yesterday'}, day ${grace.day}, ${graceDone} of ${graceTotal} done`}
         />
         <Skew
           label={`TODAY · DAY ${today} · ${todayDone}/${todayTotal}`}
@@ -394,6 +398,9 @@ export default function CheckinScreen() {
   // off it, so there is one switch rather than a scattering of conditions
   // that could disagree.
   const grace = deck.mode === 'yesterday' && yesterday ? yesterday : null;
+  // 0018: the open non-today day may be a REOPENED day rather than
+  // yesterday. It counts down to its own close and is named as what it is.
+  const graceReopened = !!grace?.reopenedUntil;
 
   // THE DATE, not just the day number. "Day 18" does not tell anyone at
   // 12:20 AM whether they are filling in the day that just ended or the one
@@ -412,7 +419,7 @@ export default function CheckinScreen() {
   const topKey = queue[0];
   const topTask = tasks.find((t) => t.key === topKey);
   const hue = grace ? colors.grace : colors.accent400;
-  const closesIn = useCountdown(grace?.closesAt);
+  const closesIn = useCountdown(grace?.reopenedUntil ?? grace?.closesAt);
 
   return (
     <ScreenState>
@@ -430,7 +437,7 @@ export default function CheckinScreen() {
         {grace ? (
           <View style={styles.graceBar}>
             <Micro color={colors.graceGround} size={11}>
-              {'FINISHING YESTERDAY · DAY ' + grace.day}
+              {(graceReopened ? 'FINISHING REOPENED DAY ' : 'FINISHING YESTERDAY · DAY ') + grace.day}
             </Micro>
             <Micro color={colors.graceGround} size={11}>
               {'LOCKS IN ' + closesIn.toUpperCase()}
