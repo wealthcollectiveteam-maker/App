@@ -124,41 +124,121 @@ const DAY_ROW = {
   sealed_at: null,
 };
 
-function cannedBody(url) {
+/**
+ * THE SCENARIO (Phase 38H). Two accounts the stub can be:
+ *
+ *   default     the account every check before 38H used — day 12, flame 11,
+ *               best 29, nothing to reopen
+ *   restorable  the owner's exact state on 2026-09-24: the replacement
+ *               alive on ITS day 2 with day 1 sealed (flame 1, best 29),
+ *               and a restorable miss — day 30 of the run before, missed
+ *               two days ago, reopenable for five more. The restart notice
+ *               is DISMISSED (see the init script), because the door must
+ *               not depend on it.
+ *
+ * `restored` flips when the app calls restore_missed_day, and every read
+ * after that answers as the server would: the ORIGINAL is alive on day 32
+ * with flame 29, the reopened day 30 is in the window with its own close,
+ * and there is nothing left to reopen. That is tap-to-continue, measured.
+ */
+const state = { scenario: 'default', restored: false };
+const ORIGINAL_ID = '33333333-3333-4333-8333-333333333333';
+const isoDate = (offsetDays) => {
+  const d = new Date(Date.now() + offsetDays * 86_400_000);
+  return d.toISOString().slice(0, 10);
+};
+const dayRow = (day, over = {}) => ({
+  challenge_id: state.restored ? ORIGINAL_ID : CHALLENGE_ID,
+  day,
+  is_today: true,
+  is_open: true,
+  closes_at: new Date(Date.now() + 36e5).toISOString(),
+  sealed_at: null,
+  outcome: null,
+  tasks_total: TASKS.length,
+  tasks_done: 0,
+  task_snapshot: TASKS,
+  reopened_until: null,
+  ...over,
+});
+
+function cannedBody(url, method = 'GET') {
   const u = url.toLowerCase();
-  if (u.includes('/rpc/get_or_freeze_today')) return DAY_ROW;
+  const restorable = state.scenario === 'restorable';
+
+  // 0018: the tap. From here on the stub answers as the server would after
+  // restore_missed_day(): the original is alive again.
+  if (u.includes('/rpc/restore_missed_day')) {
+    state.restored = true;
+    return ORIGINAL_ID;
+  }
+  if (u.includes('/rpc/my_restorable_miss')) {
+    return restorable && !state.restored
+      ? [{ challenge_id: ORIGINAL_ID, missed_day: 30, missed_on: isoDate(-2), restore_by: isoDate(5), days_left: 5 }]
+      : [];
+  }
+  if (u.includes('/rpc/get_or_freeze_today')) {
+    if (!restorable) return DAY_ROW;
+    return { ...DAY_ROW, challenge_id: state.restored ? ORIGINAL_ID : CHALLENGE_ID, day: state.restored ? 32 : 2 };
+  }
   if (u.includes('/rpc/get_day_window')) {
+    if (!restorable) return [dayRow(12)];
+    if (!state.restored) {
+      // Yesterday: the replacement's day 1, sealed this morning. Today: day 2.
+      return [
+        dayRow(1, { is_today: false, is_open: false, sealed_at: new Date(Date.now() - 36e5).toISOString(), outcome: 'met', tasks_done: TASKS.length }),
+        dayRow(2),
+      ];
+    }
+    // After the restore: the reopened day 30, open until noon tomorrow with
+    // its own close, and today — day 32 of the ORIGINAL.
     return [
-      {
-        challenge_id: CHALLENGE_ID,
-        day: 12,
-        is_today: true,
+      dayRow(30, {
+        is_today: false,
         is_open: true,
-        closes_at: new Date(Date.now() + 36e5).toISOString(),
-        sealed_at: null,
-        outcome: null,
-        tasks_total: TASKS.length,
-        tasks_done: 0,
-        task_snapshot: TASKS,
-      },
+        closes_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+        reopened_until: new Date(Date.now() + 20 * 36e5).toISOString(),
+      }),
+      dayRow(32),
     ];
   }
+  if (u.includes('/rpc/my_challenge_status')) return [];
   if (u.includes('/rest/v1/profiles')) return { name: 'You', xp: 240, unit_preference: 'metric' };
+  // profile_private is read with .maybeSingle(): an absent row is `null`,
+  // not `[]`. An array here reads as a preferences row with every field
+  // undefined, which is a lie the preference reconcile would act on.
+  if (u.includes('/rest/v1/profile_private')) return null;
   if (u.includes('/rest/v1/challenges')) {
     // An OBJECT, not an array: getChallengeConfig reads this row with
     // .single(), and an array body left `challenge.flame` undefined — so
     // every render check before Phase 38G measured a header on flame 0,
     // reading "Streak starts today", and never the streak itself.
-    // best_flame ABOVE flame on purpose: the Home header then renders
-    // "STREAK 11 · BEST 29", the widest thing it can say, and the header-fit
-    // check below measures it against the tier badge.
-    return { id: CHALLENGE_ID, base_tier: 'hard', duration_days: 75, flame: 11, best_flame: 29, missed_notice_day: null, restarted_from: null, duration_previous: null, timezone: 'UTC' };
+    const base = { base_tier: 'hard', duration_days: 75, missed_notice_day: null, duration_previous: null, timezone: 'UTC' };
+    if (!restorable) {
+      // best_flame ABOVE flame on purpose: the Home header then renders
+      // "STREAK 11 · BEST 29", the widest thing it can say, and the header-fit
+      // check measures it against the tier badge.
+      return { ...base, id: CHALLENGE_ID, flame: 11, best_flame: 29, restarted_from: null };
+    }
+    return state.restored
+      ? { ...base, id: ORIGINAL_ID, flame: 29, best_flame: 29, restarted_from: null }
+      : { ...base, id: CHALLENGE_ID, flame: 1, best_flame: 29, restarted_from: ORIGINAL_ID };
   }
   if (u.includes('/rest/v1/tier_history')) return [{ tier: 'hard', from_day: 1 }];
   if (u.includes('/auth/v1/user')) return { id: USER_ID, email: 'render@check.local' };
   // Everything else — completions, customs, overrides, journal, meals,
   // milestones, metric_checkins, workout_logs, blocked, squads.
   return [];
+}
+
+/**
+ * The sealed-day COUNT (perfectDays) is a HEAD request whose answer is the
+ * content-range header, not a body. The stub used to answer it with an empty
+ * list and no header, so every render check measured perfectDays = 0.
+ */
+function sealedCount() {
+  if (state.scenario !== 'restorable') return 11;
+  return state.restored ? 29 : 1;
 }
 
 /**
@@ -209,12 +289,21 @@ const SABOTAGE = {
     css: '[data-testid="app-header"]{padding-top:10.5px !important}',
     why: 'the header lands on a half-pixel boundary',
   },
+  // Phase 38H. The door must be on screen for the owner's state; hide it
+  // and the restore checks must fail.
+  'restore-hidden': {
+    css: '[data-testid="restore-block"]{display:none !important}',
+    why: 'the restore block is not rendered for a restorable miss',
+    scenario: 'restorable',
+  },
 };
 
-async function main(sabotage) {
+async function main(sabotage, scenario = 'default') {
+  state.scenario = scenario;
+  state.restored = false;
   const { server, port } = await serve(DIST);
   const origin = `http://127.0.0.1:${port}`;
-  console.log(`render-check — serving ${DIST} at ${origin}`);
+  console.log(`render-check — serving ${DIST} at ${origin} (${scenario})`);
 
   let browser;
   for (const channel of ['chrome', 'msedge']) {
@@ -243,10 +332,19 @@ async function main(sabotage) {
     if (req.method() === 'OPTIONS') {
       return route.fulfill({ status: 204, headers: cors() });
     }
+    // A count read: the answer is the header, and the body is empty.
+    if (req.method() === 'HEAD') {
+      const n = sealedCount();
+      return route.fulfill({
+        status: 200,
+        headers: { ...cors(), 'content-type': 'application/json', 'content-range': n ? `0-${n - 1}/${n}` : '*/0' },
+        body: '',
+      });
+    }
     return route.fulfill({
       status: 200,
       headers: { ...cors(), 'content-type': 'application/json' },
-      body: JSON.stringify(cannedBody(req.url())),
+      body: JSON.stringify(cannedBody(req.url(), req.method())),
     });
   });
 
@@ -258,7 +356,12 @@ async function main(sabotage) {
 
   // A session that supabase-js will accept from storage without a round trip.
   await page.addInitScript(
-    ({ ref, userId }) => {
+    ({ ref, userId, dismissNoticeFor }) => {
+      // Phase 38H: in the restorable scenario the 38C restart notice is
+      // dismissed on this device, so the door cannot be riding on it.
+      if (dismissNoticeFor) {
+        window.localStorage.setItem('ranked.restartNoticeDismissed.v1', dismissNoticeFor);
+      }
       const oneYear = Math.floor(Date.now() / 1000) + 31_536_000;
       window.localStorage.setItem(
         `sb-${ref}-auth-token`,
@@ -280,8 +383,15 @@ async function main(sabotage) {
         }),
       );
     },
-    { ref: PROJECT_REF, userId: USER_ID },
+    { ref: PROJECT_REF, userId: USER_ID, dismissNoticeFor: scenario === 'restorable' ? CHALLENGE_ID : null },
   );
+
+  if (scenario === 'restorable') {
+    await restoreScenario(page, origin, sabotage);
+    await browser.close();
+    server.close();
+    return;
+  }
 
   await page.goto(`${origin}/track`, { waitUntil: 'load' });
 
@@ -558,6 +668,95 @@ async function main(sabotage) {
   server.close();
 }
 
+/**
+ * THE WHOLE PATH, NOT THE PIECES (Phase 38H, H3). The owner's state, in the
+ * browser: the door is on Home under the number and on check-in; it does
+ * not push the number or the task list off a 390x844 screen; the tap
+ * restores, re-hydrates, lands on the reopened day; and Home then shows the
+ * ORIGINAL's day and streak. The restart notice is dismissed throughout.
+ */
+async function restoreScenario(page, origin, sabotage) {
+  await page.goto(`${origin}/`, { waitUntil: 'load' });
+  let reached = true;
+  try {
+    // The Home screen is MOUNTED under the gate overlay from the first
+    // frame, showing the store's pre-hydrate day 1. Waiting for the numeral
+    // alone read "01" and called it the replacement's day. Wait for the gate
+    // to have opened and gone, then read.
+    await page.waitForSelector('[data-testid="home-day-number"]', { timeout: 20_000 });
+    await page.waitForSelector('[data-testid="session-gate"]', { state: 'detached', timeout: 20_000 });
+    await page.waitForTimeout(300);
+  } catch {
+    reached = false;
+  }
+  if (sabotage) {
+    await page.addStyleTag({ content: SABOTAGE[sabotage].css });
+    await page.waitForTimeout(200);
+  }
+  check('Home renders for the restorable account (the gate opened)', reached);
+  if (!reached) return;
+
+  const box = async (sel) => page.locator(sel).first().boundingBox().catch(() => null);
+  const text = async (sel) => page.locator(sel).first().innerText().catch(() => '');
+
+  // The counter says what the row says: 02.
+  check('the day number reads the replacement\'s 02 before the restore', (await text('[data-testid="home-day-number"]')).trim() === '02', await text('[data-testid="home-day-number"]'));
+  check('the restart notice is NOT on screen (dismissed on this device)', !(await page.getByText('Challenge restarted', { exact: false }).first().isVisible().catch(() => false)));
+
+  const block = await box('[data-testid="restore-block"]');
+  check('the restore block is on Home', !!block && block.width > 0 && block.height > 0, block ? `${Math.round(block.width)}x${Math.round(block.height)}` : 'no block');
+  const blockText = await text('[data-testid="restore-block"]');
+  check('...it names the day the person would be back on: 32', /day 32/.test(blockText), blockText.replace(/\s+/g, ' ').slice(0, 160));
+  check('...and offers the action', /Reopen day 30/.test(blockText));
+
+  const numBox = await box('[data-testid="home-day-number"]');
+  const listBox = await box('[data-testid="home-task-list"]');
+  const barBox = await box('[data-testid="tab-bar"]');
+  check(
+    'the day number is fully on screen with the block below it',
+    !!numBox && !!block && numBox.y >= 0 && numBox.y + numBox.height <= block.y + 0.5,
+    numBox && block ? `number y ${numBox.y.toFixed(0)} h ${numBox.height.toFixed(0)}, block y ${block.y.toFixed(0)}` : 'no boxes',
+  );
+  check(
+    'the task list starts above the tab bar without scrolling',
+    !!listBox && !!barBox && listBox.y < barBox.y - 40,
+    listBox && barBox ? `list y ${listBox.y.toFixed(0)}, bar y ${barBox.y.toFixed(0)}` : 'no boxes',
+  );
+  check(
+    'the block itself is within the viewport width',
+    !!block && block.x >= 0 && block.x + block.width <= VIEWPORT.width + 0.5,
+    block ? `x ${block.x} w ${block.width}` : '',
+  );
+
+  // Check-in carries it too.
+  await page.getByRole('tab', { name: /check/i }).click();
+  await page.waitForTimeout(400);
+  const onCheckin = await box('[data-testid="restore-block"]');
+  check('the restore block is on check-in as well', !!onCheckin && onCheckin.height > 0);
+
+  // THE TAP. Back on Home, reopen day 30: the stub flips to the original,
+  // the app re-hydrates, and lands on check-in with the reopened day.
+  await page.getByRole('tab', { name: /home/i }).click();
+  await page.waitForTimeout(300);
+  await page.getByRole('button', { name: 'Reopen day 30' }).first().click();
+  let landed = true;
+  try {
+    await page.waitForFunction(() => document.body.innerText.includes('REOPENED'), null, { timeout: 15_000 });
+  } catch {
+    landed = false;
+  }
+  check('the tap restores and lands on the reopened day on check-in', landed && new URL(page.url()).pathname.replace(/\/$/, '') === '/checkin', `${new URL(page.url()).pathname}; restored=${state.restored}`);
+  check('...which is named as REOPENED · DAY 30, not yesterday', /REOPENED\s*·\s*DAY 30/.test(await page.locator('body').innerText()));
+
+  // And Home now reads the ORIGINAL: day 32, streak 29, and no door.
+  await page.getByRole('tab', { name: /home/i }).click();
+  await page.waitForTimeout(400);
+  check('Home now reads the original\'s day: 32', (await text('[data-testid="home-day-number"]')).trim() === '32', await text('[data-testid="home-day-number"]'));
+  const headerText = (await text('[data-testid="app-header"]')).replace(/\s+/g, ' ');
+  check('...and the header carries the original\'s streak, 29', /STREAK\s*29/i.test(headerText) && !/BEST/i.test(headerText), headerText);
+  check('...and the door is gone', !(await box('[data-testid="restore-block"]')));
+}
+
 function cors() {
   return {
     'access-control-allow-origin': '*',
@@ -581,7 +780,7 @@ async function run() {
       return 2;
     }
     console.log(`SABOTAGE ${SABOTAGE_ONE}: ${SABOTAGE[SABOTAGE_ONE].why}. This run is EXPECTED TO FAIL.\n`);
-    await main(SABOTAGE_ONE);
+    await main(SABOTAGE_ONE, SABOTAGE[SABOTAGE_ONE].scenario ?? 'default');
     console.log(
       failures
         ? `\n${failures} render check(s) FAILED under sabotage "${SABOTAGE_ONE}" — the assertion has teeth.`
@@ -590,7 +789,9 @@ async function run() {
     return failures ? 1 : 3;
   }
   if (!PROVE) {
-    await main(null);
+    await main(null, 'default');
+    // Phase 38H: the owner's state, and the whole restore path.
+    await main(null, 'restorable');
     console.log(
       failures
         ? `\n${failures} render check(s) FAILED — measured in a real browser, against ${DIST}.`
@@ -605,7 +806,7 @@ async function run() {
     failures = 0;
     const quiet = console.log;
     console.log = () => {};
-    await main(name);
+    await main(name, SABOTAGE[name].scenario ?? 'default');
     console.log = quiet;
     const caught = failures > 0;
     if (!caught) toothless++;

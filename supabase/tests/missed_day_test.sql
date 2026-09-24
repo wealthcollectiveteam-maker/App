@@ -1695,6 +1695,12 @@ begin
   if not exists (select 1 from public.get_day_window() w where w.day = 32 and w.is_today) then
     raise exception 'FAIL (a): today (day 32) vanished from the window';
   end if;
+  -- 38H: the number the person is back on is the ORIGINAL's, not the
+  -- replacement's: today is day 32 of the run that ended, not day 2.
+  if public.challenge_day(o) <> 32 or (select id from public.my_active_challenge()) <> v_o then
+    raise exception 'FAIL (a): after the restore the active challenge is not the original on day 32 (day %)',
+      public.challenge_day(o);
+  end if;
 
   -- And the evaluator, run right now, judges nothing: the reopened day is open.
   v_n := public.evaluate_challenge(v_o);

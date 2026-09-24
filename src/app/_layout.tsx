@@ -302,7 +302,10 @@ export default function RootLayout() {
             {/* Over the navigator, never instead of it: unmounting the Stack
                 would leave expo-router with nothing to navigate. */}
             {(gating || status === 'error' || status === 'waiting') && (
-              <View style={StyleSheet.absoluteFill}>
+              // testID -> data-testid on web: render-check.mjs waits for this
+              // overlay to be GONE before it reads anything off a screen, so
+              // it never measures the pre-hydrate day 1 sitting underneath.
+              <View testID="session-gate" style={StyleSheet.absoluteFill}>
                 {status === 'error' ? (
                   <SessionErrorScreen />
                 ) : status === 'waiting' ? (
