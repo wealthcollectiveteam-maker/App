@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Micro, Skew } from '@/components/primitives';
 import {
   HEADER_FIRST_COPY,
+  headerBestCopy,
   headerResetCopy,
   streakHeader,
 } from '@/lib/streakStatus';
@@ -69,6 +70,14 @@ export function AppHeader({ showStreak = false }: { showStreak?: boolean }) {
               >
                 {String(header.flame).padStart(2, '0')}
               </Text>
+              {/* The best, when it is longer than the streak (Phase 38G):
+                  a month of work stays on screen the morning after a
+                  restart's first sealed day. */}
+              {header.best != null && (
+                <Micro size={11} color={colors.textLow}>
+                  {headerBestCopy(header.best)}
+                </Micro>
+              )}
             </View>
           ) : (
             <Micro size={10} color={colors.textLow}>

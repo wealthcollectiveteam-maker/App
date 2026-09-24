@@ -145,7 +145,14 @@ function cannedBody(url) {
   }
   if (u.includes('/rest/v1/profiles')) return { name: 'You', xp: 240, unit_preference: 'metric' };
   if (u.includes('/rest/v1/challenges')) {
-    return [{ id: CHALLENGE_ID, base_tier: 'hard', duration_days: 75, flame: 11, best_flame: 11, missed_notice_day: null, duration_previous: null }];
+    // An OBJECT, not an array: getChallengeConfig reads this row with
+    // .single(), and an array body left `challenge.flame` undefined — so
+    // every render check before Phase 38G measured a header on flame 0,
+    // reading "Streak starts today", and never the streak itself.
+    // best_flame ABOVE flame on purpose: the Home header then renders
+    // "STREAK 11 · BEST 29", the widest thing it can say, and the header-fit
+    // check below measures it against the tier badge.
+    return { id: CHALLENGE_ID, base_tier: 'hard', duration_days: 75, flame: 11, best_flame: 29, missed_notice_day: null, restarted_from: null, duration_previous: null, timezone: 'UTC' };
   }
   if (u.includes('/rest/v1/tier_history')) return [{ tier: 'hard', from_day: 1 }];
   if (u.includes('/auth/v1/user')) return { id: USER_ID, email: 'render@check.local' };
@@ -500,6 +507,50 @@ async function main(sabotage) {
       'the header sits at the same whole-pixel rect on every tab',
       moved.length === 0,
       moved.join('; '),
+    );
+
+    // THE HEADER'S WIDEST LINE (Phase 38G, G1). Only Home carries the streak,
+    // and with the stub's flame 11 / best 29 it reads "STREAK 11 · BEST 29"
+    // beside the tier badge — the case 38C flagged as a width risk and could
+    // not measure. Measured here: nothing runs past the header's right edge,
+    // and the wordmark and the streak group do not overlap.
+    const homeTab = tabs.find((t) => /home/i.test(t)) ?? tabs[0];
+    await page.getByRole('tab', { name: homeTab, exact: true }).click();
+    await page.waitForTimeout(300);
+    const fit = await page.locator('[data-testid="app-header"]').evaluateAll((els) => {
+      const el = els.find((e) => !e.closest('[aria-hidden="true"]'));
+      if (!el) return null;
+      const h = el.getBoundingClientRect();
+      const leaves = [...el.querySelectorAll('*')].filter(
+        (n) => n.children.length === 0 && (n.textContent || '').trim(),
+      );
+      const rect = (n) => n.getBoundingClientRect();
+      const byText = (re) => leaves.find((n) => re.test((n.textContent || '').trim()));
+      const word = byText(/^RANKED$/);
+      const streak = byText(/^STREAK$/i);
+      const best = byText(/BEST/i);
+      return {
+        headerRight: h.right,
+        maxRight: Math.max(...leaves.map((n) => rect(n).right)),
+        wordRight: word ? rect(word).right : null,
+        streakLeft: streak ? rect(streak).left : null,
+        bestText: best ? (best.textContent || '').trim() : null,
+      };
+    });
+    check(
+      'Home header shows the best beside the streak (stub: flame 11, best 29)',
+      !!fit && !!fit.bestText,
+      fit ? JSON.stringify(fit) : 'no visible header on Home',
+    );
+    check(
+      '...and nothing in the header runs past its right edge',
+      !!fit && fit.maxRight <= fit.headerRight + 0.5,
+      fit ? `text ends at ${fit.maxRight}, header ends at ${fit.headerRight}` : '',
+    );
+    check(
+      '...and the wordmark and the streak group do not overlap',
+      !!fit && fit.wordRight != null && fit.streakLeft != null && fit.wordRight < fit.streakLeft,
+      fit ? `RANKED ends at ${fit.wordRight}, STREAK starts at ${fit.streakLeft}` : '',
     );
   }
 

@@ -38,8 +38,13 @@ export interface StreakHeaderInput {
 }
 
 export type StreakHeader =
-  /** A live streak. The figure is shown. */
-  | { kind: 'streak'; flame: number }
+  /**
+   * A live streak. The figure is shown — and beside it the best, when the
+   * best is longer (Phase 38G). The moment a day was sealed after a
+   * restart, the 29 used to vanish from the screen: the app knew and stopped
+   * mentioning it. When flame equals best, repeating it is noise.
+   */
+  | { kind: 'streak'; flame: number; best: number | null }
   /**
    * No streak has ever existed on this account's run. The only case in
    * which "starts today" is a true sentence.
@@ -65,7 +70,13 @@ export type StreakHeader =
  * told the same thing.
  */
 export function streakHeader(input: StreakHeaderInput): StreakHeader {
-  if (input.flame > 0) return { kind: 'streak', flame: input.flame };
+  if (input.flame > 0) {
+    return {
+      kind: 'streak',
+      flame: input.flame,
+      best: input.bestFlame > input.flame ? input.bestFlame : null,
+    };
+  }
   if (input.bestFlame > 0) return { kind: 'reset', bestFlame: input.bestFlame };
   return { kind: 'first' };
 }
@@ -74,6 +85,8 @@ export function streakHeader(input: StreakHeaderInput): StreakHeader {
 export const HEADER_FIRST_COPY = 'Streak starts today';
 export const headerResetCopy = (bestFlame: number) =>
   `Streak reset · best ${bestFlame}`;
+/** What follows the streak figure when the best is longer: "· best 29". */
+export const headerBestCopy = (best: number) => `· best ${best}`;
 
 // ---------------------------------------------------------------------------
 // THE BANNER
@@ -235,4 +248,53 @@ export function dayOneLine(input: DayOneLineInput): string | null {
   if (input.restarted) return null;
   if (input.sealedDays > 0) return null;
   return DAY_ONE_LINE;
+}
+
+// ---------------------------------------------------------------------------
+// THE RESTORE OFFER (Phase 38G, G2)
+// ---------------------------------------------------------------------------
+
+/** my_restorable_miss(): the day that can be reopened, and until when. */
+export interface RestorableMiss {
+  challengeId: string;
+  day: number;
+  /** YYYY-MM-DD, the missed day's date in the challenge's zone. */
+  missedOn: string;
+  /** YYYY-MM-DD, the last day the restore is accepted. */
+  restoreBy: string;
+  daysLeft: number;
+}
+
+export interface RestoreOfferInput {
+  /** The challenge on screen is a restart (the notice is up). */
+  restarted: boolean;
+  /** The server's answer, or null when there is nothing to reopen. */
+  restorable: RestorableMiss | null | undefined;
+  /** `restoreBy` as a person reads it, e.g. "September 29". */
+  restoreByLabel: string;
+}
+
+export interface RestoreOffer {
+  day: number;
+  /** One sentence. It says the day reopens and still has to be completed. */
+  line: string;
+  button: string;
+}
+
+/**
+ * Shown inside the restart notice, only while the server says the miss can
+ * be reopened. It is honest about what happens next: the day comes back and
+ * still has to be completed. It is not a button that gives a streak back —
+ * restore_missed_day() changes no flame; only sealing the day does.
+ */
+export function restoreOffer(input: RestoreOfferInput): RestoreOffer | null {
+  if (!input.restarted || !input.restorable) return null;
+  const { day } = input.restorable;
+  return {
+    day,
+    line:
+      `Day ${day} can be reopened until ${input.restoreByLabel}, and it still ` +
+      'has to be completed for the run to continue.',
+    button: `Reopen day ${day}`,
+  };
 }

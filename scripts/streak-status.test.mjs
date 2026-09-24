@@ -40,7 +40,9 @@ import {
   deadlineWord,
   GRACE_DEADLINE_HOUR,
   HEADER_FIRST_COPY,
+  headerBestCopy,
   headerResetCopy,
+  restoreOffer as fixedRestoreOffer,
   statusNotice as fixedNotice,
   streakHeader as fixedHeader,
 } from '../src/lib/streakStatus.ts';
@@ -58,8 +60,17 @@ import {
 // A transcription, not the shipped module — faithful to the branch
 // structure, and enough to show the assertions distinguish the two.
 // ---------------------------------------------------------------------------
-function oldHeader({ flame }) {
-  return flame > 0 ? { kind: 'streak', flame } : { kind: 'first' };
+// 38C through 38F: a live streak showed the figure and nothing else, so the
+// morning after a restart's first sealed day, the 29 vanished from the
+// screen. (Phase 38G, G1.)
+function oldHeader({ flame, bestFlame }) {
+  if (flame > 0) return { kind: 'streak', flame };
+  if (bestFlame > 0) return { kind: 'reset', bestFlame };
+  return { kind: 'first' };
+}
+// Before 0018 there was no way to reopen a missed day, so no offer existed.
+function oldRestoreOffer() {
+  return null;
 }
 function oldNotice({ missedDay }) {
   return missedDay ? 'missed' : null;
@@ -78,6 +89,7 @@ const USE_OLD = process.argv.includes('--old');
 const streakHeader = USE_OLD ? oldHeader : fixedHeader;
 const statusNotice = USE_OLD ? oldNotice : fixedNotice;
 const dayOneLine = USE_OLD ? oldDayOneLine : fixedDayOneLine;
+const restoreOffer = USE_OLD ? oldRestoreOffer : fixedRestoreOffer;
 if (USE_OLD) {
   console.log('RUNNING AGAINST THE OLD BEHAVIOUR (transcribed) — failures expected.\n');
 }
@@ -99,7 +111,8 @@ function check(label, fn) {
 /** What the header would print for a decision, uppercased by Micro later. */
 const headerCopy = (h) =>
   h.kind === 'streak'
-    ? String(h.flame).padStart(2, '0')
+    ? `Streak ${String(h.flame).padStart(2, '0')}` +
+      (h.best != null ? ` ${headerBestCopy(h.best)}` : '')
     : h.kind === 'reset'
       ? headerResetCopy(h.bestFlame)
       : HEADER_FIRST_COPY;
@@ -150,7 +163,9 @@ check('the notice goes once a day is sealed on the new challenge', () => {
 });
 
 check('...and the header shows the new streak then, not the reset', () => {
-  assert.deepEqual(streakHeader({ flame: 1, bestFlame: 22 }), { kind: 'streak', flame: 1 });
+  const h = streakHeader({ flame: 1, bestFlame: 22 });
+  assert.equal(h.kind, 'streak');
+  assert.equal(h.flame, 1);
 });
 
 check('the notice goes when the user dismisses it', () => {
@@ -175,7 +190,82 @@ check('a fresh challenge shows no notice at all', () => {
 });
 
 check('a live streak shows its figure', () => {
-  assert.deepEqual(streakHeader({ flame: 11, bestFlame: 11 }), { kind: 'streak', flame: 11 });
+  const h = streakHeader({ flame: 11, bestFlame: 11 });
+  assert.equal(h.kind, 'streak');
+  assert.equal(h.flame, 11);
+});
+
+// ---- THE HEADER CARRIES THE BEST (Phase 38G, G1) -----------------------------
+// The owner: 29 days, a missed day, a restart, day 1 sealed. The header read
+// STREAK 01 and nothing about the 29.
+check('flame 1, best 29: the header shows the streak AND the best', () => {
+  const h = streakHeader({ flame: 1, bestFlame: 29 });
+  assert.equal(h.kind, 'streak');
+  assert.equal(h.best, 29, 'the best vanished the moment a day was sealed');
+  assert.equal(headerCopy(h), 'Streak 01 · best 29');
+});
+
+check('flame one below best: both shown', () => {
+  assert.deepEqual(streakHeader({ flame: 28, bestFlame: 29 }), { kind: 'streak', flame: 28, best: 29 });
+});
+
+check('flame equals best: the streak alone — repeating it is noise', () => {
+  assert.deepEqual(streakHeader({ flame: 29, bestFlame: 29 }), { kind: 'streak', flame: 29, best: null });
+  assert.equal(headerCopy(streakHeader({ flame: 29, bestFlame: 29 })), 'Streak 29');
+});
+
+check('flame 0, best 0: today\'s copy, unchanged (guard)', () => {
+  assert.deepEqual(streakHeader({ flame: 0, bestFlame: 0 }), { kind: 'first' });
+});
+
+check('flame 0, best 29: the 38C reset copy, unchanged (guard)', () => {
+  assert.deepEqual(streakHeader({ flame: 0, bestFlame: 29 }), { kind: 'reset', bestFlame: 29 });
+});
+
+check('the best is never shown below the streak, over the whole grid (sweep)', () => {
+  let bad = 0;
+  for (let flame = 1; flame <= 30; flame += 1) {
+    for (const best of [0, flame - 1, flame, flame + 1, 75]) {
+      const h = streakHeader({ flame, bestFlame: best });
+      if (h.kind !== 'streak') { bad += 1; continue; }
+      if (best > flame && h.best !== best) bad += 1;
+      if (best <= flame && h.best !== null) bad += 1;
+    }
+  }
+  assert.equal(bad, 0, `${bad} wrong cells`);
+});
+
+// ---- THE RESTORE OFFER (Phase 38G, G2) ----------------------------------------
+const restorable = {
+  challengeId: 'c1', day: 30, missedOn: '2026-09-22', restoreBy: '2026-09-29', daysLeft: 5,
+};
+
+check('a restart whose miss can still be reopened gets the offer', () => {
+  const o = restoreOffer({ restarted: true, restorable, restoreByLabel: 'September 29' });
+  assert.ok(o, 'no offer — the day cannot be reopened from the screen');
+  assert.equal(o.day, 30);
+  assert.equal(o.button, 'Reopen day 30');
+  assert.equal(
+    o.line,
+    'Day 30 can be reopened until September 29, and it still has to be completed for the run to continue.',
+  );
+});
+
+check('...and the copy is one plain sentence that promises no streak', () => {
+  const o = restoreOffer({ restarted: true, restorable, restoreByLabel: 'September 29' });
+  assert.doesNotMatch(o.line, /!/);
+  assert.equal((o.line.match(/[.!?]/g) ?? []).length, 1, 'one sentence');
+  assert.match(o.line, /still has to be completed/, 'it must say the day still has to be done');
+  assert.doesNotMatch(o.line, /streak (is )?back|restore(s|d) your streak/i, 'it must not promise the streak');
+});
+
+check('no offer when the server has nothing to reopen (guard)', () => {
+  assert.equal(restoreOffer({ restarted: true, restorable: null, restoreByLabel: '' }), null);
+  assert.equal(restoreOffer({ restarted: true, restorable: undefined, restoreByLabel: '' }), null);
+});
+
+check('no offer on a challenge that is not a restart (guard)', () => {
+  assert.equal(restoreOffer({ restarted: false, restorable, restoreByLabel: 'September 29' }), null);
 });
 
 check('a Medium/Soft reset (same challenge) keeps its one-day "Streak broken" banner', () => {
@@ -307,6 +397,14 @@ if (!USE_OLD) {
     assert.match(header, /streakHeader\(\{/, 'AppHeader.tsx never calls streakHeader');
     assert.doesNotMatch(header, /Streak starts today/, 'the copy is hardcoded in the component again');
     assert.doesNotMatch(header, /flame > 0 \?/, 'the header still decides on flame alone');
+  });
+  check('AppHeader renders the best the module hands it', () => {
+    assert.match(header, /header\.best != null/, 'AppHeader.tsx never renders header.best');
+    assert.match(header, /headerBestCopy\(header\.best\)/, 'the best copy is not the module\'s');
+  });
+  check('the Home banner renders the restore offer through restoreOffer()', () => {
+    assert.match(home, /restoreOffer\(\{/, 'index.tsx never calls restoreOffer');
+    assert.doesNotMatch(home, /can be reopened until/, 'the copy is hardcoded in the component');
   });
   check('the Home banner decides through statusNotice()', () => {
     assert.match(home, /from '@\/lib\/streakStatus'/, 'index.tsx does not import streakStatus');
