@@ -78,6 +78,8 @@
     "test:intl": "node --experimental-strip-types scripts/intl.test.mjs",
     "test:identity": "node scripts/identity-guard.test.mjs",
     "test:reminder-schedule": "node --experimental-strip-types scripts/reminder-schedule.test.mjs",
+    "test:redirect-site": "node scripts/redirect-site.test.mjs",
+    "build:redirect": "node scripts/build-redirect-site.mjs",
     "test": "node scripts/run-tests.mjs",
     "test:render": "node scripts/render-check.mjs",
     "test:pages-guard": "node scripts/pages-guard.test.mjs",
