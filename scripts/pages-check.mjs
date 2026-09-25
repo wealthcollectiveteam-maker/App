@@ -50,6 +50,7 @@ import {
   checkPublishedTree,
   parseStatusV2,
 } from './lib/pagesGuard.mjs';
+import { pagesFolderFor, readSiteOrigin } from './lib/siteOrigin.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist');
@@ -103,6 +104,23 @@ function findPagesRepo() {
     .filter((e) => e.isDirectory() && /\.github\.io$/i.test(e.name))
     .map((e) => join(parent, e.name))
     .filter((p) => existsSync(join(p, '.git')));
+
+  // Phase 38J. Two Pages repos sit beside the app during the cutover — the
+  // old personal one, which becomes a redirect, and the organisation's. The
+  // one to deploy into is the one named after the host in
+  // src/constants/legal.ts. Read from that file's text; when it is not there
+  // (the sandbox in pages-guard.test.mjs), the exactly-one rule below stands.
+  const wanted = pagesFolderFor(readSiteOrigin(root));
+  if (wanted) {
+    const named = found.find((p) => basename(p).toLowerCase() === wanted.toLowerCase());
+    if (named) return named;
+    die(
+      `no Pages repo named ${wanted} beside ${root}. That is the host in ` +
+        'src/constants/legal.ts (PUBLIC_SITE_ORIGIN); clone the organisation\'s ' +
+        `${wanted} repo there, or pass --pages <path>.` +
+        (found.length ? `\n      Found instead: ${found.join(', ')}` : ''),
+    );
+  }
 
   if (found.length === 0) {
     die(

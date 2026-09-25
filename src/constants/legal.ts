@@ -14,19 +14,19 @@
  * from inside the app, which is what the Settings rows do with
  * expo-web-browser.
  *
- * PHASE 38I. The host below is the GitHub Pages site, whose name is a
- * personal handle. It works today and the web build depends on it, so it is
- * not swapped for a placeholder here — a dead privacy link in front of an
- * App Reviewer is worse than a handle. Instead scripts/identity-guard.test.mjs
- * FAILS while this line carries the handle, and fails on a REPLACE-ME
- * placeholder too, so a build that ships either is caught by the test run,
- * not by a reviewer. When the owner chooses the neutral host, this line is
- * the only one that changes.
+ * PHASE 38J. THE ONE PLACE THE ORGANISATION NAME LIVES. The site moved from
+ * a personal GitHub Pages host to a free organisation's, and everything that
+ * needs the host reads it from here: the app's legal rows, and — by reading
+ * this file's text, not by importing it — scripts/pages-check.mjs (which
+ * Pages folder beside the repo to deploy into), scripts/build-redirect-site.mjs
+ * (where the old address forwards to) and scripts/identity-guard.test.mjs
+ * (which fails if the personal handle ever comes back). Changing the
+ * organisation is a one-line edit: this line.
  *
  * These are baked into the binary, but the Settings rows that read them are
  * JavaScript — so if a URL changes later it ships over the air.
  */
-export const PUBLIC_SITE_ORIGIN = 'https://alymalji.github.io';
+export const PUBLIC_SITE_ORIGIN = 'https://rankedfitness.github.io';
 
 export const PRIVACY_POLICY_URL = `${PUBLIC_SITE_ORIGIN}/privacy.html`;
 

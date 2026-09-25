@@ -2,9 +2,13 @@ Task: copy the built web export into my GitHub Pages site repo and commit it.
 
 Context:
 - App repo: C:\dev\App (branch cursor/ranked-fitness-75-hard-0c7a)
-- Pages repo: a folder under C:\dev ending in ".github.io" — find it yourself with a directory listing, do not guess the name. If there is more than one, stop and ask me.
-  (`npm run predeploy` applies exactly that rule and refuses if it is not
-   satisfied, so you do not have to enforce it by hand.)
+- Pages repo: the folder under C:\dev named after the host in
+  src/constants/legal.ts (PUBLIC_SITE_ORIGIN). Today that is
+  C:\dev\rankedfitness.github.io. During the cutover the OLD folder,
+  C:\dev\alymalji.github.io, also sits there; it carries only the redirect
+  (docs/host-cutover.md) and nothing from dist/ ever goes into it again.
+  (`npm run predeploy` applies exactly that rule — it picks the named folder
+   and refuses if it is missing — so you do not have to enforce it by hand.)
 
 Steps:
 

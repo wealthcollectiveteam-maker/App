@@ -447,7 +447,7 @@ try {
   for (const f of ['predeploy-check.mjs', 'pages-check.mjs']) {
     copyFileSync(path.join(here, f), path.join(appDir, 'scripts', f));
   }
-  for (const f of ['distGuard.mjs', 'pagesGuard.mjs']) {
+  for (const f of ['distGuard.mjs', 'pagesGuard.mjs', 'siteOrigin.mjs']) {
     copyFileSync(path.join(here, 'lib', f), path.join(appDir, 'scripts', 'lib', f));
   }
   writeFileSync(path.join(appDir, 'app.json'), '{}\n');
