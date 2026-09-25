@@ -30,6 +30,7 @@ import { UpdateBanner } from '@/components/UpdateBanner';
 import { cleanUpdateParamFromUrl } from '@/lib/webUpdate';
 import { scheduleDayBoundaries } from '@/lib/writeDay';
 import { configurationError } from '@/services';
+import { installReminderSync } from '@/services/reminder';
 import {
   handleColdLaunchNotification,
   initNotificationHandling,
@@ -41,6 +42,18 @@ import { remainingSeconds, useTimerStore } from '@/store/useTimerStore';
 import { colors } from '@/theme/tokens';
 
 SplashScreen.preventAutoHideAsync();
+
+/**
+ * DEV ONLY (Phase 38I): what this runtime's Intl can do, logged once at
+ * launch in a development build or Expo Go. `__DEV__` is a compile-time
+ * constant, so in a production bundle this is `null` and the require() is
+ * dead code Metro never follows — the same pattern AppHeader uses for the
+ * dev scenario sheet, and scripts/lib/distGuard.mjs refuses a bundle in
+ * which the diagnostics title appears.
+ */
+const DevIntl: { logIntlDiagnostics: () => void } | null =
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  __DEV__ ? require('@/components/IntlDiagnostics') : null;
 
 export default function RootLayout() {
   const router = useRouter();
@@ -102,6 +115,16 @@ export default function RootLayout() {
   useEffect(() => {
     useUpdateStore.getState().check().catch(() => {});
   }, []);
+
+  // Dev only: one line in the Metro console saying what Intl can do here.
+  useEffect(() => {
+    DevIntl?.logIntlDiagnostics();
+  }, []);
+
+  // THE DAILY REMINDER (Phase 38I), native only: launch, foreground, and the
+  // store changes that move it. Asks for no permission here — that happens
+  // only when the Settings switch is turned on.
+  useEffect(() => installReminderSync(), []);
 
   // Belt to the inline script's braces. `?v=` is already gone before this
   // component exists (see the strip in +html.tsx, and why it has to run

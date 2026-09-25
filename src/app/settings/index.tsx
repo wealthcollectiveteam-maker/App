@@ -6,6 +6,7 @@ import {
 } from 'phosphor-react-native';
 import React, { useState } from 'react';
 import {
+  AppState,
   Linking,
   Platform,
   Pressable,
@@ -33,6 +34,11 @@ import type {
   HealthPrefs,
   NotificationPrefs,
 } from '@/data/types';
+import { enableReminder } from '@/services/reminder';
+import {
+  getNotificationPermissionStatus,
+  type NotificationPermission,
+} from '@/services/timerEffects';
 import { selectHealthConnected, useAppStore } from '@/store/useAppStore';
 import { useSessionStore } from '@/store/useSessionStore';
 import { toast } from '@/store/useToastStore';
@@ -72,17 +78,92 @@ const PREF_ROWS: {
   { key: 'timerAlerts', label: 'Timer alerts', sub: 'Running, halfway, 5-min and done notifications' },
   { key: 'pings', label: 'Pings', sub: 'When a squadmate pings you' },
   { key: 'squadActivity', label: 'Squad activity', sub: 'Completions and proof in your squad' },
-  {
-    key: 'dailyReminder',
-    label: 'Daily reminder',
-    sub: 'An evening nudge if tasks are open',
-    // Phase 38A. Nothing in the app reads dailyReminder; the only
-    // notifications it schedules are the workout timer's. Until A4 builds
-    // the reminder, the row says so rather than offering a switch that
-    // quietly does nothing.
-    unavailable: 'Coming soon — the app cannot send reminders yet.',
-  },
+  // dailyReminder is rendered by ReminderRow below (Phase 38I): its switch
+  // asks for the system permission, and its copy reads the real grant.
 ];
+
+/**
+ * DEV ONLY (Phase 38I): the Intl diagnostics card, reached from a Developer
+ * section that exists only in development builds and Expo Go. `__DEV__` is
+ * a compile-time constant, so in production this is `null` and the require()
+ * is dead code Metro never follows; scripts/lib/distGuard.mjs refuses a
+ * bundle in which the card's title appears.
+ */
+const DevIntl: { IntlDiagnostics: React.ComponentType } | null =
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  __DEV__ ? require('@/components/IntlDiagnostics') : null;
+
+/**
+ * THE DAILY REMINDER (Phase 38I). Native only; on web the whole section
+ * above says notifications cannot be sent. The switch reads the REAL state:
+ * on only when the preference is on AND iOS has granted notifications.
+ * Turning it on is the one moment the system permission is requested. A
+ * refusal leaves it off and says so, with the way to iOS Settings.
+ */
+function ReminderRow() {
+  const enabled = useAppStore((s) => s.notificationPrefs.dailyReminder);
+  const [permission, setPermission] = useState<NotificationPermission>('unavailable');
+  const [busy, setBusy] = useState(false);
+
+  const refresh = React.useCallback(() => {
+    getNotificationPermissionStatus().then(setPermission).catch(() => {});
+  }, []);
+  React.useEffect(() => {
+    refresh();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refresh();
+    });
+    return () => sub.remove();
+  }, [refresh]);
+
+  const on = enabled && permission === 'granted';
+  const denied = permission === 'denied';
+
+  const toggle = async (value: boolean) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const status = await enableReminder(value);
+      setPermission(status);
+      if (value && status !== 'granted') {
+        toast('Notifications are off for Ranked in iOS Settings.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <View style={[styles.prefRow, styles.rowBorder]}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.rowLabel}>Daily reminder</Text>
+        <Text style={styles.rowSub}>
+          {denied
+            ? 'Notifications are off for Ranked in iOS Settings. The reminder cannot be sent.'
+            : 'One notification at 8:00 PM while the day is still open.'}
+        </Text>
+        {denied ? (
+          <OutlineButton
+            label="Open Settings"
+            small
+            tone="neutral"
+            onPress={() => Linking.openSettings().catch(() => {})}
+            style={{ marginTop: 8, alignSelf: 'flex-start' }}
+          />
+        ) : null}
+      </View>
+      <Switch
+        value={on}
+        disabled={busy}
+        onValueChange={(v) => {
+          toggle(v).catch(() => {});
+        }}
+        trackColor={{ false: colors.neutral800, true: colors.accent700 }}
+        thumbColor={on ? colors.accent300 : colors.neutral500}
+      />
+    </View>
+  );
+}
 
 /**
  * A browser cannot deliver a notification this app is able to send, and it
@@ -346,6 +427,7 @@ export default function SettingsScreen() {
                 </View>
               );
             })}
+            <ReminderRow />
           </Card>
         </>
       )}
@@ -649,6 +731,14 @@ export default function SettingsScreen() {
           />
         </View>
       </Card>
+
+      {/* Development builds and Expo Go only: see docs/intl-check.md. */}
+      {DevIntl ? (
+        <>
+          <Kicker style={styles.sectionKicker}>Developer</Kicker>
+          <DevIntl.IntlDiagnostics />
+        </>
+      ) : null}
 
       <Text style={styles.buildLine}>{BUILD_LABEL}</Text>
     </ScrollView>
