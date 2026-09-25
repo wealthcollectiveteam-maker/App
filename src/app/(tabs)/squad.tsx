@@ -43,6 +43,7 @@ import {
   useAppStore,
 } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
+import { formatInteger } from '@/lib/intl';
 import { colors, font, microTracking, radius, space } from '@/theme/tokens';
 
 const REPORT_REASONS: ReportReason[] = [
@@ -728,7 +729,7 @@ function LeaderboardTab() {
                 {r.isSelf ? selfTierLabel : r.tierLabel}
               </Text>
             </View>
-            <Text style={styles.leaderXp}>{r.xp.toLocaleString()} XP</Text>
+            <Text style={styles.leaderXp}>{formatInteger(r.xp)} XP</Text>
           </View>
         ))}
       </View>

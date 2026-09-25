@@ -25,12 +25,13 @@ import {
 } from '@/lib/units';
 import { useAppStore } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
+import { formatCalendar } from '@/lib/intl';
 import { colors, font, radius, space } from '@/theme/tokens';
 
 const MOODS = ['Rough', 'Low', 'Okay', 'Good', 'Strong'];
 
 function dateLabel(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString(undefined, {
+  return formatCalendar(new Date(timestamp), {
     year: 'numeric',
     month: 'short',
     day: 'numeric',

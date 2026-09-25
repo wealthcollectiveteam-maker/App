@@ -21,6 +21,7 @@ import {
 } from '@/store/useAppStore';
 import { useSessionStore } from '@/store/useSessionStore';
 import { toast } from '@/store/useToastStore';
+import { formatInteger } from '@/lib/intl';
 import { colors, font, microTracking, space } from '@/theme/tokens';
 
 interface BadgeState {
@@ -150,7 +151,7 @@ export default function YouScreen() {
               {profileName}
             </Text>
             <Micro color={colors.textMid} style={{ marginTop: 6 }}>
-              LVL {level} · {xp.toLocaleString()} XP · Day {day}
+              LVL {level} · {formatInteger(xp)} XP · Day {day}
             </Micro>
             <View style={styles.xpTrack}>
               <View

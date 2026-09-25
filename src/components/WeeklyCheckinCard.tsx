@@ -22,6 +22,7 @@ import {
   useAppStore,
 } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
+import { formatCalendar } from '@/lib/intl';
 import { colors, font, radius } from '@/theme/tokens';
 
 const MOODS = ['Rough', 'Low', 'Okay', 'Good', 'Strong'];
@@ -104,10 +105,7 @@ export function WeeklyCheckinCard() {
           <Text style={styles.lastLine}>
             {state.lastWeightKg != null && state.lastAt != null
               ? `Last check-in: ${formatWeight(state.lastWeightKg, unitPreference)} · ` +
-                new Date(state.lastAt).toLocaleDateString(undefined, {
-                  month: 'short',
-                  day: 'numeric',
-                })
+                formatCalendar(new Date(state.lastAt), { month: 'short', day: 'numeric' })
               : // A mood-only check-in has no weight to read back. Saying so is
                 // the honest version of what used to be an empty screen.
                 'Checked in this week — no weight recorded.'}
@@ -198,10 +196,7 @@ export function WeeklyCheckinCard() {
         {prefill != null && !touched && (
           <Text style={styles.prefillNote}>
             From Apple Health ·{' '}
-            {new Date(prefill.dateISO).toLocaleDateString(undefined, {
-              month: 'short',
-              day: 'numeric',
-            })}{' '}
+            {formatCalendar(new Date(prefill.dateISO), { month: 'short', day: 'numeric' })}{' '}
             — editable
           </Text>
         )}

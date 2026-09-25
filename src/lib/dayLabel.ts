@@ -30,6 +30,10 @@
  * Kept free of react-native imports so scripts/day-boundary.test.mjs can run
  * it in plain Node.
  */
+// With the extension: this module also runs in plain Node for its test,
+// where an extension-less relative import does not resolve
+// (tsconfig allowImportingTsExtensions).
+import { type CalendarOptions, formatCalendar, wallClockIn, zoneIsUsable } from './intl.ts';
 
 /**
  * The calendar date of the day that closes at `closesAtISO`, as an instant at
@@ -42,46 +46,25 @@
 function dayThatCloses(closesAtISO: string, zone: string | undefined): Date | null {
   const closes = Date.parse(closesAtISO);
   if (Number.isNaN(closes)) return null;
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: zone,
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-  }).formatToParts(new Date(closes));
-  const get = (type: Intl.DateTimeFormatPartTypes) =>
-    Number(parts.find((p) => p.type === type)?.value);
-  const year = get('year');
-  const month = get('month');
-  const day = get('day');
-  if (![year, month, day].every(Number.isFinite)) return null;
+  // Phase 38I: through lib/intl.ts, which falls back to the device's clock
+  // on a runtime without zone data rather than throwing.
+  const w = wallClockIn(closes, zone);
+  if (![w.year, w.month, w.day].every(Number.isFinite)) return null;
   // closes_at falls on the day AFTER the one it names. Date.UTC rolls day 0
   // back into the previous month, and the previous year, correctly.
-  return new Date(Date.UTC(year, month - 1, day - 1, 12));
+  return new Date(Date.UTC(w.year, w.month - 1, w.day - 1, 12));
 }
 
 function labelFor(
   closesAtISO: string | null | undefined,
   timeZone: string | null,
-  options: Intl.DateTimeFormatOptions,
+  options: Omit<CalendarOptions, 'timeZone'>,
 ): string | null {
   if (!closesAtISO) return null;
-  const render = (zone: string | undefined) => {
-    const date = dayThatCloses(closesAtISO, zone);
-    return date
-      ? new Intl.DateTimeFormat(undefined, { ...options, timeZone: 'UTC' }).format(date)
-      : null;
-  };
-  try {
-    return render(timeZone ?? undefined);
-  } catch {
-    // An unknown IANA zone throws rather than falling back. Better a label in
-    // the device's zone than no label at all.
-    try {
-      return render(undefined);
-    } catch {
-      return null;
-    }
-  }
+  // An unknown IANA zone: better a label in the device's zone than none.
+  const zone = timeZone && zoneIsUsable(timeZone) ? timeZone : undefined;
+  const date = dayThatCloses(closesAtISO, zone);
+  return date ? formatCalendar(date, { ...options, timeZone: 'UTC' }) : null;
 }
 
 /**

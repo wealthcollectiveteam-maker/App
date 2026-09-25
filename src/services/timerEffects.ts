@@ -2,6 +2,8 @@ import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
 import * as Haptics from 'expo-haptics';
 import { Platform } from 'react-native';
 
+import { formatClock } from '@/lib/intl';
+
 /**
  * Side effects for the workout timer: local notifications (native only —
  * they fire even if the app never returns to the foreground), success
@@ -106,10 +108,7 @@ export async function ensureNotificationPermission(): Promise<void> {
 }
 
 function clockLabel(atMs: number): string {
-  return new Date(atMs).toLocaleTimeString(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  return formatClock(atMs);
 }
 
 function countdownLabel(seconds: number): string {

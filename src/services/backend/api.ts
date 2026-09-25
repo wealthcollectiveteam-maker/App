@@ -13,6 +13,7 @@ import type {
   WorkoutLog,
 } from '@/data/types';
 import { CHALLENGE } from '@/constants/challenge';
+import { formatClock } from '@/lib/intl';
 import { BackendError, toBackendError } from '@/services/contract';
 import type { SnapshotTask } from '@/services/taskProjection';
 
@@ -451,10 +452,7 @@ export const BackendApi = {
     );
     const out: Partial<Record<TaskKey, string>> = {};
     for (const row of data ?? []) {
-      out[row.task_key as TaskKey] = new Date(row.completed_at).toLocaleTimeString(
-        undefined,
-        { hour: 'numeric', minute: '2-digit' },
-      );
+      out[row.task_key as TaskKey] = formatClock(Date.parse(row.completed_at));
     }
     return out;
   },

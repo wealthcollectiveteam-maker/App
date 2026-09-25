@@ -36,6 +36,7 @@ import {
   useAppStore,
 } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
+import { formatInteger } from '@/lib/intl';
 import { colors, font, radius, space } from '@/theme/tokens';
 
 function JournalTab() {
@@ -270,7 +271,7 @@ function MealsTab() {
         </Kicker>
         {withNutrition.length > 0 && (
           <Text style={styles.totalsLine}>
-            {totals.calories.toLocaleString()} cal ·{' '}
+            {formatInteger(totals.calories)} cal ·{' '}
             {Math.round(totals.protein)}g protein · {Math.round(totals.carbs)}g
             carbs · {Math.round(totals.fat)}g fat
           </Text>

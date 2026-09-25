@@ -32,6 +32,7 @@ import type {
   WorkoutLog,
   WorkoutLogInput,
 } from '@/data/types';
+import { formatClock } from '@/lib/intl';
 import { normalizeInviteCode } from '@/lib/inviteCode';
 import {
   privateColumnsFor,
@@ -1707,10 +1708,7 @@ export class SupabaseDataService implements IDataService {
     await AsyncStorage.removeItem(TIMER_STORAGE_KEY);
     const previous = { ...this.state.tasksDone };
     // Same clock format hydrate() reads back out of task_completions.
-    const at = new Date().toLocaleTimeString(undefined, {
-      hour: 'numeric',
-      minute: '2-digit',
-    });
+    const at = formatClock(Date.now());
     this.state.tasksDone = { ...previous, [taskKey]: at };
     // Named like every other write (Phase 20): the timer is a today
     // affordance, but "today" is exactly the value that changes underneath

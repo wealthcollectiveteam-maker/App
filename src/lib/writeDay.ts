@@ -29,6 +29,10 @@
  */
 
 /** Which deck the check-in screen is showing. Defaults to 'today'. */
+// With the extension: this module also runs in plain Node for its test,
+// where an extension-less relative import does not resolve.
+import { type WallClockParts, wallClockIn, zoneIsUsable } from './intl.ts';
+
 export type ActiveDay = 'today' | 'yesterday';
 
 /** The previous day, while the server still calls it open. */
@@ -127,47 +131,17 @@ export function msUntilNextBoundary(now: Date, timeZone: string | null): number 
 
 /** The zone to hand Intl: the challenge's if this runtime knows it, else the device's. */
 function usableZone(timeZone: string | null): string | undefined {
-  if (!timeZone) return undefined;
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone });
-    return timeZone;
-  } catch {
-    return undefined;
-  }
+  // Phase 38I: through lib/intl.ts. A runtime without zone data answers
+  // false and the timer follows the device's clock, as it always did for a
+  // zone it did not know.
+  return timeZone && zoneIsUsable(timeZone) ? timeZone : undefined;
 }
 
-interface WallClock {
-  year: number;
-  month: number;
-  day: number;
-  hour: number;
-  minute: number;
-  second: number;
-}
+type WallClock = WallClockParts;
 
 /** What `zone`'s wall clock reads at instant `at`. */
 function wallClock(at: number, zone: string | undefined): WallClock {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: zone,
-    hour12: false,
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-    second: 'numeric',
-  }).formatToParts(new Date(at));
-  const get = (type: Intl.DateTimeFormatPartTypes) =>
-    Number(parts.find((p) => p.type === type)?.value);
-  return {
-    year: get('year'),
-    month: get('month'),
-    day: get('day'),
-    // Some engines render midnight as "24" under hour12: false.
-    hour: get('hour') % 24,
-    minute: get('minute'),
-    second: get('second'),
-  };
+  return wallClockIn(at, zone);
 }
 
 /** How far `zone`'s wall clock is ahead of UTC at instant `at`, in ms. */

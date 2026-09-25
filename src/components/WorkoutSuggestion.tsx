@@ -7,6 +7,7 @@ import type { HealthWorkout } from '@/services/HealthService';
 import type { TaskKey } from '@/data/types';
 import { useAppStore } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
+import { formatClock } from '@/lib/intl';
 import { colors, font, radius } from '@/theme/tokens';
 
 /**
@@ -23,10 +24,7 @@ export function WorkoutSuggestion({
 }) {
   const completeTask = useAppStore((s) => s.completeTask);
   const consumeHealthWorkout = useAppStore((s) => s.consumeHealthWorkout);
-  const time = new Date(workout.startISO).toLocaleTimeString(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  const time = formatClock(Date.parse(workout.startISO));
 
   return (
     <View style={styles.wrap}>

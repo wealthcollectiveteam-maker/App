@@ -3,6 +3,7 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { Micro, PrimaryButton } from '@/components/primitives';
+import { formatCalendar } from '@/lib/intl';
 import { restoreOffer } from '@/lib/restoreOffer';
 import { useAppStore } from '@/store/useAppStore';
 import { useSessionStore } from '@/store/useSessionStore';
@@ -13,11 +14,7 @@ import { colors, font, space } from '@/theme/tokens';
 function calendarLabel(isoDate: string): string {
   const d = new Date(`${isoDate}T12:00:00Z`);
   if (Number.isNaN(d.getTime())) return isoDate;
-  try {
-    return d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', timeZone: 'UTC' });
-  } catch {
-    return isoDate;
-  }
+  return formatCalendar(d, { month: 'long', day: 'numeric', timeZone: 'UTC' });
 }
 
 /**

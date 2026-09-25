@@ -37,11 +37,12 @@ import type {
 import { DataService } from '@/services';
 import { selectTierLabel, useAppStore } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
+import { formatCalendar } from '@/lib/intl';
 import { colors, font, radius, space } from '@/theme/tokens';
 
 function tomorrowDateLabel(): string {
   const d = new Date(Date.now() + 86_400_000);
-  return d.toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
+  return formatCalendar(d, { month: 'long', day: 'numeric' });
 }
 
 /** Add/edit form for a custom task. */

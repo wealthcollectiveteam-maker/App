@@ -9,22 +9,17 @@ import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Card, Kicker, OutlineButton } from '@/components/ui';
 import { healthCardState } from '@/lib/healthCardState';
+import { formatCalendar, formatClock, formatInteger } from '@/lib/intl';
 import { formatWeight } from '@/lib/units';
 import { selectHealthConnected, useAppStore } from '@/store/useAppStore';
 import { colors, font } from '@/theme/tokens';
 
 function timeLabel(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  return formatClock(Date.parse(iso));
 }
 
 function dateLabel(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-  });
+  return formatCalendar(new Date(iso), { month: 'short', day: 'numeric' });
 }
 
 /**
@@ -130,14 +125,14 @@ export function TodaysHealthCard() {
         <View style={styles.stat}>
           <Footprints size={15} color={colors.accent400} />
           <Text style={styles.statValue}>
-            {steps == null ? '—' : steps.toLocaleString()}
+            {steps == null ? '—' : formatInteger(steps)}
           </Text>
           <Text style={styles.statLabel}>steps</Text>
         </View>
         <View style={styles.stat}>
           <Fire size={15} color={colors.accent400} />
           <Text style={styles.statValue}>
-            {activeEnergyKcal == null ? '—' : activeEnergyKcal.toLocaleString()}
+            {activeEnergyKcal == null ? '—' : formatInteger(activeEnergyKcal)}
           </Text>
           <Text style={styles.statLabel}>active kcal</Text>
         </View>

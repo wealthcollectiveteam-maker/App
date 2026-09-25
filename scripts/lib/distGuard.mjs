@@ -89,6 +89,16 @@ export const BAD_FINGERPRINTS = [
       'The card asserts what was RECORDED. It can only know what was ' +
       'RETURNED — a read-denied workout type looks identical to a rest day.',
   },
+  {
+    id: 'dev-diagnostics-shipped',
+    // Phase 38I. src/components/IntlDiagnostics.tsx is loaded through
+    // `__DEV__ ? require(...) : null`, so a production bundle must not
+    // contain its title. If it does, the dev-only guard has stopped working.
+    pattern: /INTL DIAGNOSTICS \(dev only\)/,
+    why:
+      'The dev-only Intl diagnostics screen is in the production bundle. The ' +
+      '__DEV__ guard around its require() is no longer stripping it.',
+  },
 ];
 
 /**
