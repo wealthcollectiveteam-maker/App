@@ -51,3 +51,7 @@ supabase/.rehearsal/
 /p*.txt
 /phase*.txt
 /_briefs/
+
+# A design PDF that carries a personal handle. Kept on disk, never tracked
+# again (Phase 38I); it remains in branch history until the squash to main.
+/new-ui.pdf
