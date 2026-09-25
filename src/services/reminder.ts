@@ -3,25 +3,27 @@ import { getCalendars } from 'expo-localization';
 import { AppState, Platform } from 'react-native';
 
 import {
-  REMINDER_ID,
+  planSignature,
   type ReminderPermission,
   type ReminderPlan,
+  reminderIds,
   reminderPlan,
-  scheduleMatches,
 } from '@/lib/reminderSchedule';
 import { getNotificationPermissionStatus } from '@/services/timerEffects';
 import { useAppStore } from '@/store/useAppStore';
 
 /**
- * THE DAILY REMINDER, native only (Phase 38I, I4). One local notification a
- * day at 20:00 device-local while the preference is on and the system grant
- * is 'granted'. The decision is lib/reminderSchedule.ts; this applies it.
+ * THE DAILY REMINDER, native only (Phase 38I, I4; rolling window 38J, J3).
+ * A window of local notifications, one a day at 20:00 device-local for the
+ * next seven days, kept while the preference is on and the system grant is
+ * 'granted'. The decision is lib/reminderSchedule.ts; this applies it.
  *
  * WHEN IT RUNS: at launch, on every foreground, and whenever the store's
  * day, today's seal, or the preference changes. Each run computes the plan
- * from what is true now and makes the pending notification match it —
- * so sealing today on this device cancels today's and schedules tomorrow's,
- * and a device that changed timezone gets rescheduled against the new zone.
+ * from what is true now and makes the pending set match it — so sealing
+ * today on this device removes today's and leaves the other six, a device
+ * that changed timezone is rebuilt against the new zone, and a person who
+ * never opens the app again still has seven mornings of reminders ahead.
  *
  * PERMISSION is requested in exactly one place: enableReminder(true), which
  * the Settings switch calls. Never at launch.
@@ -29,13 +31,11 @@ import { useAppStore } from '@/store/useAppStore';
  * On web every function here is a no-op: expo-notifications is never loaded.
  */
 
-const LAST_KEY = 'ranked.reminder.last.v1';
+const LAST_KEY = 'ranked.reminder.last.v2';
 
 interface LastSchedule {
   zone: string | null;
-  day: number;
-  target: 'today' | 'tomorrow';
-  dateKey: string;
+  signature: string;
 }
 
 type NotificationsModule = typeof import('expo-notifications');
@@ -70,17 +70,24 @@ async function readLast(): Promise<LastSchedule | null> {
   }
 }
 
-/** The instant of `hour:minute` today or tomorrow, on the device's clock. */
-function fireDate(target: 'today' | 'tomorrow', hour: number, minute: number): Date {
+/** The instant of `hour:minute`, `offsetDays` from today, on the device's clock. */
+function fireDate(offsetDays: number, hour: number, minute: number): Date {
   const d = new Date();
   d.setHours(hour, minute, 0, 0);
-  if (target === 'tomorrow') d.setDate(d.getDate() + 1);
+  d.setDate(d.getDate() + offsetDays);
   return d;
 }
 
+/** Cancel every reminder id, by name. Never cancel-all: the timer's are not ours to touch. */
+async function cancelAllReminders(mod: NotificationsModule): Promise<void> {
+  for (const id of reminderIds()) {
+    await mod.cancelScheduledNotificationAsync(id);
+  }
+}
+
 /**
- * Make the pending notification match the plan. Returns the plan so the
- * caller (and the dev console) can see what was decided.
+ * Make the pending set match the plan. Returns the plan so the caller (and
+ * the dev console) can see what was decided.
  */
 export async function syncReminder(): Promise<ReminderPlan> {
   const mod = getNotifications();
@@ -102,22 +109,24 @@ export async function syncReminder(): Promise<ReminderPlan> {
 
   try {
     if (plan.action === 'clear') {
-      await mod.cancelScheduledNotificationAsync(REMINDER_ID);
+      await cancelAllReminders(mod);
       await AsyncStorage.removeItem(LAST_KEY);
       return plan;
     }
-    const todayKey = localDateKey(now);
-    if (scheduleMatches(last, plan, todayKey)) return plan;
-    await mod.cancelScheduledNotificationAsync(REMINDER_ID);
-    await mod.scheduleNotificationAsync({
-      identifier: REMINDER_ID,
-      content: { title: 'Ranked', body: plan.body, sound: false, data: { url: '/checkin' } },
-      trigger: {
-        type: mod.SchedulableTriggerInputTypes.DATE,
-        date: fireDate(plan.target, plan.hour, plan.minute),
-      },
-    });
-    const record: LastSchedule = { zone: plan.zone, day: plan.day, target: plan.target, dateKey: todayKey };
+    const signature = planSignature(plan, localDateKey(now));
+    if (last?.signature === signature) return plan;
+    await cancelAllReminders(mod);
+    for (const item of plan.items) {
+      await mod.scheduleNotificationAsync({
+        identifier: item.id,
+        content: { title: 'Ranked', body: item.body, sound: false, data: { url: '/checkin' } },
+        trigger: {
+          type: mod.SchedulableTriggerInputTypes.DATE,
+          date: fireDate(item.offsetDays, item.hour, item.minute),
+        },
+      });
+    }
+    const record: LastSchedule = { zone: plan.zone, signature };
     await AsyncStorage.setItem(LAST_KEY, JSON.stringify(record));
   } catch {
     // A scheduling failure must never break the screen that asked for it.
