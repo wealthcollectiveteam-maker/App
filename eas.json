@@ -7,7 +7,14 @@
     "development": {
       "channel": "development",
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "ios": {
+        "simulator": false
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://dmlgdqufkrtrjgbofpkd.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_TOfGz9Bk-0eaAuFhLNEV6Q_RdFsnk4R"
+      }
     },
     "preview": {
       "channel": "preview",

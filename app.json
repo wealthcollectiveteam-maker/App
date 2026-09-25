@@ -16,6 +16,8 @@
     },
     "ios": {
       "bundleIdentifier": "com.aly786.rankedfitness",
+      "buildNumber": "1",
+      "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -37,6 +39,7 @@
     "plugins": [
       "expo-router",
       "expo-updates",
+      "expo-notifications",
       [
         "expo-splash-screen",
         {
