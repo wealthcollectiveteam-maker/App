@@ -1,0 +1,80 @@
+{
+  "expo": {
+    "name": "Ranked Fitness",
+    "slug": "ranked-fitness",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "rankedfitness",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0A0B0D",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/13ba3946-9bc4-46e2-afcd-d4a4fd8113ba"
+    },
+    "ios": {
+      "bundleIdentifier": "com.aly786.rankedfitness",
+      "buildNumber": "1",
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0A0B0D",
+        "foregroundImage": "./assets/adaptive-icon.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-updates",
+      "expo-notifications",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0A0B0D",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "Ranked Fitness reads five things: today's steps, today's active energy, today's workouts, your logged food energy, and your most recent weight. Steps, active energy and workouts are shown on the app's Today's Health card; food energy and workouts are used to suggest marking a daily task complete, and your weight pre-fills the optional weekly check-in. Nothing is written to Health. This data stays on your device and is never uploaded or shared.",
+          "NSHealthUpdateUsageDescription": false,
+          "background": false
+        }
+      ],
+      "expo-localization",
+      "expo-asset"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "13ba3946-9bc4-46e2-afcd-d4a4fd8113ba"
+      }
+    }
+  }
+}

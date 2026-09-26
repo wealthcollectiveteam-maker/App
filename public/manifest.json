@@ -1,0 +1,17 @@
+{
+  "name": "Ranked Fitness",
+  "short_name": "Ranked",
+  "description": "A squad of friends runs the same 75-day challenge. Everyone sees who showed up; nobody sees anyone else's private data.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0A0B0D",
+  "background_color": "#0A0B0D",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
