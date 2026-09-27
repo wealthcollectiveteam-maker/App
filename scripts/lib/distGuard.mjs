@@ -99,6 +99,14 @@ export const BAD_FINGERPRINTS = [
       'The dev-only Intl diagnostics screen is in the production bundle. The ' +
       '__DEV__ guard around its require() is no longer stripping it.',
   },
+  {
+    id: 'health-diagnostics-shipped',
+    // Phase 38M. src/components/HealthDiagnostics.tsx, loaded the same way.
+    pattern: /HEALTH DIAGNOSTICS \(dev only\)/,
+    why:
+      'The dev-only Health diagnostics card is in the production bundle. The ' +
+      '__DEV__ guard around its require() is no longer stripping it.',
+  },
 ];
 
 /**

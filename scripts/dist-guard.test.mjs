@@ -106,6 +106,23 @@ const FIXED = [
   ok('the mere string "health_enabled" is not the fingerprint — the map is');
 }
 
+// ---- the dev-only cards ---------------------------------------------------
+{
+  for (const [id, title] of [
+    ['dev-diagnostics-shipped', 'INTL DIAGNOSTICS (dev only)'],
+    ['health-diagnostics-shipped', 'HEALTH DIAGNOSTICS (dev only)'],
+  ]) {
+    const leaked = `${FIXED}
+const T="${title}";`;
+    assert.deepEqual(
+      checkFingerprints(leaked).map((f) => f.id),
+      [id],
+      `a bundle carrying "${title}" must be refused`,
+    );
+  }
+  ok('a production bundle carrying either dev-only diagnostics card is refused');
+}
+
 // ---- a negative-only gate would pass on nothing at all -------------------
 {
   const findings = checkFingerprints('');

@@ -94,6 +94,15 @@ const DevIntl: { IntlDiagnostics: React.ComponentType } | null =
   __DEV__ ? require('@/components/IntlDiagnostics') : null;
 
 /**
+ * DEV ONLY (Phase 38M): the Health diagnostics card — what this phone's
+ * HealthKit actually did, in counts and statuses. Same rule as above, plus
+ * never on web: a browser has no HealthKit to diagnose. docs/health-on-device.md.
+ */
+const DevHealth: { HealthDiagnostics: React.ComponentType } | null =
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  __DEV__ ? require('@/components/HealthDiagnostics') : null;
+
+/**
  * THE DAILY REMINDER (Phase 38I). Native only; on web the whole section
  * above says notifications cannot be sent. The switch reads the REAL state:
  * on only when the preference is on AND iOS has granted notifications.
@@ -737,6 +746,7 @@ export default function SettingsScreen() {
         <>
           <Kicker style={styles.sectionKicker}>Developer</Kicker>
           <DevIntl.IntlDiagnostics />
+          {DevHealth && !IS_WEB ? <DevHealth.HealthDiagnostics /> : null}
         </>
       ) : null}
 

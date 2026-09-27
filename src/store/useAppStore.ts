@@ -230,6 +230,13 @@ interface AppState extends ScenarioState {
    * An authorization enum is not a health value (see HealthAuthDiagnostic).
    */
   healthAuthRaw: string | null;
+  /**
+   * Where the Health switch's value came from: the built-in default (never
+   * stored on this phone) or the AsyncStorage blob this phone wrote. It is
+   * never the account — health_enabled is not synced (lib/serverPrefs.ts).
+   * Read by the dev-only Health diagnostics card; nothing branches on it.
+   */
+  healthPrefsSource: 'default' | 'device';
   /** Health prompt dismissals: 'diet' | 'workout' -> local date dismissed. */
   healthPromptDismissed: Partial<Record<'diet' | 'workout', string>>;
   /**
@@ -624,6 +631,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   healthAvailable: false,
   healthAsked: false,
   healthAuthRaw: null,
+  healthPrefsSource: 'default',
   healthPromptDismissed: {},
   healthWorkoutsConsumed: [],
   healthSimulated: false,
@@ -996,7 +1004,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setHealthPref: (key, value) => {
     const nextPrefs = { ...get().healthPrefs, [key]: value };
-    set({ healthPrefs: nextPrefs });
+    set({ healthPrefs: nextPrefs, healthPrefsSource: 'device' });
     persist(HEALTH_PREFS_KEY, nextPrefs);
     // The SWITCH syncs. No reading ever does — see PRIVACY_NOTES.md.
     // healthEnabled itself is deliberately NOT among the synced columns:
@@ -1318,7 +1326,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const storedNotif = restorePrefs(notif, DEFAULT_PREFS);
       if (storedNotif) updates.notificationPrefs = storedNotif;
       const storedHealth = restorePrefs(health, DEFAULT_HEALTH_PREFS);
-      if (storedHealth) updates.healthPrefs = storedHealth;
+      if (storedHealth) {
+        updates.healthPrefs = storedHealth;
+        updates.healthPrefsSource = 'device';
+      }
       const storedWeekly = restoreFlag(weekly);
       if (storedWeekly !== null) updates.weeklyCheckinEnabled = storedWeekly;
       if (checkins) {
@@ -1384,6 +1395,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       unitPreference: remote.unitPreference,
       notificationPrefs: remote.notifications,
       healthPrefs: remote.health,
+      healthPrefsSource: 'device',
       weeklyCheckinEnabled: remote.weeklyCheckinEnabled,
     });
     AsyncStorage.setItem(UNIT_PREF_KEY, remote.unitPreference).catch(() => {});
@@ -1467,6 +1479,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       pingsUsed: { date: localDateKey(), count: 0 },
       screenState: 'ready',
       healthPrefs: DEFAULT_HEALTH_PREFS,
+      healthPrefsSource: 'default',
       healthReadings: EMPTY_READINGS,
       healthPromptDismissed: {},
       healthWorkoutsConsumed: [],
@@ -1639,6 +1652,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       pingsUsed: { date: localDateKey(), count: 0 },
       screenState: 'ready',
       healthPrefs: DEFAULT_HEALTH_PREFS,
+      healthPrefsSource: 'default',
       healthReadings: EMPTY_READINGS,
       healthPromptDismissed: {},
       healthWorkoutsConsumed: [],
