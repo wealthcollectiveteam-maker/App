@@ -3,15 +3,26 @@ import { isRunningInExpoGo } from 'expo';
 import { Platform } from 'react-native';
 
 import {
+  CUMULATIVE_SUM,
+  DAY_INTERVAL,
+  QUANTITY_UNITS,
   READ_TYPES,
   activityLabel,
   authArgs,
+  categoryQueryArgs,
   durationSeconds,
   quantityQueryArgs,
+  recentDaysRange,
+  recentHoursRange,
+  statisticsArgs,
   todayRange,
   workoutQueryArgs,
+  type DateRange,
+  type QuantityReadType,
   type ReadTypeIdentifier,
 } from '@/lib/healthKitArgs';
+import { dedupeWorkouts, sourceLabel } from '@/lib/healthMerge';
+import type { SleepSample } from '@/lib/sleepNight';
 import {
   canAttemptHealthKit,
   parseAuthRequestStatus,
@@ -52,12 +63,30 @@ export interface HealthWorkout {
   type: string;
   minutes: number;
   startISO: string;
+  /** Which writer recorded it — "Apple Watch", "Oura". */
+  source: string;
 }
 
 export interface BodyMassSample {
   kg: number;
   dateISO: string;
 }
+
+/** A total with the writers that contributed. Statistics queries merge them. */
+export interface SummedReading {
+  value: number;
+  sources: string[];
+}
+
+/** One discrete sample — a resting heart rate, an HRV, a respiratory rate. */
+export interface DiscreteSample {
+  value: number;
+  endMs: number;
+  source: string;
+}
+
+/** The 7-day rows: oldest first, today last. null = no bucket value. */
+export type DailyValues = (number | null)[];
 
 /**
  * Read-only Apple Health access. HARD RULES:
@@ -67,6 +96,8 @@ export interface BodyMassSample {
  *   never shown to other users.
  * - Health is a convenience layer: when unavailable, denied, or revoked,
  *   every method resolves to null/empty and the app behaves normally.
+ * - Null means "not read" — and iOS does not say why. [] means "read, and
+ *   there was nothing". The two are never interchangeable.
  */
 export interface IHealthService {
   /** True when a HealthKit source can be queried on this device. */
@@ -82,19 +113,33 @@ export interface IHealthService {
   getAuthRequestStatus(): Promise<HealthAuthRequestStatus>;
   /** Total dietary energy (kcal) logged today, or null when unknown. */
   getTodayDietaryEnergyKcal(): Promise<number | null>;
-  /** Total steps today, or null when unknown. */
-  getTodaySteps(): Promise<number | null>;
+  /** Total steps today, sources merged, or null when unknown. */
+  getTodaySteps(): Promise<SummedReading | null>;
   /** Active energy burned today (kcal), or null when unknown. */
   getTodayActiveEnergyKcal(): Promise<number | null>;
+  /** Dietary water today, in mL, or null when unknown. */
+  getTodayWaterMl(): Promise<SummedReading | null>;
+  /** Mindful minutes today (sessions summed), or null when unknown. */
+  getTodayMindfulMinutes(): Promise<SummedReading | null>;
   /**
-   * Today's workouts, chronological. `[]` means the query RAN and returned
-   * nothing; `null` means it could not run. The two must stay distinct — an
-   * empty array standing in for a failed read is how "No workouts recorded
-   * today" gets printed over an absence of permission.
+   * Today's workouts, chronological, overlapping recordings collapsed to
+   * one. `[]` means the query RAN and returned nothing; `null` means it
+   * could not run.
    */
   getTodayWorkouts(): Promise<HealthWorkout[] | null>;
+  /** Workouts over the last `days` calendar days, same rules. */
+  getRecentWorkouts(days: number): Promise<HealthWorkout[] | null>;
   /** Most recent body-mass sample with its date, or null when unknown. */
   getLatestBodyMass(): Promise<BodyMassSample | null>;
+  /** Raw sleep-analysis samples over the last `hours`. null = not read. */
+  getRecentSleepSamples(hours: number): Promise<SleepSample[] | null>;
+  /** Discrete samples of one type over the last `days`. null = not read. */
+  getRecentSamples(
+    identifier: QuantityReadType,
+    days: number,
+  ): Promise<DiscreteSample[] | null>;
+  /** One value per calendar day for a cumulative type, oldest first. */
+  getDailySums(identifier: QuantityReadType, days: number): Promise<DailyValues | null>;
 }
 
 /** Used on web/Android/Expo Go and whenever HealthKit cannot load. */
@@ -117,19 +162,38 @@ class NullHealthService implements IHealthService {
   async getTodayActiveEnergyKcal() {
     return null;
   }
+  async getTodayWaterMl() {
+    return null;
+  }
+  async getTodayMindfulMinutes() {
+    return null;
+  }
   async getTodayWorkouts(): Promise<HealthWorkout[] | null> {
     // null, not []. Nothing was queried, so nothing may be reported as
     // "queried and empty" — that is the whole distinction.
     return null;
   }
+  async getRecentWorkouts(): Promise<HealthWorkout[] | null> {
+    return null;
+  }
   async getLatestBodyMass() {
+    return null;
+  }
+  async getRecentSleepSamples() {
+    return null;
+  }
+  async getRecentSamples() {
+    return null;
+  }
+  async getDailySums() {
     return null;
   }
 }
 
 /**
- * Dev-menu simulation so the Health-driven UI (card, suggestions, prefill)
- * is QA-able in Expo Go and on web where HealthKit does not exist.
+ * Dev-menu simulation so the Health-driven UI (card, suggestions, prefill,
+ * last night, recovery, 7 days) is QA-able in Expo Go and on web where
+ * HealthKit does not exist. Fake numbers, plainly labelled in the dev sheet.
  */
 class SimulatedHealthService implements IHealthService {
   isAvailable() {
@@ -145,11 +209,17 @@ class SimulatedHealthService implements IHealthService {
   async getTodayDietaryEnergyKcal() {
     return 1430;
   }
-  async getTodaySteps() {
-    return 7412;
+  async getTodaySteps(): Promise<SummedReading> {
+    return { value: 7412, sources: ['Apple Watch', 'iPhone'] };
   }
   async getTodayActiveEnergyKcal() {
     return 534;
+  }
+  async getTodayWaterMl(): Promise<SummedReading> {
+    return { value: 2750, sources: ['iPhone'] };
+  }
+  async getTodayMindfulMinutes(): Promise<SummedReading> {
+    return { value: 12, sources: ['Apple Watch'] };
   }
   async getTodayWorkouts(): Promise<HealthWorkout[]> {
     const start = new Date();
@@ -159,11 +229,65 @@ class SimulatedHealthService implements IHealthService {
         type: 'Functional Strength Training',
         minutes: 47,
         startISO: start.toISOString(),
+        source: 'Apple Watch',
       },
     ];
   }
+  async getRecentWorkouts(days: number): Promise<HealthWorkout[]> {
+    const out: HealthWorkout[] = [];
+    for (let i = 0; i < days; i += 1) {
+      if (i % 2 === 1) continue;
+      const start = new Date();
+      start.setDate(start.getDate() - i);
+      start.setHours(18, 12, 0, 0);
+      out.push({ type: 'Functional Strength Training', minutes: 47, startISO: start.toISOString(), source: 'Apple Watch' });
+    }
+    return out.reverse();
+  }
   async getLatestBodyMass(): Promise<BodyMassSample> {
     return { kg: 82.5, dateISO: new Date().toISOString() };
+  }
+  async getRecentSleepSamples(hours: number): Promise<SleepSample[]> {
+    // One night per day, 22:40 → 06:10, from both a ring and a watch — so
+    // the union rule is exercised on web too.
+    const out: SleepSample[] = [];
+    const nights = Math.ceil(hours / 24);
+    for (let i = 0; i < nights; i += 1) {
+      const wake = new Date();
+      wake.setDate(wake.getDate() - i);
+      wake.setHours(6, 10, 0, 0);
+      const bed = new Date(wake.getTime() - (7 * 60 + 30) * 60_000);
+      out.push({ startMs: bed.getTime(), endMs: wake.getTime(), value: 1, source: 'Oura' });
+      out.push({ startMs: bed.getTime() + 5 * 60_000, endMs: bed.getTime() + 3 * 3_600_000, value: 3, source: 'Apple Watch' });
+      out.push({ startMs: bed.getTime() + 3 * 3_600_000, endMs: bed.getTime() + 4.5 * 3_600_000, value: 4, source: 'Apple Watch' });
+      out.push({ startMs: bed.getTime() + 4.5 * 3_600_000, endMs: wake.getTime() - 5 * 60_000, value: 5, source: 'Apple Watch' });
+    }
+    return out;
+  }
+  async getRecentSamples(identifier: QuantityReadType, days: number): Promise<DiscreteSample[]> {
+    const base =
+      identifier === 'HKQuantityTypeIdentifierRestingHeartRate'
+        ? 54
+        : identifier === 'HKQuantityTypeIdentifierHeartRateVariabilitySDNN'
+          ? 48
+          : 14.5;
+    const out: DiscreteSample[] = [];
+    for (let i = 0; i < days; i += 1) {
+      const at = new Date();
+      at.setDate(at.getDate() - i);
+      at.setHours(4, 30, 0, 0);
+      out.push({ value: base + ((i * 7) % 5) - 2, endMs: at.getTime(), source: 'Apple Watch' });
+    }
+    return out;
+  }
+  async getDailySums(identifier: QuantityReadType, days: number): Promise<DailyValues> {
+    const base =
+      identifier === 'HKQuantityTypeIdentifierStepCount'
+        ? 7000
+        : identifier === 'HKQuantityTypeIdentifierDietaryWater'
+          ? 2500
+          : 500;
+    return Array.from({ length: days }, (_, i) => base + ((i * 1234) % 2000));
   }
 }
 
@@ -211,13 +335,28 @@ function describeRaw(value: unknown): string {
   }
 }
 
-/** The unit each quantity type is read in. Body mass is read separately. */
-const QUANTITY_UNITS: Partial<Record<ReadTypeIdentifier, string>> = {
-  HKQuantityTypeIdentifierDietaryEnergyConsumed: 'kcal',
-  HKQuantityTypeIdentifierStepCount: 'count',
-  HKQuantityTypeIdentifierActiveEnergyBurned: 'kcal',
-  HKQuantityTypeIdentifierBodyMass: 'kg',
-};
+/** The writer's name off a sample or a statistics response. */
+function sampleSource(raw: unknown): string {
+  const rev = (raw as { sourceRevision?: { source?: { name?: unknown } } })?.sourceRevision;
+  return sourceLabel(rev?.source?.name);
+}
+
+function statisticsSources(raw: unknown): string[] {
+  const list = (raw as { sources?: unknown })?.sources;
+  if (!Array.isArray(list)) return [];
+  const names = new Set<string>();
+  for (const s of list) names.add(sourceLabel((s as { name?: unknown })?.name));
+  return [...names].sort();
+}
+
+function toMs(raw: unknown): number | null {
+  if (raw instanceof Date) return raw.getTime();
+  if (typeof raw === 'string' || typeof raw === 'number') {
+    const ms = new Date(raw).getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
 
 /**
  * Real HealthKit reads via @kingstinct/react-native-healthkit. The module
@@ -228,6 +367,12 @@ const QUANTITY_UNITS: Partial<Record<ReadTypeIdentifier, string>> = {
  *
  * Every argument handed to the library is built in lib/healthKitArgs.ts,
  * the one place its dialect is spelled and proved against its source.
+ *
+ * CUMULATIVE TYPES (steps, energy, water) are read with HealthKit's
+ * STATISTICS query, not by summing samples: the statistics query merges
+ * overlapping sources, so a phone and a watch that both counted a walk
+ * count it once. Summing raw samples counted it twice. Workouts are
+ * collapsed by lib/healthMerge.ts for the same reason.
  */
 class HealthKitService implements IHealthService {
   private mod: any | null = null;
@@ -335,107 +480,153 @@ class HealthKitService implements IHealthService {
     }
   }
 
-  /** Raw samples for one quantity type, today. Throws on failure. */
-  private async quantitySamplesToday(
-    identifier: ReadTypeIdentifier,
-  ): Promise<{ quantity?: number }[]> {
+  private need(): any {
     const mod = this.getModule();
     if (!mod) throw new Error('module not loaded');
-    const samples = await mod.queryQuantitySamples(
+    return mod;
+  }
+
+  // ---- raw reads: each THROWS on failure; the public methods catch ------
+
+  /** Raw samples for one quantity type over a range. */
+  private async quantitySamples(identifier: QuantityReadType, range: DateRange): Promise<unknown[]> {
+    const samples = await this.need().queryQuantitySamples(
       identifier,
-      quantityQueryArgs(todayRange(), QUANTITY_UNITS[identifier] ?? 'count'),
+      quantityQueryArgs(range, QUANTITY_UNITS[identifier]),
     );
     return Array.isArray(samples) ? samples : [];
   }
 
-  private async sumQuantityToday(
-    identifier: ReadTypeIdentifier,
-  ): Promise<number | null> {
+  /** Raw category samples (sleep, mindful) over a range. */
+  private async categorySamples(identifier: ReadTypeIdentifier, range: DateRange): Promise<unknown[]> {
+    const samples = await this.need().queryCategorySamples(identifier, categoryQueryArgs(range));
+    return Array.isArray(samples) ? samples : [];
+  }
+
+  /**
+   * HealthKit's own sum over a range, sources merged. Null when there were
+   * no samples — a sum over nothing is not zero, it is "nothing to read".
+   */
+  private async sumOver(identifier: QuantityReadType, range: DateRange): Promise<SummedReading | null> {
+    const res = await this.need().queryStatisticsForQuantity(
+      identifier,
+      [...CUMULATIVE_SUM],
+      statisticsArgs(range, QUANTITY_UNITS[identifier]),
+    );
+    const q = (res as { sumQuantity?: { quantity?: unknown } })?.sumQuantity?.quantity;
+    if (typeof q !== 'number' || !Number.isFinite(q)) return null;
+    return { value: q, sources: statisticsSources(res) };
+  }
+
+  private async workoutsOver(range: DateRange): Promise<unknown[]> {
+    const workouts = await this.need().queryWorkoutSamples(workoutQueryArgs(range));
+    return Array.isArray(workouts) ? workouts : [];
+  }
+
+  private async latestBodyMassSample(): Promise<
+    { quantity?: number; endDate?: string | Date } | undefined
+  > {
+    // The library's own helper: limit 1, newest first (Helpers.swift sorts
+    // by start date descending when `ascending` is not set).
+    return this.need().getMostRecentQuantitySample('HKQuantityTypeIdentifierBodyMass', 'kg');
+  }
+
+  // ---- the public surface -------------------------------------------------
+
+  private async sumToday(identifier: QuantityReadType): Promise<SummedReading | null> {
     try {
-      const samples = await this.quantitySamplesToday(identifier);
-      // No samples is not zero — it is "nothing to read", which the caller
-      // renders as a dash. A total of 0 ACROSS REAL SAMPLES is a
-      // measurement and is returned as 0.
-      if (!samples.length) return null;
-      const total = samples.reduce(
-        (sum: number, s: { quantity?: number }) => sum + (s.quantity ?? 0),
-        0,
-      );
-      return Math.round(total);
+      return await this.sumOver(identifier, todayRange());
     } catch {
       return null;
     }
   }
 
-  getTodayDietaryEnergyKcal(): Promise<number | null> {
-    return this.sumQuantityToday('HKQuantityTypeIdentifierDietaryEnergyConsumed');
+  async getTodayDietaryEnergyKcal(): Promise<number | null> {
+    const s = await this.sumToday('HKQuantityTypeIdentifierDietaryEnergyConsumed');
+    return s ? Math.round(s.value) : null;
   }
 
-  getTodaySteps(): Promise<number | null> {
-    return this.sumQuantityToday('HKQuantityTypeIdentifierStepCount');
+  async getTodaySteps(): Promise<SummedReading | null> {
+    const s = await this.sumToday('HKQuantityTypeIdentifierStepCount');
+    return s ? { ...s, value: Math.round(s.value) } : null;
   }
 
-  getTodayActiveEnergyKcal(): Promise<number | null> {
-    return this.sumQuantityToday('HKQuantityTypeIdentifierActiveEnergyBurned');
+  async getTodayActiveEnergyKcal(): Promise<number | null> {
+    const s = await this.sumToday('HKQuantityTypeIdentifierActiveEnergyBurned');
+    return s ? Math.round(s.value) : null;
   }
 
-  /** Raw workout proxies for today. Throws on failure. */
-  private async workoutsToday(): Promise<unknown[]> {
-    const mod = this.getModule();
-    if (!mod) throw new Error('module not loaded');
-    const workouts = await mod.queryWorkoutSamples(workoutQueryArgs(todayRange()));
-    return Array.isArray(workouts) ? workouts : [];
+  async getTodayWaterMl(): Promise<SummedReading | null> {
+    const s = await this.sumToday('HKQuantityTypeIdentifierDietaryWater');
+    return s ? { ...s, value: Math.round(s.value) } : null;
+  }
+
+  async getTodayMindfulMinutes(): Promise<SummedReading | null> {
+    try {
+      const samples = await this.categorySamples('HKCategoryTypeIdentifierMindfulSession', todayRange());
+      if (!samples.length) return null;
+      let ms = 0;
+      const sources = new Set<string>();
+      for (const s of samples) {
+        const start = toMs((s as { startDate?: unknown }).startDate);
+        const end = toMs((s as { endDate?: unknown }).endDate);
+        if (start != null && end != null && end > start) ms += end - start;
+        sources.add(sampleSource(s));
+      }
+      return { value: Math.round(ms / 60_000), sources: [...sources].sort() };
+    } catch {
+      return null;
+    }
+  }
+
+  private mapWorkouts(raw: unknown[]): HealthWorkout[] {
+    // The library exports the numeric enum with its reverse mapping; that
+    // is how 20 becomes "Functional Strength Training" and never "20".
+    const enumTable = (this.mod?.WorkoutActivityType ?? null) as Record<number, unknown> | null;
+    const intervals = raw
+      .map((r) => {
+        const w = r as { duration?: unknown; workoutActivityType?: unknown; startDate?: unknown };
+        const seconds = durationSeconds(w.duration);
+        const startMs = toMs(w.startDate) ?? Date.now();
+        return {
+          startMs,
+          endMs: startMs + seconds * 1000,
+          source: sampleSource(r),
+          type: activityLabel(w.workoutActivityType, enumTable),
+        };
+      })
+      .filter((w) => w.endMs > w.startMs);
+    // One activity, many writers: overlapping recordings collapse to the
+    // longer one (lib/healthMerge.ts).
+    return dedupeWorkouts(intervals)
+      .map((w) => ({
+        type: w.type,
+        minutes: Math.round((w.endMs - w.startMs) / 60_000),
+        startISO: new Date(w.startMs).toISOString(),
+        source: w.source,
+      }))
+      .filter((w) => w.minutes > 0);
   }
 
   async getTodayWorkouts(): Promise<HealthWorkout[] | null> {
-    const mod = this.getModule();
-    if (!mod) return null;
     try {
-      const workouts = await this.workoutsToday();
       // The query ran. An empty result is a result.
-      if (!workouts.length) return [];
-      // The library exports the numeric enum with its reverse mapping; that
-      // is how 20 becomes "Functional Strength Training" and never "20".
-      const enumTable = (mod.WorkoutActivityType ?? null) as Record<number, unknown> | null;
-      return workouts
-        .map((raw: unknown) => {
-          const w = raw as {
-            duration?: unknown;
-            workoutActivityType?: unknown;
-            startDate?: string | Date;
-          };
-          return {
-            type: activityLabel(w.workoutActivityType, enumTable),
-            minutes: Math.round(durationSeconds(w.duration) / 60),
-            startISO: w.startDate
-              ? new Date(w.startDate).toISOString()
-              : new Date().toISOString(),
-          };
-        })
-        .filter((w: HealthWorkout) => w.minutes > 0)
-        .sort((a: HealthWorkout, b: HealthWorkout) =>
-          a.startISO.localeCompare(b.startISO),
-        );
+      return this.mapWorkouts(await this.workoutsOver(todayRange()));
     } catch {
       // The query did NOT run. Never [].
       return null;
     }
   }
 
-  /** The most recent body-mass sample, raw. Throws on failure. */
-  private async latestBodyMassSample(): Promise<
-    { quantity?: number; endDate?: string | Date } | undefined
-  > {
-    const mod = this.getModule();
-    if (!mod) throw new Error('module not loaded');
-    // The library's own helper: limit 1, newest first (Helpers.swift sorts
-    // by start date descending when `ascending` is not set).
-    return mod.getMostRecentQuantitySample('HKQuantityTypeIdentifierBodyMass', 'kg');
+  async getRecentWorkouts(days: number): Promise<HealthWorkout[] | null> {
+    try {
+      return this.mapWorkouts(await this.workoutsOver(recentDaysRange(days)));
+    } catch {
+      return null;
+    }
   }
 
   async getLatestBodyMass(): Promise<BodyMassSample | null> {
-    const mod = this.getModule();
-    if (!mod) return null;
     try {
       const sample = await this.latestBodyMassSample();
       if (sample?.quantity == null) return null;
@@ -445,6 +636,66 @@ class HealthKitService implements IHealthService {
           ? new Date(sample.endDate).toISOString()
           : new Date().toISOString(),
       };
+    } catch {
+      return null;
+    }
+  }
+
+  async getRecentSleepSamples(hours: number): Promise<SleepSample[] | null> {
+    try {
+      const raw = await this.categorySamples('HKCategoryTypeIdentifierSleepAnalysis', recentHoursRange(hours));
+      const out: SleepSample[] = [];
+      for (const s of raw) {
+        const r = s as { startDate?: unknown; endDate?: unknown; value?: unknown };
+        const startMs = toMs(r.startDate);
+        const endMs = toMs(r.endDate);
+        if (startMs == null || endMs == null || typeof r.value !== 'number') continue;
+        out.push({ startMs, endMs, value: r.value, source: sampleSource(s) });
+      }
+      return out;
+    } catch {
+      return null;
+    }
+  }
+
+  async getRecentSamples(identifier: QuantityReadType, days: number): Promise<DiscreteSample[] | null> {
+    try {
+      const raw = await this.quantitySamples(identifier, recentDaysRange(days));
+      const out: DiscreteSample[] = [];
+      for (const s of raw) {
+        const r = s as { quantity?: unknown; endDate?: unknown };
+        const endMs = toMs(r.endDate);
+        if (typeof r.quantity !== 'number' || endMs == null) continue;
+        out.push({ value: r.quantity, endMs, source: sampleSource(s) });
+      }
+      return out;
+    } catch {
+      return null;
+    }
+  }
+
+  async getDailySums(identifier: QuantityReadType, days: number): Promise<DailyValues | null> {
+    try {
+      const range = recentDaysRange(days);
+      const buckets = await this.need().queryStatisticsCollectionForQuantity(
+        identifier,
+        [...CUMULATIVE_SUM],
+        range.startDate,
+        { ...DAY_INTERVAL },
+        statisticsArgs(range, QUANTITY_UNITS[identifier]),
+      );
+      const out: DailyValues = Array.from({ length: days }, () => null);
+      if (!Array.isArray(buckets)) return out;
+      for (const b of buckets) {
+        const r = b as { startDate?: unknown; sumQuantity?: { quantity?: unknown } };
+        const startMs = toMs(r.startDate);
+        const q = r.sumQuantity?.quantity;
+        if (startMs == null || typeof q !== 'number') continue;
+        // Which of the `days` local calendar days this bucket begins on.
+        const idx = Math.round((startMs - range.startDate.getTime()) / 86_400_000);
+        if (idx >= 0 && idx < days) out[idx] = q;
+      }
+      return out;
     } catch {
       return null;
     }
@@ -462,11 +713,21 @@ class HealthKitService implements IHealthService {
       try {
         let count: number;
         if (id === 'HKWorkoutTypeIdentifier') {
-          count = (await this.workoutsToday()).length;
+          count = (await this.workoutsOver(todayRange())).length;
         } else if (id === 'HKQuantityTypeIdentifierBodyMass') {
           count = (await this.latestBodyMassSample()) ? 1 : 0;
+        } else if (id === 'HKCategoryTypeIdentifierSleepAnalysis') {
+          count = (await this.categorySamples(id, recentHoursRange(36))).length;
+        } else if (id === 'HKCategoryTypeIdentifierMindfulSession') {
+          count = (await this.categorySamples(id, todayRange())).length;
+        } else if (
+          id === 'HKQuantityTypeIdentifierRestingHeartRate' ||
+          id === 'HKQuantityTypeIdentifierHeartRateVariabilitySDNN' ||
+          id === 'HKQuantityTypeIdentifierRespiratoryRate'
+        ) {
+          count = (await this.quantitySamples(id, recentDaysRange(7))).length;
         } else {
-          count = (await this.quantitySamplesToday(id)).length;
+          count = (await this.quantitySamples(id, todayRange())).length;
         }
         out.push({ id, status: count > 0 ? 'ok' : 'empty', count });
       } catch (error) {

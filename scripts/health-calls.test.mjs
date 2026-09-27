@@ -35,11 +35,18 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  CUMULATIVE_SUM,
+  CUMULATIVE_TYPES,
+  DAY_INTERVAL,
+  QUANTITY_UNITS,
   READ_TYPES,
   activityLabel,
   authArgs,
+  categoryQueryArgs,
   durationSeconds,
   quantityQueryArgs,
+  recentDaysRange,
+  statisticsArgs,
   todayRange,
   workoutQueryArgs,
 } from '../src/lib/healthKitArgs.ts';
@@ -93,12 +100,67 @@ function ok(label) {
   ok('installed library: a workout carries a NUMERIC activity enum and a Quantity duration (Workouts.ts)');
 }
 
+// ---- 1b. Phase 38N: the six new types exist in the installed library ------
+{
+  const generated = read(lib, 'src', 'generated', 'healthkit.generated.ts');
+  for (const id of READ_TYPES) {
+    if (id === 'HKWorkoutTypeIdentifier') continue;
+    assert.ok(generated.includes(`'${id}'`), `${id} is a type the installed library knows`);
+  }
+  const constants = read(lib, 'src', 'types', 'Constants.ts');
+  assert.match(constants, /WorkoutTypeIdentifier = 'HKWorkoutTypeIdentifier'/);
+  ok('every one of the 11 read types is an identifier the installed library defines');
+
+  // Sleep stages: the numeric enum sleepNight.ts decodes.
+  assert.match(
+    generated,
+    /export enum CategoryValueSleepAnalysis \{\s*inBed = 0,\s*asleepUnspecified = 1,\s*asleep = 1,\s*awake = 2,\s*asleepCore = 3,\s*asleepDeep = 4,\s*asleepREM = 5,/,
+  );
+  ok('installed library: sleep analysis values are inBed 0 / asleep 1 / awake 2 / core 3 / deep 4 / REM 5');
+
+  // Category samples take the same options as quantity samples: limit is
+  // required (QueryOptionsWithSortOrder extends GenericQueryOptions).
+  const cat = read(lib, 'src', 'specs', 'CategoryTypeModule.nitro.ts');
+  assert.match(cat, /queryCategorySamples\(\s*identifier: CategoryTypeIdentifier,\s*options: QueryOptionsWithSortOrder,/);
+  const catSample = read(lib, 'src', 'types', 'CategoryType.ts');
+  assert.match(catSample, /interface CategorySample extends BaseSample[\s\S]*?readonly value: CategoryValueForIdentifier/);
+  ok('installed library: category samples are queried with QueryOptionsWithSortOrder and carry a numeric value');
+
+  // Statistics: options are OPTIONAL and carry only filter + unit — no limit.
+  const qspec = read(lib, 'src', 'specs', 'QuantityTypeModule.nitro.ts');
+  assert.match(qspec, /queryStatisticsForQuantity\(\s*identifier: QuantityTypeIdentifier,\s*statistics: readonly StatisticsOptions\[\],\s*options\?: StatisticsQueryOptionsWithStringUnit,/);
+  assert.match(qspec, /queryStatisticsCollectionForQuantity\(\s*identifier: QuantityTypeIdentifier,\s*statistics: readonly StatisticsOptions\[\],\s*anchorDate: Date,\s*intervalComponents: IntervalComponents,\s*options\?: StatisticsQueryOptionsWithStringUnit,/);
+  const qtypes = read(lib, 'src', 'types', 'QuantityType.ts');
+  const statsOpts = qtypes.slice(qtypes.indexOf('export interface StatisticsQueryOptions<'));
+  assert.match(statsOpts.slice(0, statsOpts.indexOf('}')), /filter\?: FilterForSamples\s*unit\?: TUnit/);
+  assert.doesNotMatch(statsOpts.slice(0, statsOpts.indexOf('}')), /limit/);
+  assert.match(qtypes, /type StatisticsOptions =[\s\S]*?'cumulativeSum'/);
+  assert.match(qtypes, /interface QueryStatisticsResponse[\s\S]*?readonly sumQuantity\?: Quantity[\s\S]*?sources: SourceProxy\[\]/);
+  assert.match(qtypes, /interface IntervalComponents[\s\S]*?readonly day\?: number/);
+  ok('installed library: statistics take optional { filter, unit }, answer sumQuantity + sources, bucket by IntervalComponents');
+
+  // Every sample carries who wrote it.
+  const shared = read(lib, 'src', 'types', 'Shared.ts');
+  assert.match(shared, /interface BaseObject[\s\S]*?readonly sourceRevision: SourceRevision/);
+  const source = read(lib, 'src', 'specs', 'SourceProxy.nitro.ts');
+  assert.match(source, /readonly name: string/);
+  ok('installed library: every sample names its source (sourceRevision.source.name)');
+}
+
 // ---- 2. the app's builders emit that dialect ------------------------------
 {
   const args = authArgs();
   assert.deepEqual(Object.keys(args), ['toRead']);
   assert.deepEqual(args.toRead, [...READ_TYPES]);
-  assert.equal(READ_TYPES.length, 5, 'five read types, never a write type');
+  assert.equal(READ_TYPES.length, 11, 'eleven read types, never a write type');
+  assert.ok(READ_TYPES.every((t) => !/Share|Write/.test(t)));
+  for (const t of Object.keys(QUANTITY_UNITS)) assert.ok(READ_TYPES.includes(t), `${t} has a unit and is read`);
+  assert.equal(QUANTITY_UNITS.HKQuantityTypeIdentifierDietaryWater, 'mL');
+  assert.equal(QUANTITY_UNITS.HKQuantityTypeIdentifierRestingHeartRate, 'count/min');
+  assert.equal(QUANTITY_UNITS.HKQuantityTypeIdentifierRespiratoryRate, 'count/min');
+  assert.equal(QUANTITY_UNITS.HKQuantityTypeIdentifierHeartRateVariabilitySDNN, 'ms');
+  for (const t of CUMULATIVE_TYPES) assert.ok(t in QUANTITY_UNITS);
+  assert.ok(!CUMULATIVE_TYPES.includes('HKQuantityTypeIdentifierRestingHeartRate'), 'a heart rate is not summed');
   assert.ok(!('toShare' in args), 'no share list is ever built - read-only');
   ok('authArgs asks about the five read types under toRead, and never builds a share list');
 }
@@ -115,6 +177,7 @@ function ok(label) {
     filter: { date: { startDate: range.startDate, endDate: range.endDate } },
     unit: 'kcal',
     limit: 0,
+    ascending: true,
   });
   assert.equal(typeof q.limit, 'number', 'limit must be a number - undefined throws in asNumber()');
   assert.ok(q.limit <= 0, 'a day of step samples is hundreds of rows; 0 means all of them');
@@ -127,6 +190,26 @@ function ok(label) {
     ascending: true,
   });
   ok('workoutQueryArgs: filter.date range, limit 0, chronological');
+
+  const c = categoryQueryArgs(range);
+  assert.deepEqual(c, {
+    filter: { date: { startDate: range.startDate, endDate: range.endDate } },
+    limit: 0,
+    ascending: true,
+  });
+  ok('categoryQueryArgs: the same required limit, for sleep and mindful sessions');
+
+  const st = statisticsArgs(range, 'count');
+  assert.deepEqual(st, { filter: { date: { startDate: range.startDate, endDate: range.endDate } }, unit: 'count' });
+  assert.ok(!('limit' in st), 'statistics options have no limit field');
+  assert.deepEqual([...CUMULATIVE_SUM], ['cumulativeSum']);
+  assert.deepEqual(DAY_INTERVAL, { day: 1 });
+  ok('statisticsArgs: filter.date + unit only; cumulativeSum in day buckets');
+
+  const week = recentDaysRange(7, now);
+  assert.equal(week.startDate.getTime(), new Date(2026, 8, 21, 0, 0, 0, 0).getTime(), 'today and the six before it');
+  assert.equal(week.endDate.getTime(), now.getTime());
+  ok('recentDaysRange(7) starts at local midnight six days ago');
 }
 
 {
@@ -160,6 +243,10 @@ function ok(label) {
 
   assert.match(svc, /queryQuantitySamples\([^)]*quantityQueryArgs\(/);
   assert.match(svc, /queryWorkoutSamples\(\s*workoutQueryArgs\(/);
+  assert.match(svc, /queryCategorySamples\([^)]*categoryQueryArgs\(/, 'sleep and mindful go through categoryQueryArgs');
+  assert.match(svc, /queryStatisticsForQuantity\([^)]*CUMULATIVE_SUM[^)]*statisticsArgs\(/, 'today’s sums use the statistics query');
+  assert.match(svc, /queryStatisticsCollectionForQuantity\([\s\S]*?DAY_INTERVAL[\s\S]*?statisticsArgs\(/, 'the 7-day rows use day buckets');
+  assert.doesNotMatch(svc, /\.reduce\([\s\S]{0,120}\.quantity/, 'no summing of raw samples — two sources would count twice');
   assert.doesNotMatch(
     svc,
     /filter:\s*\{\s*startDate/,
@@ -169,7 +256,9 @@ function ok(label) {
 
   assert.match(svc, /activityLabel\(/);
   assert.match(svc, /durationSeconds\(/);
-  ok('HealthService labels workouts through activityLabel() and durationSeconds()');
+  assert.match(svc, /dedupeWorkouts\(/, 'overlapping workouts from two writers collapse to one');
+  assert.match(svc, /sourceLabel\(/, 'every reading names its source');
+  ok('HealthService labels workouts, collapses overlapping ones, and names sources');
 }
 
 console.log(`\nAll ${passes} Health call-shape checks passed.`);

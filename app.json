@@ -57,7 +57,7 @@
       [
         "@kingstinct/react-native-healthkit",
         {
-          "NSHealthShareUsageDescription": "Ranked Fitness reads five things: today's steps, today's active energy, today's workouts, your logged food energy, and your most recent weight. Steps, active energy and workouts are shown on the app's Today's Health card; food energy and workouts are used to suggest marking a daily task complete, and your weight pre-fills the optional weekly check-in. Nothing is written to Health. This data stays on your device and is never uploaded or shared.",
+          "NSHealthShareUsageDescription": "Ranked Fitness reads from Apple Health only to show you your own numbers and to offer to tick off a daily task you have linked to them. It reads: steps, active energy and workouts (today's activity, and a workout can vouch for a workout task); logged food energy (to offer to mark your diet task done); your most recent weight (to pre-fill the weekly check-in); sleep (how long you slept and when you woke, for sleep and wake-up tasks and a last-night summary); water (for a water task); mindful minutes (for a meditation task); and resting heart rate, heart rate variability and respiratory rate (shown as last night's value beside a 7-day average). Nothing is written to Health. Everything read stays on this phone: it is never uploaded, never stored on our servers, and never visible to your squad. Only the tasks you confirm as done are shared, never the Health data behind them.",
           "NSHealthUpdateUsageDescription": false,
           "background": false
         }

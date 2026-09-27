@@ -3,7 +3,9 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { Card, OutlineButton } from '@/components/ui';
 import { formatClock } from '@/lib/intl';
+import { dateKeyIn, formatHoursMinutes, sleepNightFor, type SleepNight } from '@/lib/sleepNight';
 import {
+  getHealthService,
   runHealthDiagnostics,
   type HealthDiagnosticsReport,
   type HealthReadProbe,
@@ -17,7 +19,7 @@ import { colors, font } from '@/theme/tokens';
  * `isHealthDataAvailable()` returned, the RAW answer to
  * `getRequestStatusForAuthorization` (typeof and value, unmapped) next to the
  * state the app mapped it to, the Health switch and where its value came
- * from, and for each of the five read types whether the query ran, errored,
+ * from, and for each read type whether the query ran, errored,
  * or came back empty — with a SAMPLE COUNT and nothing else.
  *
  * Loaded from Settings through `__DEV__ ? require(...) : null`, so a
@@ -39,6 +41,12 @@ const READ_LABELS: Record<HealthReadProbe['id'], string> = {
   HKQuantityTypeIdentifierStepCount: 'steps (today)',
   HKQuantityTypeIdentifierActiveEnergyBurned: 'active energy (today)',
   HKWorkoutTypeIdentifier: 'workouts (today)',
+  HKCategoryTypeIdentifierSleepAnalysis: 'sleep analysis (last 36 h)',
+  HKQuantityTypeIdentifierDietaryWater: 'dietary water (today)',
+  HKCategoryTypeIdentifierMindfulSession: 'mindful sessions (today)',
+  HKQuantityTypeIdentifierRestingHeartRate: 'resting heart rate (7 d)',
+  HKQuantityTypeIdentifierHeartRateVariabilitySDNN: 'HRV, SDNN (7 d)',
+  HKQuantityTypeIdentifierRespiratoryRate: 'respiratory rate (7 d)',
 };
 
 function readLine(p: HealthReadProbe): { text: string; ok: boolean } {
@@ -56,6 +64,10 @@ function readLine(p: HealthReadProbe): { text: string; ok: boolean } {
 
 export function HealthDiagnostics() {
   const [report, setReport] = useState<HealthDiagnosticsReport | null>(null);
+  // N2b: last night per SOURCE next to the union, so Oura + Watch being ADDED
+  // rather than merged would read as two totals that sum to the union.
+  const [night, setNight] = useState<SleepNight | null | 'unread'>('unread');
+  const zone = useAppStore((s) => s.challengeTimezone ?? undefined);
   const [running, setRunning] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -72,6 +84,8 @@ export function HealthDiagnostics() {
     try {
       const next = await runHealthDiagnostics();
       setReport(next);
+      const samples = await getHealthService().getRecentSleepSamples(36);
+      setNight(samples ? sleepNightFor(samples, dateKeyIn(Date.now(), zone), zone) : 'unread');
       // So the store's own view (the card, the switch) is as fresh as this.
       await refreshHealth();
     } catch (e) {
@@ -79,7 +93,7 @@ export function HealthDiagnostics() {
     } finally {
       setRunning(false);
     }
-  }, [refreshHealth]);
+  }, [refreshHealth, zone]);
 
   useEffect(() => {
     run();
@@ -109,7 +123,7 @@ export function HealthDiagnostics() {
     if (report.auth.parsedAs === 'unknown') return `BAD — the authorization answer was not understood: ${report.auth.raw}.`;
     if (report.auth.parsedAs === 'not-requested') return 'GOOD — HealthKit is here and this phone has NOT been asked yet. Track should show the Connect prompt.';
     const errors = report.reads.filter((r) => r.status === 'error').length;
-    if (errors > 0) return `PARTIAL — asked, but ${errors} of 5 reads errored. See below.`;
+    if (errors > 0) return `PARTIAL — asked, but ${errors} of ${report.reads.length} reads errored. See below.`;
     return 'GOOD — asked, and every read ran. Zero-sample rows are no data or no access; iOS does not say which.';
   })();
 
@@ -155,6 +169,24 @@ export function HealthDiagnostics() {
             const line = readLine(p);
             return row(READ_LABELS[p.id], line.text, line.ok);
           })}
+
+          <Text style={styles.section}>Last night, per source (union must not be the sum)</Text>
+          {night === 'unread'
+            ? row('sleep', 'not read', false)
+            : night === null
+              ? row('sleep', 'no main sleep ended today in the challenge zone')
+              : (
+                <>
+                  {night.perSource.map((p) => row(p.source, formatHoursMinutes(p.asleepMinutes)))}
+                  {row('UNION (what the app uses)', formatHoursMinutes(night.asleepMinutes), true)}
+                  {night.perSource.length > 1
+                    ? row(
+                        'sum of sources (must be ≥ union)',
+                        formatHoursMinutes(night.perSource.reduce((a, p) => a + p.asleepMinutes, 0)),
+                      )
+                    : null}
+                </>
+              )}
         </>
       ) : null}
 
