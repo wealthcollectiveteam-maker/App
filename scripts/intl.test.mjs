@@ -182,6 +182,7 @@ if (!USE_OLD) {
     ['src', 'components', 'TodaysHealthCard.tsx'],
     ['src', 'components', 'WeeklyCheckinCard.tsx'],
     ['src', 'components', 'HealthSuggestion.tsx'],
+    ['src', 'components', 'HealthInsights.tsx'],
     ['src', 'components', 'HealthLinkSheet.tsx'],
     ['src', 'components', 'RestoreBlock.tsx'],
     ['src', 'app', 'metrics-history.tsx'],

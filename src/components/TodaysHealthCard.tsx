@@ -7,6 +7,7 @@ import {
 import React from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { HealthInsights } from '@/components/HealthInsights';
 import { Card, Kicker, OutlineButton } from '@/components/ui';
 import { healthCardState } from '@/lib/healthCardState';
 import { formatCalendar, formatClock, formatInteger } from '@/lib/intl';
@@ -103,6 +104,7 @@ export function TodaysHealthCard() {
 
   if (state.kind === 'nothing-returned') {
     return (
+      <>
       <Card style={{ marginBottom: 14 }}>
         <Kicker style={{ marginBottom: 10 }}>
           Today{'’'}s health
@@ -119,10 +121,13 @@ export function TodaysHealthCard() {
           />
         </View>
       </Card>
+      <HealthInsights />
+      </>
     );
   }
 
   return (
+    <>
     <Card style={{ marginBottom: 14 }}>
       <Kicker style={{ marginBottom: 10 }}>Today{'’'}s health</Kicker>
 
@@ -173,7 +178,7 @@ export function TodaysHealthCard() {
                 {w.type}
               </Text>
               <Text style={styles.workoutMeta}>
-                {w.minutes} min · {timeLabel(w.startISO)}
+                {w.minutes} min · {timeLabel(w.startISO)} · {w.source}
               </Text>
             </View>
           ))
@@ -190,6 +195,9 @@ export function TodaysHealthCard() {
         </Pressable>
       )}
     </Card>
+    {/* Last night, recovery, 7 days (Phase 38N). Component state only. */}
+    <HealthInsights />
+    </>
   );
 }
 
