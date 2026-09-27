@@ -50,6 +50,38 @@ const NOTHING = {
   bodyMass: null,
 };
 
+// ---- Phase 38M: "never connected" and "turned off" are different -----------
+{
+  // The owner turned Health OFF in Settings after connecting. iOS has been
+  // asked (and will not un-ask), the switch is off. The Track prompt must NOT
+  // come back and nag — a deliberate off is respected. This is the case the
+  // old decision could not express: it saw "not connected" and offered to
+  // connect again, every time.
+  const state = healthCardState({
+    available: true,
+    connected: false, // what the old signature saw
+    asked: true,
+    switchOn: false,
+    readings: NOTHING,
+  });
+  assert.deepEqual(state, { kind: 'off' });
+  ok('asked and switched OFF renders nothing — a deliberate off is not nagged');
+}
+
+{
+  // The legacy blob: a build whose default was ON wrote healthEnabled:true on
+  // a phone iOS has never asked. That is not a connection; it is the Connect
+  // prompt, exactly as if the switch were off.
+  const state = healthCardState({
+    available: true,
+    asked: false,
+    switchOn: true,
+    readings: NOTHING,
+  });
+  assert.deepEqual(state, { kind: 'connect' });
+  ok('switch ON but never asked still renders the Connect prompt');
+}
+
 // ---- the fresh-install case: the one that would have shipped --------------
 {
   // Fresh install on a real iPhone. HealthKit is there, the sheet has never
@@ -57,7 +89,8 @@ const NOTHING = {
   // never a data card, and never a data card full of zeroes.
   const state = healthCardState({
     available: true,
-    connected: false,
+    asked: false,
+    switchOn: false,
     readings: NOTHING,
   });
   assert.deepEqual(state, { kind: 'connect' });
@@ -69,7 +102,8 @@ const NOTHING = {
   // granted, every read null. It must NOT become a readings card.
   const state = healthCardState({
     available: true,
-    connected: true,
+    asked: true,
+    switchOn: true,
     readings: NOTHING,
   });
   assert.equal(state.kind, 'nothing-returned');
@@ -78,10 +112,11 @@ const NOTHING = {
 
 // ---- web, Android, Expo Go, simulator: no card at all ---------------------
 {
-  for (const connected of [false, true]) {
+  for (const asked of [false, true]) {
     const state = healthCardState({
       available: false,
-      connected,
+      asked,
+      switchOn: asked,
       readings: NOTHING,
     });
     assert.deepEqual(
@@ -99,7 +134,8 @@ const NOTHING = {
   // come back are dashes. The footnote is what carries the ambiguity.
   const state = healthCardState({
     available: true,
-    connected: true,
+    asked: true,
+    switchOn: true,
     readings: { ...NOTHING, steps: 4210 },
   });
   assert.equal(state.kind, 'readings');
@@ -113,7 +149,8 @@ const NOTHING = {
   // fact; 0 standing in for "never allowed to look" is a claim.
   const state = healthCardState({
     available: true,
-    connected: true,
+    asked: true,
+    switchOn: true,
     readings: {
       dietaryKcal: 0,
       steps: 0,
@@ -131,7 +168,8 @@ const NOTHING = {
   // card has an answer, so it must not fall into 'nothing-returned'.
   const queried = healthCardState({
     available: true,
-    connected: true,
+    asked: true,
+    switchOn: true,
     readings: { ...NOTHING, workouts: [] },
   });
   assert.equal(queried.kind, 'readings');
@@ -140,7 +178,8 @@ const NOTHING = {
   // card knows nothing at all.
   const notQueried = healthCardState({
     available: true,
-    connected: true,
+    asked: true,
+    switchOn: true,
     readings: { ...NOTHING, workouts: null },
   });
   assert.equal(notQueried.kind, 'nothing-returned');
@@ -151,7 +190,8 @@ const NOTHING = {
   // A full read: nothing unknown, so nothing to explain.
   const state = healthCardState({
     available: true,
-    connected: true,
+    asked: true,
+    switchOn: true,
     readings: {
       dietaryKcal: 1430,
       steps: 7412,

@@ -414,13 +414,16 @@ export default function TrackScreen() {
             onChange={setTab}
           />
         </View>
+        {/* Apple Health sits at the top of Track, above the tab content
+            (Phase 38M): on a phone that has never connected it is the compact
+            Connect prompt and the first thing a new user sees here; once
+            connected it is today's readings. On-device only. Absent entirely
+            on web, Android and Expo Go, and when the switch is off. */}
+        <TodaysHealthCard />
         {tab === 'JOURNAL' && <JournalTab />}
         {tab === 'MEALS' && <MealsTab />}
         {tab === 'MILESTONES' && <MilestonesTab />}
-        {/* Health readings sit under the tab content: on-device only, and
-            never the loudest thing on the screen. */}
         <View testID="track-tail" style={{ marginTop: 16, gap: 12 }}>
-          <TodaysHealthCard />
           <WeeklyCheckinCard />
         </View>
       </RefreshableScrollView>

@@ -11,29 +11,40 @@
  * therefore be gated by a positive environment check so the require is never
  * evaluated where the native side can't exist.
  *
- * Expo Go detection (verified against the SDK 54 expo-constants docs):
- * - `Constants.appOwnership === 'expo'` — returns 'expo' ONLY in Expo Go
- *   (deprecated but still the documented Expo Go discriminator).
- * - `Constants.expoGoConfig` — non-deprecated; "populated when running in
- *   Expo Go", null elsewhere.
- * - `Constants.executionEnvironment === 'storeClient'` is NOT usable: per
- *   the docs it covers Expo Go AND development builds made with
- *   expo-dev-client, which DO support native modules.
- * We treat the runtime as Expo Go when either reliable signal says so —
- * a false positive merely disables Health (safe); a crash is not possible
- * either way because the try/catch backstop also remains.
+ * WHAT COUNTS AS EXPO GO — corrected in Phase 38M, after the owner's iPhone.
+ *
+ * The signal that is actually about Expo Go is Expo Go's own NATIVE MODULE:
+ * `isRunningInExpoGo()` from the `expo` package
+ * (expo/src/environment/ExpoGo.ts) is `requireNativeModule('ExpoGo') != null`,
+ * and that module exists in exactly one binary. `Constants.appOwnership ===
+ * 'expo'` is kept as a second signal: only Expo Go's constants binding sets
+ * it (expo-constants/ios/EXConstantsService.m, the one every other build
+ * uses, has no appOwnership key).
+ *
+ * `Constants.expoGoConfig` is NOT a signal and is no longer read. A
+ * development build served by `npx expo start --dev-client` loads the same
+ * manifest the dev server hands Expo Go, and @expo/cli builds `extra.expoGo`
+ * into it for every client (ManifestMiddleware.getExpoGoConfig →
+ * ExpoGoManifestHandlerMiddleware, `extra: { expoGo: expoGoConfig }`).
+ * expo-constants then reports `expoGoConfig != null` on a real iPhone running
+ * a real build. The old gate read that as Expo Go, never required the
+ * module, and Health was "unavailable" on hardware: no card, no Connect
+ * prompt, no Settings section — the symptom Phase 38M opened with.
+ *
+ * A false positive here merely disables Health (safe); a crash is not
+ * possible either way because the try/catch backstop also remains.
  */
 
 export interface HealthRuntimeEnv {
   platformOS: string;
   /** `Constants.appOwnership` — 'expo' only inside Expo Go. */
   appOwnership: string | null;
-  /** Whether `Constants.expoGoConfig` is populated (Expo Go only). */
-  hasExpoGoConfig: boolean;
+  /** `isRunningInExpoGo()` from `expo` — the ExpoGo native module exists. */
+  runningInExpoGo: boolean;
 }
 
 export function isExpoGo(env: HealthRuntimeEnv): boolean {
-  return env.appOwnership === 'expo' || env.hasExpoGoConfig;
+  return env.runningInExpoGo || env.appOwnership === 'expo';
 }
 
 /** True only where the HealthKit native module can actually exist. */
@@ -68,9 +79,17 @@ export type HealthAuthRequestStatus =
  * IT LIVES HERE, in the module with no react-native or expo imports, for the
  * reason the rest of this file does: it is the load-bearing decision in the
  * Health feature and it deserves a proof that runs in plain Node rather than
- * a code read. `getRequestStatusForAuthorization` is a Nitro native call, and
- * whether it marshals its enum as a number cannot be established without a
- * device — so the parse has to be right for every shape it might not be.
+ * a code read.
+ *
+ * WHAT THE NATIVE SIDE ACTUALLY RETURNS (read in Phase 38M from the installed
+ * @kingstinct/react-native-healthkit 14.0.2, not guessed): the Swift
+ * `getRequestStatusForAuthorization` resolves a Nitro enum
+ * (ios/CoreModule.swift), and the generated converter marshals it with
+ * `JSIConverter<int>::toJSI(static_cast<int>(arg))`
+ * (nitrogen/generated/shared/c++/AuthorizationRequestStatus.hpp) — a JS
+ * NUMBER, 0/1/2. A raw value Swift does not recognise is not returned at
+ * all: it THROWS ("Unrecognized authStatus returned"), which the service
+ * catches and records as 'unknown' with the message in the diagnostic.
  *
  * TOLERANT IN ONE DIRECTION ONLY. The numeric enum is what is expected; the
  * numeric string and the enum spelled by name are accepted because a bridge
@@ -78,8 +97,8 @@ export type HealthAuthRequestStatus =
  * be broken by it. Everything else resolves 'unknown', which callers read as
  * not-asked. It NEVER invents 'requested': guessing "we were asked" from a
  * value nobody recognises is how a card ends up claiming a connection it
- * cannot back, which is the failure this phase exists to remove. Asking twice
- * costs a silent iOS no-op; claiming wrongly costs the truth.
+ * cannot back. Asking twice costs a silent iOS no-op; claiming wrongly costs
+ * the truth.
  */
 export function parseAuthRequestStatus(raw: unknown): HealthAuthRequestStatus {
   // HKAuthorizationRequestStatus: 0 unknown, 1 shouldRequest, 2 unnecessary.

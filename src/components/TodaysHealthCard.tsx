@@ -11,7 +11,7 @@ import { Card, Kicker, OutlineButton } from '@/components/ui';
 import { healthCardState } from '@/lib/healthCardState';
 import { formatCalendar, formatClock, formatInteger } from '@/lib/intl';
 import { formatWeight } from '@/lib/units';
-import { selectHealthConnected, useAppStore } from '@/store/useAppStore';
+import { useAppStore } from '@/store/useAppStore';
 import { colors, font } from '@/theme/tokens';
 
 function timeLabel(iso: string): string {
@@ -44,11 +44,14 @@ function openIOSSettings() {
  * health disclosure). So the card NAMES the ambiguity rather than guessing,
  * and points at Settings, the only place the answer exists.
  *
- * Four states:
+ * Five states (lib/healthCardState.ts decides; this only draws):
  *  - HealthKit structurally unavailable (web/Android/Expo Go/simulator):
  *    render NOTHING. Never a card that cannot populate.
- *  - Available but not connected — including a device that has never been
- *    shown the permission sheet: a Connect prompt, not an empty data card.
+ *  - Available and this phone has never been shown the permission sheet: a
+ *    compact Connect prompt, whatever a stored switch value says.
+ *  - Asked, and the Settings switch is OFF: render NOTHING. That is a
+ *    deliberate off, and the switch is still in Settings. (Phase 38M — the
+ *    old card offered to connect again on every visit.)
  *  - Connected and nothing came back: say exactly that, and say that iOS
  *    does not report which reason. Do not draw zeroes.
  *  - Connected with readings: show them. A measured zero IS information;
@@ -56,7 +59,8 @@ function openIOSSettings() {
  */
 export function TodaysHealthCard() {
   const healthAvailable = useAppStore((s) => s.healthAvailable);
-  const connected = useAppStore(selectHealthConnected);
+  const healthAsked = useAppStore((s) => s.healthAsked);
+  const switchOn = useAppStore((s) => s.healthPrefs.healthEnabled);
   const readings = useAppStore((s) => s.healthReadings);
   const unitPreference = useAppStore((s) => s.unitPreference);
   const setHealthPref = useAppStore((s) => s.setHealthPref);
@@ -65,11 +69,12 @@ export function TodaysHealthCard() {
   // proved in plain Node. This component only draws the answer.
   const state = healthCardState({
     available: healthAvailable,
-    connected,
+    asked: healthAsked,
+    switchOn,
     readings,
   });
 
-  if (state.kind === 'hidden') return null;
+  if (state.kind === 'hidden' || state.kind === 'off') return null;
 
   if (state.kind === 'connect') {
     return (

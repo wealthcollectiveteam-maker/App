@@ -1,6 +1,17 @@
 import Constants from 'expo-constants';
+import { isRunningInExpoGo } from 'expo';
 import { Platform } from 'react-native';
 
+import {
+  READ_TYPES,
+  activityLabel,
+  authArgs,
+  durationSeconds,
+  quantityQueryArgs,
+  todayRange,
+  workoutQueryArgs,
+  type ReadTypeIdentifier,
+} from '@/lib/healthKitArgs';
 import {
   canAttemptHealthKit,
   parseAuthRequestStatus,
@@ -13,12 +24,26 @@ import {
 // has no react-native imports and can therefore be proved in plain Node.
 export type { HealthAuthRequestStatus };
 
-/** Live runtime signals for the HealthKit gate (see healthEnv.ts). */
+/**
+ * Live runtime signals for the HealthKit gate (see healthEnv.ts).
+ *
+ * `isRunningInExpoGo()` is the discriminator: it is Expo Go's own native
+ * module, present in exactly one binary. `Constants.expoGoConfig` is NOT
+ * read here any more — a development build served by Metro carries an
+ * `extra.expoGo` block in its manifest too, and reading it as "Expo Go"
+ * is what made Health unavailable on the owner's real iPhone (Phase 38M).
+ */
 function runtimeEnv(): HealthRuntimeEnv {
+  let runningInExpoGo = false;
+  try {
+    runningInExpoGo = isRunningInExpoGo();
+  } catch {
+    runningInExpoGo = false;
+  }
   return {
     platformOS: Platform.OS,
     appOwnership: (Constants.appOwnership as string | null) ?? null,
-    hasExpoGoConfig: Constants.expoGoConfig != null,
+    runningInExpoGo,
   };
 }
 
@@ -146,14 +171,14 @@ class SimulatedHealthService implements IHealthService {
  * WHAT THE OS ACTUALLY HANDED BACK, kept for one reason: so a failure can be
  * READ rather than deduced.
  *
- * `getRequestStatusForAuthorization` is a Nitro native call. The JS enum is
- * numeric at runtime (unknown 0, shouldRequest 1, unnecessary 2), but nothing
- * short of a device proves the native side marshals it as a number. If it
- * arrives as anything else the app falls to 'unknown', the card reads
- * "Not connected" for ever even after access is granted, and that symptom is
- * indistinguishable from a denied permission — an hour spent on the wrong
- * theory. So the raw value and its typeof are recorded here on the first call
- * of each launch and surfaced in the dev sheet.
+ * `getRequestStatusForAuthorization` is a Nitro native call. Read from the
+ * installed library (Phase 38M): the Swift side resolves a Nitro enum and the
+ * generated converter hands JS a NUMBER — 0 unknown, 1 shouldRequest,
+ * 2 unnecessary (nitrogen/generated/shared/c++/AuthorizationRequestStatus.hpp).
+ * Anything Swift cannot map is thrown, not returned. The raw value, its
+ * typeof and the parse are recorded here on every call and shown in the
+ * Health diagnostics card (Settings → Developer) next to the state the app
+ * mapped it to, so a surprise is seen, never silently absorbed.
  *
  * PRIVACY: this is an OS AUTHORIZATION ENUM — 0, 1 or 2 — and never a health
  * value. It says whether a permission sheet has been shown on this device. It
@@ -178,6 +203,7 @@ export function getHealthAuthDiagnostic(): HealthAuthDiagnostic | null {
 /** Describe a value without assuming it can be stringified safely. */
 function describeRaw(value: unknown): string {
   try {
+    if (value instanceof Error) return value.message || String(value);
     if (typeof value === 'object' && value !== null) return JSON.stringify(value);
     return String(value);
   } catch {
@@ -185,31 +211,13 @@ function describeRaw(value: unknown): string {
   }
 }
 
-/**
- * The five read types, in ONE place. requestAuthorization and
- * getRequestStatusForAuthorization must be asked about the same set, or the
- * status answer describes a different question than the request asked.
- * The share (write) list is empty everywhere and is never built from this.
- */
-const READ_TYPES = [
-  'HKQuantityTypeIdentifierDietaryEnergyConsumed',
-  'HKQuantityTypeIdentifierBodyMass',
-  'HKQuantityTypeIdentifierStepCount',
-  'HKQuantityTypeIdentifierActiveEnergyBurned',
-  'HKWorkoutTypeIdentifier',
-] as const;
-
-/** Best-effort humanization of HealthKit workout activity types. */
-function humanizeActivityType(raw: unknown): string {
-  if (typeof raw === 'string' && raw.length > 0) {
-    // e.g. "functionalStrengthTraining" -> "Functional Strength Training"
-    const spaced = raw
-      .replace(/^HKWorkoutActivityType/, '')
-      .replace(/([a-z])([A-Z])/g, '$1 $2');
-    return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-  }
-  return 'Workout';
-}
+/** The unit each quantity type is read in. Body mass is read separately. */
+const QUANTITY_UNITS: Partial<Record<ReadTypeIdentifier, string>> = {
+  HKQuantityTypeIdentifierDietaryEnergyConsumed: 'kcal',
+  HKQuantityTypeIdentifierStepCount: 'count',
+  HKQuantityTypeIdentifierActiveEnergyBurned: 'kcal',
+  HKQuantityTypeIdentifierBodyMass: 'kg',
+};
 
 /**
  * Real HealthKit reads via @kingstinct/react-native-healthkit. The module
@@ -217,23 +225,35 @@ function humanizeActivityType(raw: unknown): string {
  * a throw inside a module factory becomes a fatal error in Metro, so the
  * require must never be evaluated where the native side can't exist.
  * Every method degrades to null/empty on any failure.
+ *
+ * Every argument handed to the library is built in lib/healthKitArgs.ts,
+ * the one place its dialect is spelled and proved against its source.
  */
 class HealthKitService implements IHealthService {
   private mod: any | null = null;
   private loadFailed = false;
+  private loadError: string | null = null;
 
-  private getModule(): any | null {
+  getModule(): any | null {
     if (this.loadFailed || !canAttemptHealthKit(runtimeEnv())) return null;
     if (!this.mod) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         this.mod = require('@kingstinct/react-native-healthkit');
-      } catch {
+      } catch (error) {
         this.loadFailed = true;
+        this.loadError = describeRaw(error);
         return null;
       }
     }
     return this.mod;
+  }
+
+  /** For the diagnostics card only. */
+  loadState(): { status: 'loaded' | 'load-failed' | 'not-attempted'; message?: string } {
+    if (this.mod) return { status: 'loaded' };
+    if (this.loadFailed) return { status: 'load-failed', message: this.loadError ?? undefined };
+    return { status: 'not-attempted' };
   }
 
   isAvailable(): boolean {
@@ -249,8 +269,8 @@ class HealthKitService implements IHealthService {
     const mod = this.getModule();
     if (!mod) return false;
     try {
-      // READ ONLY — the share (write) list is empty by design.
-      await mod.requestAuthorization({ read: [...READ_TYPES], share: [] });
+      // READ ONLY — authArgs() builds no share list at all.
+      await mod.requestAuthorization(authArgs());
       // TRUE means the request completed, NOT that anything was granted.
       return true;
     } catch {
@@ -269,16 +289,18 @@ class HealthKitService implements IHealthService {
    * with no data. That is deliberate on Apple's part and it is why the card
    * has to name the ambiguity instead of resolving it.
    *
+   * THE QUESTION MUST NAME THE TYPES. Asked about an empty list, the Swift
+   * side answers `unnecessary` — "already asked" — regardless of the truth
+   * (ios/CoreModule.swift). The old `{ read, share }` keys were exactly that
+   * empty question; authArgs() spells the keys the library reads.
+   *
    * Any failure resolves 'unknown', which callers read as 'not-requested'.
    */
   async getAuthRequestStatus(): Promise<HealthAuthRequestStatus> {
     const mod = this.getModule();
     if (!mod) return 'unavailable';
     try {
-      const status = await mod.getRequestStatusForAuthorization({
-        read: [...READ_TYPES],
-        share: [],
-      });
+      const status = await mod.getRequestStatusForAuthorization(authArgs());
       const parsed = parseAuthRequestStatus(status);
       authDiagnostic = {
         raw: describeRaw(status),
@@ -313,27 +335,28 @@ class HealthKitService implements IHealthService {
     }
   }
 
-  private startOfToday(): Date {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    return d;
+  /** Raw samples for one quantity type, today. Throws on failure. */
+  private async quantitySamplesToday(
+    identifier: ReadTypeIdentifier,
+  ): Promise<{ quantity?: number }[]> {
+    const mod = this.getModule();
+    if (!mod) throw new Error('module not loaded');
+    const samples = await mod.queryQuantitySamples(
+      identifier,
+      quantityQueryArgs(todayRange(), QUANTITY_UNITS[identifier] ?? 'count'),
+    );
+    return Array.isArray(samples) ? samples : [];
   }
 
   private async sumQuantityToday(
-    identifier: string,
-    unit: string,
+    identifier: ReadTypeIdentifier,
   ): Promise<number | null> {
-    const mod = this.getModule();
-    if (!mod) return null;
     try {
-      const samples = await mod.queryQuantitySamples(identifier, {
-        filter: { startDate: this.startOfToday(), endDate: new Date() },
-        unit,
-      });
+      const samples = await this.quantitySamplesToday(identifier);
       // No samples is not zero — it is "nothing to read", which the caller
       // renders as a dash. A total of 0 ACROSS REAL SAMPLES is a
       // measurement and is returned as 0.
-      if (!samples?.length) return null;
+      if (!samples.length) return null;
       const total = samples.reduce(
         (sum: number, s: { quantity?: number }) => sum + (s.quantity ?? 0),
         0,
@@ -345,52 +368,50 @@ class HealthKitService implements IHealthService {
   }
 
   getTodayDietaryEnergyKcal(): Promise<number | null> {
-    return this.sumQuantityToday(
-      'HKQuantityTypeIdentifierDietaryEnergyConsumed',
-      'kcal',
-    );
+    return this.sumQuantityToday('HKQuantityTypeIdentifierDietaryEnergyConsumed');
   }
 
   getTodaySteps(): Promise<number | null> {
-    return this.sumQuantityToday('HKQuantityTypeIdentifierStepCount', 'count');
+    return this.sumQuantityToday('HKQuantityTypeIdentifierStepCount');
   }
 
   getTodayActiveEnergyKcal(): Promise<number | null> {
-    return this.sumQuantityToday(
-      'HKQuantityTypeIdentifierActiveEnergyBurned',
-      'kcal',
-    );
+    return this.sumQuantityToday('HKQuantityTypeIdentifierActiveEnergyBurned');
+  }
+
+  /** Raw workout proxies for today. Throws on failure. */
+  private async workoutsToday(): Promise<unknown[]> {
+    const mod = this.getModule();
+    if (!mod) throw new Error('module not loaded');
+    const workouts = await mod.queryWorkoutSamples(workoutQueryArgs(todayRange()));
+    return Array.isArray(workouts) ? workouts : [];
   }
 
   async getTodayWorkouts(): Promise<HealthWorkout[] | null> {
     const mod = this.getModule();
     if (!mod) return null;
     try {
-      const workouts = await mod.queryWorkoutSamples({
-        filter: { startDate: this.startOfToday(), endDate: new Date() },
-      });
+      const workouts = await this.workoutsToday();
       // The query ran. An empty result is a result.
-      if (!workouts?.length) return [];
+      if (!workouts.length) return [];
+      // The library exports the numeric enum with its reverse mapping; that
+      // is how 20 becomes "Functional Strength Training" and never "20".
+      const enumTable = (mod.WorkoutActivityType ?? null) as Record<number, unknown> | null;
       return workouts
-        .map(
-          (w: {
-            duration?: { quantity?: number } | number;
+        .map((raw: unknown) => {
+          const w = raw as {
+            duration?: unknown;
             workoutActivityType?: unknown;
             startDate?: string | Date;
-          }) => {
-            const seconds =
-              typeof w.duration === 'number'
-                ? w.duration
-                : (w.duration?.quantity ?? 0);
-            return {
-              type: humanizeActivityType(w.workoutActivityType),
-              minutes: Math.round(seconds / 60),
-              startISO: w.startDate
-                ? new Date(w.startDate).toISOString()
-                : new Date().toISOString(),
-            };
-          },
-        )
+          };
+          return {
+            type: activityLabel(w.workoutActivityType, enumTable),
+            minutes: Math.round(durationSeconds(w.duration) / 60),
+            startISO: w.startDate
+              ? new Date(w.startDate).toISOString()
+              : new Date().toISOString(),
+          };
+        })
         .filter((w: HealthWorkout) => w.minutes > 0)
         .sort((a: HealthWorkout, b: HealthWorkout) =>
           a.startISO.localeCompare(b.startISO),
@@ -401,14 +422,22 @@ class HealthKitService implements IHealthService {
     }
   }
 
+  /** The most recent body-mass sample, raw. Throws on failure. */
+  private async latestBodyMassSample(): Promise<
+    { quantity?: number; endDate?: string | Date } | undefined
+  > {
+    const mod = this.getModule();
+    if (!mod) throw new Error('module not loaded');
+    // The library's own helper: limit 1, newest first (Helpers.swift sorts
+    // by start date descending when `ascending` is not set).
+    return mod.getMostRecentQuantitySample('HKQuantityTypeIdentifierBodyMass', 'kg');
+  }
+
   async getLatestBodyMass(): Promise<BodyMassSample | null> {
     const mod = this.getModule();
     if (!mod) return null;
     try {
-      const sample = await mod.getMostRecentQuantitySample(
-        'HKQuantityTypeIdentifierBodyMass',
-        'kg',
-      );
+      const sample = await this.latestBodyMassSample();
       if (sample?.quantity == null) return null;
       return {
         kg: Math.round(sample.quantity * 10) / 10,
@@ -420,6 +449,120 @@ class HealthKitService implements IHealthService {
       return null;
     }
   }
+
+  /**
+   * FOR THE DIAGNOSTICS CARD. Runs each read exactly as the card and the
+   * prompts would, and reports whether it ran and HOW MANY samples came
+   * back. A COUNT, never a value — no kcal, no kg, no step total, no
+   * workout name leaves this method. See runHealthDiagnostics.
+   */
+  async probeReads(): Promise<HealthReadProbe[]> {
+    const out: HealthReadProbe[] = [];
+    for (const id of READ_TYPES) {
+      try {
+        let count: number;
+        if (id === 'HKWorkoutTypeIdentifier') {
+          count = (await this.workoutsToday()).length;
+        } else if (id === 'HKQuantityTypeIdentifierBodyMass') {
+          count = (await this.latestBodyMassSample()) ? 1 : 0;
+        } else {
+          count = (await this.quantitySamplesToday(id)).length;
+        }
+        out.push({ id, status: count > 0 ? 'ok' : 'empty', count });
+      } catch (error) {
+        out.push({ id, status: 'error', count: null, message: describeRaw(error) });
+      }
+    }
+    return out;
+  }
+}
+
+/** One row of the diagnostics card: did the query run, and how many rows. */
+export interface HealthReadProbe {
+  id: ReadTypeIdentifier;
+  /** 'empty' = ran, zero rows. iOS does not say whether that is no data or no access. */
+  status: 'ok' | 'empty' | 'error' | 'skipped';
+  /** Sample COUNT. Never a value. */
+  count: number | null;
+  message?: string;
+}
+
+/** Everything the Health diagnostics card shows. Counts, types, statuses. */
+export interface HealthDiagnosticsReport {
+  ranAtISO: string;
+  env: HealthRuntimeEnv & { gateOpen: boolean };
+  simulated: boolean;
+  module: { status: 'loaded' | 'load-failed' | 'not-attempted' | 'simulated'; message?: string };
+  /** What isHealthDataAvailable() returned; null when it could not be called. */
+  available: boolean | null;
+  availableError?: string;
+  /** A FRESH getRequestStatusForAuthorization answer: raw, typeof, mapped. */
+  auth: HealthAuthDiagnostic | null;
+  reads: HealthReadProbe[];
+}
+
+/**
+ * The live answer to "what did this phone do?", for Settings → Developer.
+ * Nothing here is logged, persisted or sent: it is returned to the card,
+ * held in component state, and gone when the screen is. Counts only.
+ */
+export async function runHealthDiagnostics(): Promise<HealthDiagnosticsReport> {
+  const env = runtimeEnv();
+  const gateOpen = canAttemptHealthKit(env);
+  const base = { ranAtISO: new Date().toISOString(), env: { ...env, gateOpen } };
+
+  if (simulated) {
+    await simulatedService.getAuthRequestStatus();
+    return {
+      ...base,
+      simulated: true,
+      module: { status: 'simulated' },
+      available: true,
+      auth: authDiagnostic,
+      reads: READ_TYPES.map((id) => ({ id, status: 'ok', count: 1 })),
+    };
+  }
+
+  if (!gateOpen) {
+    return {
+      ...base,
+      simulated: false,
+      module: { status: 'not-attempted' },
+      available: null,
+      auth: null,
+      reads: READ_TYPES.map((id) => ({ id, status: 'skipped', count: null })),
+    };
+  }
+
+  const mod = healthKit.getModule();
+  const module = healthKit.loadState();
+  if (!mod) {
+    return {
+      ...base,
+      simulated: false,
+      module,
+      available: null,
+      auth: null,
+      reads: READ_TYPES.map((id) => ({ id, status: 'skipped', count: null })),
+    };
+  }
+
+  let available: boolean | null = null;
+  let availableError: string | undefined;
+  try {
+    available = !!mod.isHealthDataAvailable?.();
+  } catch (error) {
+    availableError = describeRaw(error);
+  }
+
+  await healthKit.getAuthRequestStatus();
+  const auth = authDiagnostic;
+
+  const reads = available
+    ? await healthKit.probeReads()
+    : READ_TYPES.map((id): HealthReadProbe => ({ id, status: 'skipped', count: null }));
+
+  return { ...base, simulated: false, module, available, availableError, auth, reads };
 }
 
 let simulated = false;
