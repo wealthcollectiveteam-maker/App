@@ -210,6 +210,69 @@ Health**. Track must show **nothing** for Health — no card, no Connect
 prompt (a deliberate off is respected; Phase 38M). Turn it back on: the
 readings return without a new iOS sheet, because iOS was already asked.
 
+## 9. Phase 38N — link a task, and check the morning after
+
+New JavaScript again: pull, restart the dev server, reload the app (top of
+this file). Then:
+
+1. **The iOS sheet comes back once, for the new types only.** On Track, or in
+   Settings → Apple Health, the first refresh asks iOS about six more things
+   — Sleep, Water (Dietary Water), Mindful Minutes, Resting Heart Rate, Heart
+   Rate Variability, Respiratory Rate. iOS shows its sheet listing just those.
+   **Turn On All**, then Allow. (The five you already allowed are not asked
+   again.) If no sheet appears, open Settings → Developer → HEALTH
+   DIAGNOSTICS and screenshot it: the eleven read rows say which ran.
+
+2. **Link your tasks.** You → **My Challenge**. Each task row now has a
+   **Health** button (only on the phone; the web has none). Tap it on:
+   - *Sleep 6-8 hours a day* → the sheet opens with "Asleep 6 h to 8 h last
+     night" already suggested from the wording. Tap **Use this**, then
+     **Link**. Nothing is linked until you tap Link.
+   - *Wake up at 6am* → suggested "Woke up by 6:00 AM". Use this, Link.
+   - *Gallon of water* → suggested "At least 1.00 gal of water today" (or
+     3.8 L in metric). Use this, Link. This one only fires if something
+     writes water to Apple Health (the Health app itself, or a water app).
+   - a workout task → already works without a link (its own minute target);
+     link it only if you want a different rule.
+   The row then reads *Apple Health: Asleep 6 h to 8 h last night* under the
+   task, and the button says **Health ✓**. **Screenshot My Challenge.**
+   Linking works on today's tasks too: a link is not a task edit, it is
+   permission for Health to vouch, so it applies to the open day at once.
+
+3. **Tomorrow morning, before you tick anything**, open Home. If last night
+   met the rule, under *Sleep 6-8 hours* you see
+   *Apple Health: 7h 12m asleep last night (Oura, Apple Watch)* with **Mark
+   complete** and **Not now**; under *Wake up at 6am*, *Apple Health: up at
+   5:52 AM (…)*. **Screenshot.** If a rule was NOT met there is no line at
+   all and nothing says so — that is deliberate. Health vouches; it does not
+   grade.
+
+4. **Tap Mark complete** on one: same tick, same +20 XP, same feed row as a
+   swipe. Tap **Not now** on the other: it stays away for the rest of today.
+
+5. **Oura and the Watch on the same night.** Open Track. The **Last night**
+   card under Today's Health shows asleep time, bedtime, woke, a stages
+   strip, and *From Apple Watch and Oura*. The asleep time must be the
+   UNION of the two, not their sum: with both writing a 7½-hour night it
+   reads about 7h 30m, never 15h. To see the two totals side by side, open
+   Settings → Developer → HEALTH DIAGNOSTICS, section **Last night, per
+   source**: one line per device, then *UNION (what the app uses)*, then
+   *sum of sources*. The union must be less than or equal to the sum.
+   **Screenshot that section.** If the union equals the sum while both
+   devices show similar hours, that is the double count this phase exists to
+   prevent — send it.
+
+6. **Recovery and 7 days.** On the Last night card tap **Recovery and 7
+   days**. Resting heart rate, HRV and respiratory rate each show last
+   night's value beside the 7-day average, or *No data in Apple Health* — the
+   app is never told why. Below, small bars for sleep, steps, workout
+   minutes and (only if any exists) water. **Screenshot**, and tell me if any
+   number disagrees with the Health app by more than rounding.
+
+7. **The purpose string.** The iOS sheet still shows the OLD wording from
+   the build on your phone; the new one in `app.json` only reaches the phone
+   with the next cloud build. That is expected and is noted in the report.
+
 ## What changed in Phase 38M, in one paragraph each
 
 **Why there was no card on your phone.** The gate that decides whether

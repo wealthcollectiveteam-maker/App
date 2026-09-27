@@ -19,19 +19,35 @@ are byte-identical right now, so what is below is the change to both.
 
 ### What the app actually reads
 
-Five types, from `READ_TYPES` in `src/services/HealthService.ts` — the same
-five passed to `requestAuthorization`, so the same five the iOS sheet lists:
+Eleven types (Phase 38N; it was five until 2026-09-27), from `READ_TYPES` in
+`src/lib/healthKitArgs.ts` — the same eleven passed to `requestAuthorization`,
+so the same eleven the iOS sheet lists:
 
 | HealthKit identifier | Plain name | Where it surfaces |
 |---|---|---|
-| `HKQuantityTypeIdentifierStepCount` | Steps, today | Today's Health card |
+| `HKQuantityTypeIdentifierStepCount` | Steps, today and 7 days | Today's Health card; 7-day row; a linked steps task |
 | `HKQuantityTypeIdentifierActiveEnergyBurned` | Active energy, today | Today's Health card |
-| `HKWorkoutTypeIdentifier` | Workouts, today | Today's Health card; workout-task suggestion |
+| `HKWorkoutTypeIdentifier` | Workouts, today and 7 days | Today's Health card; workout-task suggestion; 7-day row |
 | `HKQuantityTypeIdentifierDietaryEnergyConsumed` | Logged food energy, today | Diet-task suggestion |
 | `HKQuantityTypeIdentifierBodyMass` | Most recent weight | Today's Health card; weekly check-in pre-fill |
+| `HKCategoryTypeIdentifierSleepAnalysis` | Sleep, last night and 7 days | Last Night card; sleep and wake-up task suggestions; 7-day row |
+| `HKQuantityTypeIdentifierDietaryWater` | Water, today and 7 days | A linked water task; 7-day row |
+| `HKCategoryTypeIdentifierMindfulSession` | Mindful minutes, today | A linked meditation task |
+| `HKQuantityTypeIdentifierRestingHeartRate` | Resting heart rate, 7 days | Recovery card (last night beside a 7-day average) |
+| `HKQuantityTypeIdentifierHeartRateVariabilitySDNN` | Heart rate variability, 7 days | Recovery card |
+| `HKQuantityTypeIdentifierRespiratoryRate` | Respiratory rate, 7 days | Recovery card |
 
-Write access is never requested: the share list is empty and
+Write access is never requested: no share list is ever built and
 `NSHealthUpdateUsageDescription` is `false`, so the entitlement does not exist.
+
+**Where it goes: nowhere.** Every one of these is read on the phone, held in
+memory while the screen that shows it is open, and discarded. None is written
+to the app's own storage, to our database, to a log, or sent over the network,
+and no squadmate can see any of it. What a squadmate sees is that a task was
+completed — after the user tapped to confirm it — never the Health reading
+behind the suggestion. The task-to-Health links a user sets up ("this task
+counts when I slept at least 6 h") are kept on the device and hold the rule,
+never a reading.
 
 ### Do they match?
 
@@ -48,14 +64,18 @@ one side and an unenumerated "your numbers" on the other.
 ### Proposed replacement for line 64
 
 > **Apple Health data.** Health access is off until you turn it on. If you do,
-> the app reads five things — today's steps, today's active energy, today's
-> workouts, the food energy you have logged today, and your most recent
-> recorded weight — into memory, to show them to you and to offer to mark a
-> daily task complete or pre-fill your weekly check-in. It never writes
-> anything back to Health. None of it is transmitted, written to our database,
-> or logged, and no squadmate can see any of it. iOS does not tell apps which
-> Health categories were allowed, so where a value is missing the app says so
-> rather than showing a zero.
+> the app reads these things from Apple Health, on your phone: today's steps,
+> active energy and workouts; the food energy and water you have logged today;
+> your most recent recorded weight; last night's sleep (how long, and when you
+> woke); today's mindful minutes; and your resting heart rate, heart rate
+> variability and respiratory rate over the last seven days. It shows them to
+> you, and where you have linked a daily task to one of them it offers to mark
+> that task complete — you always confirm. It never writes anything back to
+> Health. None of it is transmitted, stored on our servers, written to the
+> app's storage, or logged, and no squadmate can see any of it: they see only
+> that a task was completed. iOS does not tell apps which Health categories
+> were allowed, so where a value is missing the app says so rather than
+> showing a zero.
 
 The last sentence is optional but I would keep it: it is the one behaviour a
 user might otherwise read as a bug, and saying it in the policy costs nothing.
