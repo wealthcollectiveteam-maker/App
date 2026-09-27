@@ -22,7 +22,7 @@ import {
   type ReadTypeIdentifier,
 } from '@/lib/healthKitArgs';
 import { dedupeWorkouts, sourceLabel } from '@/lib/healthMerge';
-import type { SleepSample } from '@/lib/sleepNight';
+import { dateKeyIn, type SleepSample } from '@/lib/sleepNight';
 import {
   canAttemptHealthKit,
   parseAuthRequestStatus,
@@ -140,6 +140,14 @@ export interface IHealthService {
   ): Promise<DiscreteSample[] | null>;
   /** One value per calendar day for a cumulative type, oldest first. */
   getDailySums(identifier: QuantityReadType, days: number): Promise<DailyValues | null>;
+  /**
+   * The same daily buckets keyed by the LOCAL date they begin on
+   * (YYYY-MM-DD), over the last `days`. One statistics-collection query,
+   * however long the span. null = not read.
+   */
+  getDailySeries(identifier: QuantityReadType, days: number): Promise<Record<string, number> | null>;
+  /** Body-mass samples over the last `days`, oldest first. null = not read. */
+  getRecentBodyMass(days: number): Promise<BodyMassSample[] | null>;
 }
 
 /** Used on web/Android/Expo Go and whenever HealthKit cannot load. */
@@ -186,6 +194,12 @@ class NullHealthService implements IHealthService {
     return null;
   }
   async getDailySums() {
+    return null;
+  }
+  async getDailySeries() {
+    return null;
+  }
+  async getRecentBodyMass() {
     return null;
   }
 }
@@ -277,6 +291,27 @@ class SimulatedHealthService implements IHealthService {
       at.setDate(at.getDate() - i);
       at.setHours(4, 30, 0, 0);
       out.push({ value: base + ((i * 7) % 5) - 2, endMs: at.getTime(), source: 'Apple Watch' });
+    }
+    return out;
+  }
+  async getDailySeries(identifier: QuantityReadType, days: number): Promise<Record<string, number>> {
+    const values = await this.getDailySums(identifier, days);
+    const out: Record<string, number> = {};
+    values.forEach((v, i) => {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - (days - 1 - i));
+      if (v != null) out[dateKeyIn(d.getTime(), undefined)] = v;
+    });
+    return out;
+  }
+  async getRecentBodyMass(days: number): Promise<BodyMassSample[]> {
+    const out: BodyMassSample[] = [];
+    for (let i = days - 1; i >= 0; i -= 7) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      d.setHours(7, 0, 0, 0);
+      out.push({ kg: 84 - (days - i) * 0.02, dateISO: d.toISOString() });
     }
     return out;
   }
@@ -696,6 +731,62 @@ class HealthKitService implements IHealthService {
         if (idx >= 0 && idx < days) out[idx] = q;
       }
       return out;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * THE DAILY SERIES FOR PROOF (Phase 38O). One
+   * `queryStatisticsCollectionForQuantity` call — HKStatisticsCollectionQuery
+   * underneath (ios/QuantityTypeModule.swift,
+   * queryStatisticsCollectionForQuantityInternal) — anchored at local
+   * midnight of the first day with a one-day interval
+   * (src/specs/QuantityTypeModule.nitro.ts: identifier, statistics,
+   * anchorDate, intervalComponents, options?). Ninety days is ninety buckets
+   * from one query, not ninety queries, and HealthKit merges overlapping
+   * sources inside each bucket.
+   *
+   * Keyed by the LOCAL date each bucket begins on. The buckets follow the
+   * phone's calendar; a phone in a different zone from the challenge would
+   * shift them by up to a day against the challenge-zone rows.
+   */
+  async getDailySeries(identifier: QuantityReadType, days: number): Promise<Record<string, number> | null> {
+    try {
+      const range = recentDaysRange(days);
+      const buckets = await this.need().queryStatisticsCollectionForQuantity(
+        identifier,
+        [...CUMULATIVE_SUM],
+        range.startDate,
+        { ...DAY_INTERVAL },
+        statisticsArgs(range, QUANTITY_UNITS[identifier]),
+      );
+      const out: Record<string, number> = {};
+      if (!Array.isArray(buckets)) return out;
+      for (const b of buckets) {
+        const r = b as { startDate?: unknown; sumQuantity?: { quantity?: unknown } };
+        const startMs = toMs(r.startDate);
+        const q = r.sumQuantity?.quantity;
+        if (startMs == null || typeof q !== 'number') continue;
+        out[dateKeyIn(startMs, undefined)] = q;
+      }
+      return out;
+    } catch {
+      return null;
+    }
+  }
+
+  async getRecentBodyMass(days: number): Promise<BodyMassSample[] | null> {
+    try {
+      const raw = await this.quantitySamples('HKQuantityTypeIdentifierBodyMass', recentDaysRange(days));
+      const out: BodyMassSample[] = [];
+      for (const s of raw) {
+        const r = s as { quantity?: unknown; endDate?: unknown };
+        const endMs = toMs(r.endDate);
+        if (typeof r.quantity !== 'number' || endMs == null) continue;
+        out.push({ kg: Math.round(r.quantity * 10) / 10, dateISO: new Date(endMs).toISOString() });
+      }
+      return out.sort((a, b) => a.dateISO.localeCompare(b.dateISO));
     } catch {
       return null;
     }

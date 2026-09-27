@@ -1,7 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
   DiamondBadge,
@@ -102,6 +102,10 @@ export default function YouScreen() {
 
   const rows = [
     { label: 'My Challenge', meta: null, onPress: () => router.push('/my-challenge') },
+    // PROOF reads Apple Health on the phone; the web has no Health to read.
+    ...(Platform.OS !== 'web'
+      ? [{ label: 'Proof', meta: null, onPress: () => router.push('/proof') }]
+      : []),
     { label: 'Settings', meta: null, onPress: () => router.push('/settings') },
     {
       // Both of these used to be theatre: the code row said "Invite code

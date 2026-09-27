@@ -5,6 +5,7 @@ import type {
   CustomTask,
   DailyNutritionTotals,
   FeedItem,
+  ChallengeHistory,
   FinalResults,
   JournalEntry,
   LeaderRow,
@@ -140,6 +141,11 @@ export interface IDataService {
    * at the end.
    */
   loadFinalResults(): Promise<FinalResults>;
+  /**
+   * The same two reads, with each completion's time and timer duration, for
+   * PROOF (Phase 38O). Owner-scoped by RLS; select-only tables.
+   */
+  loadChallengeHistory(): Promise<ChallengeHistory>;
   saveCompletionFeeling(feeling: string | null, text: string): void;
   /**
    * Display name + "why I started". The name is the squad-visible surface

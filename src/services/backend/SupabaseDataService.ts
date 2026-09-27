@@ -9,6 +9,7 @@ import type {
   BlockedUser,
   CustomTask,
   DailyNutritionTotals,
+  ChallengeHistory,
   FinalResults,
   JournalEntry,
   LeaderRow,
@@ -1156,6 +1157,23 @@ export class SupabaseDataService implements IDataService {
     );
     return {
       ...tally,
+    };
+  }
+
+  async loadChallengeHistory(): Promise<ChallengeHistory> {
+    if (!this.challengeId) return { days: [], completions: [] };
+    const { days, completions } = await api.listChallengeHistory(this.challengeId);
+    return {
+      days: days.map((d) => ({
+        day: d.day,
+        tasks: d.task_snapshot.map((t) => ({ key: t.key as TaskKey, target: t.target ?? null })),
+      })),
+      completions: completions.map((c) => ({
+        day: c.day,
+        taskKey: c.task_key as TaskKey,
+        completedAt: c.completed_at,
+        durationSeconds: c.duration_seconds ?? null,
+      })),
     };
   }
 

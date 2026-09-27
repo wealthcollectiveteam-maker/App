@@ -10,6 +10,7 @@ import type {
   BlockedUser,
   CustomTask,
   DailyNutritionTotals,
+  ChallengeHistory,
   FinalResults,
   JournalEntry,
   Meal,
@@ -219,6 +220,22 @@ export class MockDataService implements IDataService {
     );
     return {
       ...tally,
+    };
+  }
+
+  async loadChallengeHistory(): Promise<ChallengeHistory> {
+    // The mock keeps today's completions as clock labels, not instants; the
+    // history it can offer is today's snapshot with completions stamped now.
+    const tasks = this.getTodayTasks(this.state.tier, this.state.day);
+    const now = new Date().toISOString();
+    return {
+      days: [{ day: this.state.day, tasks: tasks.map((t) => ({ key: t.key, target: t.target ?? null })) }],
+      completions: (Object.keys(this.state.tasksDone) as TaskKey[]).map((taskKey) => ({
+        day: this.state.day,
+        taskKey,
+        completedAt: now,
+        durationSeconds: null,
+      })),
     };
   }
 

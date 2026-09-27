@@ -412,7 +412,7 @@ export const BackendApi = {
     challengeId: string,
   ): Promise<{
     days: { day: number; task_snapshot: SnapshotTask[] }[];
-    completions: { day: number; task_key: string }[];
+    completions: { day: number; task_key: string; completed_at: string; duration_seconds: number | null }[];
   }> => {
     const [daysResult, completionsResult] = await Promise.all([
       sb()
@@ -422,7 +422,7 @@ export const BackendApi = {
         .order('day', { ascending: true }),
       sb()
         .from('task_completions')
-        .select('day, task_key')
+        .select('day, task_key, completed_at, duration_seconds')
         .eq('challenge_id', challengeId),
     ]);
     return {
@@ -433,6 +433,8 @@ export const BackendApi = {
       completions: (unwrap(completionsResult, 'load completions') ?? []) as {
         day: number;
         task_key: string;
+        completed_at: string;
+        duration_seconds: number | null;
       }[],
     };
   },

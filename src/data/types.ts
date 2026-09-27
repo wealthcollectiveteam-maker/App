@@ -306,6 +306,23 @@ export interface Squad {
   members: SquadMember[];
 }
 
+/**
+ * Every frozen day of the challenge and every completion recorded against
+ * it, with WHEN (task_completions.completed_at) and the timer's duration
+ * where it recorded one. The user's own rows, read for PROOF (Phase 38O).
+ */
+export interface ChallengeHistory {
+  days: { day: number; tasks: { key: TaskKey; target: TaskTarget | null }[] }[];
+  completions: {
+    day: number;
+    taskKey: TaskKey;
+    /** ISO timestamp — task_completions.completed_at. */
+    completedAt: string;
+    /** task_completions.duration_seconds, when the timer wrote one. */
+    durationSeconds: number | null;
+  }[];
+}
+
 export interface FinalResults {
   workouts: number;
   pagesRead: number;

@@ -4,8 +4,9 @@ import {
   FootprintsIcon as Footprints,
   ScalesIcon as Scales,
 } from 'phosphor-react-native';
+import { useRouter } from 'expo-router';
 import React from 'react';
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { HealthInsights } from '@/components/HealthInsights';
 import { Card, Kicker, OutlineButton } from '@/components/ui';
@@ -65,6 +66,7 @@ export function TodaysHealthCard() {
   const readings = useAppStore((s) => s.healthReadings);
   const unitPreference = useAppStore((s) => s.unitPreference);
   const setHealthPref = useAppStore((s) => s.setHealthPref);
+  const router = useRouter();
 
   // The decision itself lives in lib/healthCardState.ts, where it can be
   // proved in plain Node. This component only draws the answer.
@@ -194,6 +196,13 @@ export function TodaysHealthCard() {
           </Text>
         </Pressable>
       )}
+      {/* PROOF (Phase 38O): before / now against the two weeks before Day 1.
+          Native only — the route reads Apple Health on the phone. */}
+      {Platform.OS !== 'web' ? (
+        <Pressable onPress={() => router.push('/proof')} hitSlop={8} style={styles.proofLink}>
+          <Text style={styles.proofLinkText}>PROOF →</Text>
+        </Pressable>
+      ) : null}
     </Card>
     {/* Last night, recovery, 7 days (Phase 38N). Component state only. */}
     <HealthInsights />
@@ -274,6 +283,16 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     color: colors.neutral500,
     fontVariant: ['tabular-nums'],
+  },
+  proofLink: {
+    alignSelf: 'flex-end',
+    marginTop: 12,
+  },
+  proofLinkText: {
+    fontFamily: font.semibold,
+    fontSize: 11,
+    letterSpacing: 1.2,
+    color: colors.accent400,
   },
   footnote: {
     marginTop: 10,
