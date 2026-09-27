@@ -40,6 +40,12 @@ so the same eleven the iOS sheet lists:
 Write access is never requested: no share list is ever built and
 `NSHealthUpdateUsageDescription` is `false`, so the entitlement does not exist.
 
+**How far back it reads (Phase 38O).** The PROOF screen also reads these same
+types for the two weeks BEFORE Day 1, to compare the challenge against the
+person's own pre-challenge normal. It is the same eleven types, read further
+back, on the phone; nothing new is asked of iOS and nothing new leaves the
+device.
+
 **Where it goes: nowhere.** Every one of these is read on the phone, held in
 memory while the screen that shows it is open, and discarded. None is written
 to the app's own storage, to our database, to a log, or sent over the network,
@@ -68,9 +74,11 @@ one side and an unenumerated "your numbers" on the other.
 > active energy and workouts; the food energy and water you have logged today;
 > your most recent recorded weight; last night's sleep (how long, and when you
 > woke); today's mindful minutes; and your resting heart rate, heart rate
-> variability and respiratory rate over the last seven days. It shows them to
-> you, and where you have linked a daily task to one of them it offers to mark
-> that task complete — you always confirm. It never writes anything back to
+> variability and respiratory rate over the last seven days. It also reads
+> the same things from the two weeks before your challenge began, so the
+> Proof screen can show how your body now compares with before Day 1. It
+> shows them to you, and where you have linked a daily task to one of them it
+> offers to mark that task complete — you always confirm. It never writes anything back to
 > Health. None of it is transmitted, stored on our servers, written to the
 > app's storage, or logged, and no squadmate can see any of it: they see only
 > that a task was completed. iOS does not tell apps which Health categories

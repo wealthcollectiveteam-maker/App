@@ -273,6 +273,53 @@ this file). Then:
    the build on your phone; the new one in `app.json` only reaches the phone
    with the next cloud build. That is expected and is noted in the report.
 
+## 10. Phase 38O — PROOF
+
+New JavaScript again: pull, restart the dev server, reload.
+
+**Where.** Track → the Today's Health card now ends with **PROOF →**; the
+You tab has a **Proof** row. Both open the same screen. On the web there is
+no link and the address goes back to Home.
+
+**What you should see now (Day 35–37 or wherever you are).**
+
+1. The screen says **Reading Apple Health…** for a moment, then four
+   sections. **Screenshot each.**
+2. **Before / now.** For every type your watch or ring wrote in the two weeks
+   before Day 1: the pre-challenge median, the last-7-days median, the
+   difference, and how many days each rests on (a baseline needs at least 5
+   of the 14 days). Under each, a row of weekly dots. Weight shows the first
+   and latest values instead. Types with no data before Day 1 are named in
+   one line at the bottom as "No baseline". If you started wearing the
+   device after Day 1, the whole section says so — that is correct, not a
+   bug.
+3. **Load & recovery.** Workout minutes over the last 7 days, and a strip of
+   bars, one per day, each the rolling 7-day total. Days with no Health
+   workout but completed workout tasks are counted from the task durations.
+   Below: either "Nothing to observe" or one of two sentences about resting
+   heart rate or HRV having been outside your pre-challenge range for N
+   nights in a row. There is no other kind of sentence, and no colour.
+4. **What moves me.** Up to three lines like "After 7h+ of sleep you finished
+   your list 1h 40m earlier (12 days vs 9 days)." Each side of a pair needs
+   5 days, so early in a run this section often says there is nothing to
+   show yet. Every line ends with the caveat that it is a pattern, not a
+   cause.
+5. **Reports.** Two rows. Before Day 38 the first reads "Halfway report
+   unlocks on Day 38." **Screenshot the row on Day 37.**
+
+**On Day 38.** The Halfway row gains **Open**. The report is one screen:
+before / now for every type with a baseline, total workout time, nights
+logged, median bedtime and wake time, and the strongest pattern if one
+qualifies. Only what exists is on it. **Screenshot the whole report**, and
+tell me whether any figure disagrees with what the Health app shows for the
+same days. The Day 75 row unlocks on Day 75 the same way.
+
+**What to check against the Health app.** Pick one baseline day and one
+recent day; compare the sleep hours and the steps the Health app shows for
+those dates with the rows PROOF drew (the weekly dots carry their values).
+Steps come from HealthKit's own daily totals, so they should match the
+Health app exactly; sleep is the union rule from 38N.
+
 ## What changed in Phase 38M, in one paragraph each
 
 **Why there was no card on your phone.** The gate that decides whether
