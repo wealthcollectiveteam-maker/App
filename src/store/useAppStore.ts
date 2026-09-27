@@ -51,7 +51,16 @@ import {
   setHealthSimulation,
   type BodyMassSample,
   type HealthWorkout,
+  type SummedReading,
 } from '@/services/HealthService';
+import {
+  buildSuggestions,
+  restoreLinks,
+  sanitizeLink,
+  type HealthLink,
+  type HealthSuggestion,
+} from '@/lib/healthLinks';
+import { dateKeyIn, sleepNightFor, type SleepNight } from '@/lib/sleepNight';
 
 export function formatClock(ts: number = Date.now()): string {
   const d = new Date(ts);
@@ -127,6 +136,16 @@ export interface HealthReadings {
   activeEnergyKcal: number | null;
   workouts: HealthWorkout[] | null;
   bodyMass: BodyMassSample | null;
+  /** Who counted the steps — for the suggestion line. */
+  stepsSources: string[];
+  /** Phase 38N. Today's water (mL) and mindful minutes, sources named. */
+  water: SummedReading | null;
+  mindful: SummedReading | null;
+  /**
+   * The main sleep that ended on the OPEN day's date in the challenge zone
+   * (lib/sleepNight.ts). null = none found, or not read.
+   */
+  night: SleepNight | null;
 }
 
 const EMPTY_READINGS: HealthReadings = {
@@ -135,6 +154,10 @@ const EMPTY_READINGS: HealthReadings = {
   activeEnergyKcal: null,
   workouts: null,
   bodyMass: null,
+  stepsSources: [],
+  water: null,
+  mindful: null,
+  night: null,
 };
 
 /**
@@ -237,8 +260,18 @@ interface AppState extends ScenarioState {
    * Read by the dev-only Health diagnostics card; nothing branches on it.
    */
   healthPrefsSource: 'default' | 'device';
-  /** Health prompt dismissals: 'diet' | 'workout' -> local date dismissed. */
-  healthPromptDismissed: Partial<Record<'diet' | 'workout', string>>;
+  /**
+   * Health prompt dismissals: 'diet', or a task key -> the local date it was
+   * dismissed on. In memory only; a dismissal is for the day.
+   */
+  healthPromptDismissed: Partial<Record<string, string>>;
+  /**
+   * Task key -> the Apple Health rule the user linked it to (Phase 38N).
+   * CONFIGURATION, not health data: it says "this task counts when Health
+   * shows at least 6 h asleep", never what Health showed. Kept on the
+   * device under PREF_KEYS.healthLinks; not synced (see the 38N report).
+   */
+  healthLinks: Record<string, HealthLink>;
   /**
    * Start times of Health workouts already used to confirm a task — one
    * recorded activity vouches for at most one completion.
@@ -342,10 +375,12 @@ interface AppState extends ScenarioState {
   /** One-tap log of a saved meal (name + attached nutrition). */
   logSavedMeal: (id: string) => void;
   setHealthPref: (key: keyof HealthPrefs, value: boolean) => void;
+  /** Link a task to a Health rule, or null to unlink. */
+  setHealthLink: (taskKey: TaskKey, link: HealthLink | null) => void;
   /** Present the permission sheet, then re-read. Safe to call twice. */
   connectHealth: () => Promise<void>;
   refreshHealth: () => Promise<void>;
-  dismissHealthPrompt: (kind: 'diet' | 'workout') => void;
+  dismissHealthPrompt: (kind: string) => void;
   /** Mark a Health workout as used for a confirmed completion. */
   consumeHealthWorkout: (startISO: string) => void;
   toggleHealthSimulation: () => void;
@@ -472,6 +507,7 @@ const DEFAULT_PREFS: NotificationPrefs = {
 
 const NOTIF_PREFS_KEY = PREF_KEYS.notifications;
 const HEALTH_PREFS_KEY = PREF_KEYS.health;
+const HEALTH_LINKS_KEY = PREF_KEYS.healthLinks;
 const WEEKLY_CHECKIN_KEY = PREF_KEYS.weeklyCheckin;
 
 const UNIT_PREF_KEY = 'ranked.unitPreference.v1';
@@ -633,6 +669,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   healthAuthRaw: null,
   healthPrefsSource: 'default',
   healthPromptDismissed: {},
+  healthLinks: {},
   healthWorkoutsConsumed: [],
   healthSimulated: false,
   metricCheckins: [],
@@ -1023,6 +1060,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  setHealthLink: (taskKey, link) => {
+    const next = { ...get().healthLinks };
+    const clean = link ? sanitizeLink(link) : null;
+    if (clean) next[taskKey] = clean;
+    else delete next[taskKey];
+    set({ healthLinks: next });
+    // Configuration, on this device. Never a reading, never synced.
+    AsyncStorage.setItem(HEALTH_LINKS_KEY, JSON.stringify(next)).catch(() => {});
+  },
+
   /**
    * The single place that asks iOS for Health access.
    *
@@ -1062,16 +1109,36 @@ export const useAppStore = create<AppState>((set, get) => ({
         });
         return;
       }
-      const [dietaryKcal, steps, activeEnergyKcal, workouts, bodyMass] =
+      const [dietaryKcal, stepsRead, activeEnergyKcal, workouts, bodyMass, water, mindful, sleep] =
         await Promise.all([
           service.getTodayDietaryEnergyKcal(),
           service.getTodaySteps(),
           service.getTodayActiveEnergyKcal(),
           service.getTodayWorkouts(),
           service.getLatestBodyMass(),
+          service.getTodayWaterMl(),
+          service.getTodayMindfulMinutes(),
+          // 36 hours back: enough to hold last night whatever time it is
+          // now, plus the tail of the night before for the session split.
+          service.getRecentSleepSamples(36),
         ]);
+      // "Last night" is the main sleep that ENDED on the open day's date, in
+      // the CHALLENGE zone (lib/sleepNight.ts). The phone's zone does not
+      // decide it.
+      const zone = get().challengeTimezone ?? undefined;
+      const night = sleep ? sleepNightFor(sleep, dateKeyIn(Date.now(), zone), zone) : null;
       set({
-        healthReadings: { dietaryKcal, steps, activeEnergyKcal, workouts, bodyMass },
+        healthReadings: {
+          dietaryKcal,
+          steps: stepsRead ? stepsRead.value : null,
+          activeEnergyKcal,
+          workouts,
+          bodyMass,
+          stepsSources: stepsRead ? stepsRead.sources : [],
+          water,
+          mindful,
+          night,
+        },
         healthAvailable: true,
         healthAsked: true,
         healthAuthRaw: describeAuthDiagnostic(),
@@ -1309,7 +1376,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   hydratePersisted: async () => {
     devicePrefsStarted = true;
     try {
-      const [pref, checkins, notif, health, weekly, restartDismissed] =
+      const [pref, checkins, notif, health, weekly, restartDismissed, links] =
         await Promise.all([
           AsyncStorage.getItem(UNIT_PREF_KEY),
           AsyncStorage.getItem(CHECKINS_KEY),
@@ -1317,8 +1384,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           AsyncStorage.getItem(HEALTH_PREFS_KEY),
           AsyncStorage.getItem(WEEKLY_CHECKIN_KEY),
           AsyncStorage.getItem(RESTART_NOTICE_KEY),
+          AsyncStorage.getItem(HEALTH_LINKS_KEY),
         ]);
       const updates: Partial<AppState> = {};
+      const storedLinks = restoreLinks(links);
+      if (Object.keys(storedLinks).length) updates.healthLinks = storedLinks;
       if (pref === 'metric' || pref === 'imperial') {
         updates.unitPreference = pref;
       }
@@ -1462,6 +1532,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       CHECKINS_KEY,
       NOTIF_PREFS_KEY,
       HEALTH_PREFS_KEY,
+      HEALTH_LINKS_KEY,
       WEEKLY_CHECKIN_KEY,
       RESTART_NOTICE_KEY,
     ]).catch(() => {});
@@ -1482,6 +1553,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       healthPrefsSource: 'default',
       healthReadings: EMPTY_READINGS,
       healthPromptDismissed: {},
+      healthLinks: {},
       healthWorkoutsConsumed: [],
       metricCheckins: [],
       savedMeals: [],
@@ -1655,6 +1727,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       healthPrefsSource: 'default',
       healthReadings: EMPTY_READINGS,
       healthPromptDismissed: {},
+      healthLinks: {},
       healthWorkoutsConsumed: [],
       metricCheckins: [],
       savedMeals: [],
@@ -1832,47 +1905,59 @@ export const selectHealthConnected = (s: {
   s.healthAvailable && s.healthAsked && s.healthPrefs.healthEnabled;
 
 /**
- * Match today's HealthKit workouts to incomplete workout tasks.
- * Chronological, one workout per task, qualifying = duration >= the task's
- * snapshot target. Suggestions only — the user always confirms (never
- * auto-complete), and completion goes through the existing path.
+ * Every Apple Health suggestion for the open day, by task key (Phase 38N).
+ *
+ * The rules live in lib/healthLinks.ts, proved in Node: a saved link, or the
+ * implicit "workout of at least the target" a tier workout task has always
+ * had. CONNECTED, not merely "the pref says on" — a suggestion is a claim
+ * that Apple Health saw something, and a device that was never asked has no
+ * standing to make one. Suggestions only — the user always confirms, never
+ * auto-complete, and completion goes through completeTask like a swipe.
+ *
+ * A SEALED DAY GETS NOTHING: `dayOpen` is false once today is sealed, and
+ * buildSuggestions returns {} for a closed day before it looks at a task.
  */
-export const selectWorkoutSuggestions = (s: {
+export const selectHealthSuggestions = (s: {
   healthAvailable: boolean;
   healthAsked: boolean;
   healthPrefs: HealthPrefs;
   healthReadings: HealthReadings;
   healthWorkoutsConsumed: string[];
+  healthPromptDismissed: Partial<Record<string, string>>;
+  healthLinks: Record<string, HealthLink>;
   todayTasks: TaskDef[];
   tasksDone: Partial<Record<TaskKey, string>>;
-}): Partial<Record<TaskKey, HealthWorkout>> => {
-  // CONNECTED, not merely "the pref says on". A suggestion is a claim that
-  // Apple Health has a workout in it, and a device that was never asked has
-  // no standing to make one.
+  dayComplete: boolean;
+  challengeTimezone: string | null;
+  unitPreference: UnitPreference;
+}): Partial<Record<TaskKey, HealthSuggestion>> => {
   if (!selectHealthConnected(s) || !s.healthPrefs.workoutPromptEnabled) {
     return {};
   }
-  const pendingWorkoutTasks = s.todayTasks.filter(
-    (t) => t.key.startsWith('workout') && !s.tasksDone[t.key],
-  );
-  if (pendingWorkoutTasks.length === 0) return {};
-  const out: Partial<Record<TaskKey, HealthWorkout>> = {};
-  // Chronological, minus workouts already used to confirm a completion.
-  // `workouts: null` means the query never ran — no suggestions from it.
-  const unclaimed = (s.healthReadings.workouts ?? []).filter(
-    (w) => !s.healthWorkoutsConsumed.includes(w.startISO),
-  );
-  for (const task of pendingWorkoutTasks) {
-    const required =
-      task.target?.unit === 'minutes' ? task.target.value : Infinity;
-    const idx = unclaimed.findIndex((w) => w.minutes >= required);
-    if (idx >= 0) {
-      out[task.key] = unclaimed[idx];
-      unclaimed.splice(idx, 1);
-    }
-  }
-  return out;
+  const r = s.healthReadings;
+  return buildSuggestions({
+    tasks: s.todayTasks.map((t) => ({ key: t.key, label: t.label, target: t.target ?? null })),
+    tasksDone: s.tasksDone,
+    links: s.healthLinks,
+    facts: {
+      night: r.night,
+      water: r.water,
+      steps: r.steps == null ? null : { value: r.steps, sources: r.stepsSources },
+      mindful: r.mindful,
+      workouts: r.workouts,
+    },
+    dismissed: s.healthPromptDismissed,
+    dateKey: localDateKey(),
+    dayOpen: !s.dayComplete,
+    ctx: {
+      zone: s.challengeTimezone ?? undefined,
+      unitPreference: s.unitPreference,
+      consumedWorkouts: s.healthWorkoutsConsumed,
+    },
+  });
 };
+
+export type { HealthSuggestion };
 
 /** Body-mass prefill: only a sample from the last 7 days qualifies. */
 export const selectWeightPrefillKg = (s: {

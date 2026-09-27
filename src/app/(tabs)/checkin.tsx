@@ -24,15 +24,16 @@ import { Micro, PrimaryButton, Serif, Skew } from '@/components/primitives';
 import { RefreshableScrollView } from '@/components/RefreshableScrollView';
 import { RestoreBlock } from '@/components/RestoreBlock';
 import { ScreenState } from '@/components/ScreenState';
-import { WorkoutSuggestion } from '@/components/WorkoutSuggestion';
+import { HealthSuggestionRow } from '@/components/HealthSuggestion';
 import type { OpenDay, TaskDef } from '@/data/types';
 import { useStartTimer } from '@/hooks/useStartTimer';
 import { dayDateLabel } from '@/lib/dayLabel';
 import { checkinDeck, type FinishedAction } from '@/lib/checkinDeck';
 import { dayOneLine } from '@/lib/streakStatus';
+import type { HealthSuggestion } from '@/lib/healthLinks';
 import {
+  selectHealthSuggestions,
   selectTasks,
-  selectWorkoutSuggestions,
   useAppStore,
 } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
@@ -98,7 +99,7 @@ function TopCard({
   onDone: () => void;
   onLater: () => void;
   onStartTimer: (task: TaskDef) => void;
-  suggestion?: import('@/services/HealthService').HealthWorkout;
+  suggestion?: HealthSuggestion;
   /** Ticking YESTERDAY. The card itself changes, not a label on it. */
   grace?: number;
 }) {
@@ -181,7 +182,7 @@ function TopCard({
           <Serif style={{ marginTop: 10 }}>{task.sub}</Serif>
 
           {suggestion && (
-            <WorkoutSuggestion taskKey={task.key} workout={suggestion} />
+            <HealthSuggestionRow taskKey={task.key} suggestion={suggestion} />
           )}
 
           <View style={{ flex: 1, minHeight: 24 }} />
@@ -369,7 +370,7 @@ export default function CheckinScreen() {
   // morning of day 2 is not told its tasks stay open until noon "tomorrow".
   const dayOne = dayOneLine({ day, restarted, sealedDays: perfectDays });
   const deferTask = useAppStore((s) => s.deferTask);
-  const workoutSuggestions = useAppStore(useShallow(selectWorkoutSuggestions));
+  const healthSuggestions = useAppStore(useShallow(selectHealthSuggestions));
   const startTimer = useStartTimer();
 
   const yesterday = useAppStore((s) => s.yesterday);
@@ -533,7 +534,7 @@ export default function CheckinScreen() {
                 }}
                 onLater={() => deferTask(topTask.key)}
                 onStartTimer={startTimer}
-                suggestion={grace ? undefined : workoutSuggestions[topTask.key]}
+                suggestion={grace ? undefined : healthSuggestions[topTask.key]}
               />
             </>
           ) : finished ? (

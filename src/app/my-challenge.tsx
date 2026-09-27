@@ -17,7 +17,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BottomSheet } from '@/components/BottomSheet';
 import { Micro, Serif } from '@/components/primitives';
+import { HealthLinkSheet } from '@/components/HealthLinkSheet';
 import { Card, Kicker, OutlineButton } from '@/components/ui';
+import { describeLink, type TaskLike } from '@/lib/healthLinks';
 import {
   buildTierTask,
   cancelledChangeLine,
@@ -335,12 +337,18 @@ function TaskRow({
   struck,
   onEdit,
   onRemove,
+  health,
 }: {
   task: TaskDef | { key: string; label: string; sub: string };
   meta?: string;
   struck?: boolean;
   onEdit?: () => void;
   onRemove?: () => void;
+  /**
+   * Phase 38N: the Apple Health link for this task, on devices with
+   * HealthKit. `linked` is the saved rule in words, or null.
+   */
+  health?: { linked: string | null; onPress: () => void };
 }) {
   return (
     <View style={styles.taskRow}>
@@ -365,7 +373,18 @@ function TaskRow({
           </Serif>
         ) : null}
         {meta ? <Text style={styles.taskMeta}>{meta}</Text> : null}
+        {health?.linked ? (
+          <Text style={styles.taskMeta}>Apple Health: {health.linked}</Text>
+        ) : null}
       </View>
+      {health && (
+        <OutlineButton
+          label={health.linked ? 'Health ✓' : 'Health'}
+          small
+          tone={health.linked ? 'accent' : 'neutral'}
+          onPress={health.onPress}
+        />
+      )}
       {onEdit && <OutlineButton label="Edit" small tone="neutral" onPress={onEdit} />}
       {onRemove && (
         <OutlineButton label="Remove" small tone="neutral" onPress={onRemove} />
@@ -391,6 +410,20 @@ export default function MyChallengeScreen() {
   const [tierTarget, setTierTarget] = useState<Tier | null>(null);
   const [targetTask, setTargetTask] = useState<TaskDef | null>(null);
   const tierLabelNow = useAppStore(selectTierLabel);
+
+  // Apple Health links (Phase 38N). Only where HealthKit exists — a "Health"
+  // button on web or Android would link to nothing.
+  const healthAvailable = useAppStore((s) => s.healthAvailable);
+  const healthLinks = useAppStore((s) => s.healthLinks);
+  const unitPreference = useAppStore((s) => s.unitPreference);
+  const [linkTask, setLinkTask] = useState<TaskLike | null>(null);
+  const healthFor = (t: TaskDef) =>
+    healthAvailable
+      ? {
+          linked: healthLinks[t.key] ? describeLink(healthLinks[t.key], unitPreference) : null,
+          onPress: () => setLinkTask({ key: t.key, label: t.label, target: t.target ?? null }),
+        }
+      : undefined;
 
   // One predicate and one sentence, both derived from the pending-change
   // state the service already owns. No screen invents its own version.
@@ -492,6 +525,7 @@ export default function MyChallengeScreen() {
             key={t.key}
             task={t}
             meta={t.timerMinutes ? `${t.timerMinutes} min timer` : undefined}
+            health={healthFor(t)}
           />
         ))}
       </Card>
@@ -516,6 +550,7 @@ export default function MyChallengeScreen() {
             <TaskRow
               key={t.key}
               task={t}
+              health={healthFor(t)}
               meta={
                 isPendingAdd
                   ? 'starts tomorrow'
@@ -643,6 +678,7 @@ export default function MyChallengeScreen() {
           setEditing(null);
         }}
       />
+      <HealthLinkSheet task={linkTask} onClose={() => setLinkTask(null)} />
       <TierConfirmSheet target={tierTarget} onClose={() => setTierTarget(null)} />
       <TargetEditorSheet task={targetTask} onClose={() => setTargetTask(null)} />
     </ScrollView>

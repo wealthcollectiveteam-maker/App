@@ -22,6 +22,8 @@ export const PREF_KEYS = {
   notifications: 'ranked.notificationPrefs.v1',
   health: 'ranked.healthPrefs.v1',
   weeklyCheckin: 'ranked.weeklyCheckinEnabled.v1',
+  /** Task key → Health rule (Phase 38N). Configuration; never a reading. */
+  healthLinks: 'ranked.healthLinks.v1',
 } as const;
 
 export function serializePrefs(value: object): string {

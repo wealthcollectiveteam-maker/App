@@ -16,7 +16,7 @@ import {
 import { RefreshableScrollView } from '@/components/RefreshableScrollView';
 import { ScreenState } from '@/components/ScreenState';
 import { Card, OutlineButton } from '@/components/ui';
-import { WorkoutSuggestion } from '@/components/WorkoutSuggestion';
+import { HealthSuggestionRow } from '@/components/HealthSuggestion';
 import {
   hasPendingChanges,
   missedDayCopy,
@@ -35,8 +35,8 @@ import {
 import {
   selectDoneCount,
   selectRestartNoticeDismissed,
+  selectHealthSuggestions,
   selectTasks,
-  selectWorkoutSuggestions,
   useAppStore,
 } from '@/store/useAppStore';
 import { toast } from '@/store/useToastStore';
@@ -256,7 +256,7 @@ export default function HomeScreen() {
   const perfectDays = useAppStore((s) => s.perfectDays);
   const tasks = useAppStore(selectTasks);
   const doneCount = useAppStore(selectDoneCount);
-  const workoutSuggestions = useAppStore(useShallow(selectWorkoutSuggestions));
+  const healthSuggestions = useAppStore(useShallow(selectHealthSuggestions));
   const router = useRouter();
   const allDone = doneCount === tasks.length;
   const pendingNote = hasPendingChanges(pending)
@@ -321,10 +321,10 @@ export default function HomeScreen() {
           {tasks.map((t) => (
             <View key={t.key}>
               <HomeTaskRow task={t} />
-              {workoutSuggestions[t.key] && (
-                <WorkoutSuggestion
+              {healthSuggestions[t.key] && (
+                <HealthSuggestionRow
                   taskKey={t.key}
-                  workout={workoutSuggestions[t.key]!}
+                  suggestion={healthSuggestions[t.key]!}
                 />
               )}
             </View>
