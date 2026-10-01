@@ -39,7 +39,11 @@ insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000e4', 'restore-continues@test.dev'),
   ('00000000-0000-0000-0000-0000000000e5', 'restore-unsealed@test.dev'),
   ('00000000-0000-0000-0000-0000000000e6', 'restore-late@test.dev'),
-  ('00000000-0000-0000-0000-0000000000e7', 'restore-stranger@test.dev')
+  ('00000000-0000-0000-0000-0000000000e7', 'restore-stranger@test.dev'),
+  ('00000000-0000-0000-0000-0000000000e8', 'restore-twice@test.dev'),
+  ('00000000-0000-0000-0000-0000000000e9', 'chain-sealed@test.dev'),
+  ('00000000-0000-0000-0000-0000000000ea', 'chain-dormant@test.dev'),
+  ('00000000-0000-0000-0000-0000000000eb', 'history-stranger@test.dev')
 on conflict do nothing;
 
 -- Complete every task in a day's snapshot, without sealing. The engine's
@@ -1780,6 +1784,10 @@ declare
 begin
   call t_restore_fixture(v_uid, 'Restore-unsealed', 'Unsealed squad');
   select id into v_o from public.challenges where owner = v_uid and ended_reason = 'missed_day';
+  -- now() is one value for this whole block, and the ending below must be a
+  -- later moment than this one, as it always is in life (the reopened day
+  -- closes at the next noon). So the first ending is moved to yesterday.
+  update public.challenges set ended_at = ended_at - interval '1 day' where id = v_o;
   perform public.restore_missed_day();
 
   -- Nothing done. The reopened window closes; the evaluator judges day 30
@@ -1802,44 +1810,80 @@ begin
     raise exception 'FAIL (c): the second miss did not restart';
   end if;
 
-  -- ONE RESTORE PER CHALLENGE.
-  begin
-    perform public.restore_missed_day();
-    raise exception 'FAIL (c): a challenge was restored twice';
-  exception when others then
-    get stacked diagnostics v_msg = message_text;
-    if v_msg like 'FAIL%' then raise; end if;
-    if v_msg not like 'already restored%' then
-      raise exception 'FAIL (c): the second restore was refused for the wrong reason: %', v_msg;
-    end if;
-  end;
+  -- PHASE 38P. This is a SECOND, SEPARATE ENDING of the same day: day 30
+  -- was reopened, left undone, and judged missed again. Until 0019 the
+  -- rule was one restore per challenge, so this was refused with 'already
+  -- restored'. The owner's decision: any day ended by a miss can be
+  -- restored within its seven days, every time it happens. The day is two
+  -- days old, so the offer is on again and the restore goes through.
+  --                                                          FAILS on 0018
+  if not exists (select 1 from public.my_restorable_miss() m where m.missed_day = 30) then
+    raise exception 'FAIL (c): a second, separate ending of day 30 is not offered';
+  end if;
+  perform public.restore_missed_day();
+  select * into o from public.challenges where id = v_o;
+  if o.ended_at is not null or o.restored_day <> 30 or o.last_evaluated_day <> 29 then
+    raise exception 'FAIL (c): the second restore did not reopen day 30 (ended %, restored_day %, cursor %)',
+      o.ended_at, o.restored_day, o.last_evaluated_day;
+  end if;
+  if o.flame <> 29 or o.best_flame <> 29 then
+    raise exception 'FAIL (c): the second restore touched the flame (% / %)', o.flame, o.best_flame;
+  end if;
+  if (select ended_reason from public.challenges where id = v_r2) is distinct from 'superseded' then
+    raise exception 'FAIL (c): the second replacement was not superseded';
+  end if;
+  -- HISTORY IS APPEND-ONLY: two restores, two rows, in order, both for day
+  -- 30, each naming the replacement it superseded and a different ending.
+  if (select count(*) from public.challenge_restores where challenge_id = v_o) <> 2 then
+    raise exception 'FAIL (c): expected two restore records, found %',
+      (select count(*) from public.challenge_restores where challenge_id = v_o);
+  end if;
+  if (select array_agg(superseded_challenge_id order by id)
+        from public.challenge_restores where challenge_id = v_o)
+     <> array[(select id from public.challenges where owner = v_uid
+                 and ended_reason = 'superseded' order by ended_at limit 1), v_r2] then
+    raise exception 'FAIL (c): the restore records do not name the superseded replacements in order';
+  end if;
+  if (select count(distinct ended_at) from public.challenge_restores where challenge_id = v_o) <> 2 then
+    raise exception 'FAIL (c): the two restores do not record two distinct endings';
+  end if;
+  -- And now the day is open again, nothing is left to restore.
   if exists (select 1 from public.my_restorable_miss()) then
-    raise exception 'FAIL (c): the offer is on for a challenge already restored';
+    raise exception 'FAIL (c): the offer is on while the reopened challenge is alive';
   end if;
 
-  raise notice 'PASS (c): restored and not sealed — ended again at the next noon, flame unchanged, nothing manufactured, no second restore';
+  raise notice 'PASS (c): restored and not sealed — ended again at the next noon, flame unchanged, nothing manufactured; the second ending is restorable again, and both restores are on record';
 end $$;
 
--- ---- (d) ten days dead -> refused ------------------------------------------
+-- ---- (d) the window's edge: seven days offered, eight days refused --------
 do $$
 declare
   v_uid uuid := '00000000-0000-0000-0000-0000000000e6';
   v_o   uuid;
   v_r   uuid;
   v_msg text;
+  v_m   record;
 begin
   call t_restore_fixture(v_uid, 'Restore-late', 'Late squad');
   select id into v_o from public.challenges where owner = v_uid and ended_reason = 'missed_day';
   v_r := t_challenge(v_uid);
-  -- Eight more days pass for both rows: the missed day is now ten days ago.
-  update public.challenges set start_date = start_date - 8 where id in (v_o, v_r);
+  -- Five more days pass for both rows: the missed day is now SEVEN days
+  -- ago, the last day of the window. Still offered, with nothing to spare.
+  update public.challenges set start_date = start_date - 5 where id in (v_o, v_r);
+  select * into v_m from public.my_restorable_miss();
+  if v_m.missed_day is distinct from 30 or v_m.days_left <> 0 then
+    raise exception 'FAIL (d): on the window''s last day the offer should be on with 0 days left (day %, left %)',
+      v_m.missed_day, v_m.days_left;
+  end if;
+  -- One more: eight days. Refused.
+  update public.challenges set start_date = start_date - 1 where id in (v_o, v_r);
 
   if exists (select 1 from public.my_restorable_miss()) then
     raise exception 'FAIL (d): the offer is on for a miss outside the window';
   end if;
   begin
     perform public.restore_missed_day();
-    raise exception 'FAIL (d): a ten-day-old miss was restored';
+    raise exception 'FAIL (d): an eight-day-old miss was restored';
   exception when others then
     get stacked diagnostics v_msg = message_text;
     if v_msg like 'FAIL%' then raise; end if;
@@ -1851,7 +1895,7 @@ begin
     raise exception 'FAIL (d): a refused restore changed the original';
   end if;
 
-  raise notice 'PASS (d): a miss outside the seven-day window is refused, and the offer is off';
+  raise notice 'PASS (d): seven days after the miss the offer is on; eight days after it is refused, and the offer is off';
 end $$;
 
 -- ---- (e) a stranger, through the real RPC, as authenticated ----------------
@@ -1894,6 +1938,537 @@ begin
        where owner = '00000000-0000-0000-0000-0000000000e6' and ended_reason = 'missed_day') <> 1 then
     raise exception 'FAIL (e): the stranger''s call changed the other owner''s challenge';
   end if;
+end $$;
+
+-- =============================================================================
+-- PROOF 15 — A MISSED DAY CAN BE RESTORED EVERY TIME, NOT ONCE PER RUN
+-- (Phase 38P; migration 0019)
+--
+-- The owner's case. His run was restored once (day 30, five days earlier),
+-- went on to day 36, and then day 37 — done, never logged — was judged
+-- missed at noon the next day. 0018 refused the second restore on one
+-- predicate: `o.restored_at is not null`. restart_challenge() never clears
+-- restored_at, so a run restored once could never be restored again.
+--
+-- The rule now: restorable = the most recent challenge ended by a miss,
+-- within seven days of the missed day, whose CURRENT ENDING has not been
+-- reopened. An ending is identified by (challenge_id, ended_at) — the
+-- timestamp the evaluator wrote when it ended the run — and every restore
+-- records the ending it reversed in challenge_restores. The same pair can
+-- never be recorded twice (unique index), and a later ending can never carry
+-- the earlier one's timestamp: it can only be written after the restore
+-- committed and the reopened day closed, which is at least the next noon.
+--
+--   (a) miss -> restore -> seal -> run on -> miss again -> the second
+--       restore is OFFERED and ALLOWED, pays nothing, and both restores are
+--       on record in order                                        FAILS on 0018
+--   (b) seal the reopened day; the replacement's sealed day carries over and
+--       pays once; best_flame never went down through either restore
+--   (c) the same ending twice -> refused, through the RPC and at the storage
+--       layer; the history cannot be edited or deleted
+--   (d) a chain — the replacement itself missed — never reaches the original
+--   (e) a stranger can neither restore nor read the history
+--   (f) delete_account() still cascades through the history
+-- =============================================================================
+
+-- ---- (a) the owner's case ----------------------------------------------------
+do $$
+declare
+  v_uid  uuid := '00000000-0000-0000-0000-0000000000e8';
+  v_o    uuid;
+  v_r    uuid;
+  v_d    uuid;
+  o      public.challenges;
+  d      public.challenges;
+  i      integer;
+  v_n    integer;
+  v_best integer;
+  v_first_restore timestamptz;
+  v_ending        timestamptz;
+  v_m    record;
+  v_win  record;
+  h      record;
+begin
+  call t_restore_fixture(v_uid, 'Restore-twice', 'Twice squad');
+  select id into v_o from public.challenges where owner = v_uid and ended_reason = 'missed_day';
+  v_r := t_challenge(v_uid);
+  v_best := 29;
+  -- now() is one value for this whole block. In life the two endings below
+  -- are days apart, so the first is moved to five days ago.
+  update public.challenges set ended_at = ended_at - interval '5 days' where id = v_o;
+
+  -- The first restore, as 0018 shipped it. Day 30 is sealed by hand, the
+  -- reopened window closes (the restore is moved to two days ago), and the
+  -- carried day 31 pays once.
+  perform public.restore_missed_day();
+  call t_do_day(v_o, 30);
+  perform public.seal_day(30);
+  update public.challenges set restored_at = now() - interval '2 days' where id = v_o;
+  select restored_at into v_first_restore from public.challenges where id = v_o;
+  perform public.evaluate_challenge(v_o);
+  select * into o from public.challenges where id = v_o;
+  if o.ended_at is not null or o.flame <> 31 or o.best_flame <> 31 or o.last_evaluated_day <> 31 then
+    raise exception 'FIXTURE (a): after the first restore flame % best % cursor %, expected 31 / 31 / 31',
+      o.flame, o.best_flame, o.last_evaluated_day;
+  end if;
+  if o.best_flame < v_best then raise exception 'FAIL (a): best_flame went down'; end if;
+  v_best := o.best_flame;
+
+  -- The run goes on: 32..36 done, 37 done in life but never logged, and at
+  -- noon on day 38 the evaluator ends the run. Hard rules: restart.
+  for i in 32 .. 36 loop
+    call t_do_day(v_o, i);
+  end loop;
+  call t_move_day(v_o, 38);
+  perform public.evaluate_challenge(v_o);
+  select * into o from public.challenges where id = v_o;
+  if o.ended_reason is distinct from 'missed_day' or o.ended_on_day <> 37
+     or o.flame <> 36 or o.best_flame <> 36 then
+    raise exception 'FIXTURE (a): second miss did not end the run on day 37 (% / day % / flame % / best %)',
+      coalesce(o.ended_reason, 'alive'), o.ended_on_day, o.flame, o.best_flame;
+  end if;
+  if o.best_flame < v_best then raise exception 'FAIL (a): best_flame went down'; end if;
+  v_best := o.best_flame;
+  v_d := t_challenge(v_uid);
+  if v_d is null or v_d in (v_o, v_r)
+     or (select restarted_from from public.challenges where id = v_d) <> v_o then
+    raise exception 'FIXTURE (a): the second miss did not create a direct replacement';
+  end if;
+
+  -- THE PRODUCTION ROW, exactly: ended by a miss, restored_at from the
+  -- earlier restore still set and EARLIER than this ending, restored_day
+  -- still 30. This is what query 50 shows the owner.
+  if o.restored_at is null or o.restored_day <> 30 or o.restored_at >= o.ended_at then
+    raise exception 'FIXTURE (a): the row does not carry the earlier restore beneath the new ending (restored_at %, ended_at %)',
+      o.restored_at, o.ended_at;
+  end if;
+  -- The ending was noon of day 38; the restore below happens on day 39. In
+  -- this block both would read now(), so the ending is moved to yesterday.
+  update public.challenges set ended_at = ended_at - interval '1 day' where id = v_o;
+  select ended_at into v_ending from public.challenges where id = v_o;
+
+  -- THE NEW RULE. The offer is on, for day 37, with six days left.
+  select * into v_m from public.my_restorable_miss();                 -- FAILS on 0018: empty
+  if v_m.challenge_id is distinct from v_o or v_m.missed_day is distinct from 37
+     or v_m.days_left is distinct from 6 then
+    raise exception 'FAIL (a): a run restored once is not offered its second restore (challenge %, day %, left %)',
+      v_m.challenge_id, v_m.missed_day, v_m.days_left;
+  end if;
+
+  -- A day passes. The replacement's day 1 is done and sealed by the
+  -- evaluator, so the second restore has a sealed day to carry.
+  call t_do_day(v_d, 1);
+  call t_move_day(v_o, 39);
+  call t_move_day(v_d, 2);
+  perform public.evaluate_challenge(v_d);
+  select * into d from public.challenges where id = v_d;
+  if d.flame <> 1 or not exists (select 1 from public.challenge_days
+                                   where challenge_id = v_d and day = 1 and sealed_at is not null) then
+    raise exception 'FIXTURE (a): the replacement''s day 1 is not sealed (flame %)', d.flame;
+  end if;
+
+  perform public.restore_missed_day();                                 -- FAILS on 0018: already restored
+
+  select * into o from public.challenges where id = v_o;
+  select * into d from public.challenges where id = v_d;
+  if o.ended_at is not null or o.ended_reason is not null or o.ended_on_day is not null then
+    raise exception 'FAIL (a): the second restore did not reopen the run';
+  end if;
+  if o.restored_day <> 37 or o.restored_at <= v_first_restore or o.restored_at <= v_ending
+     or o.last_evaluated_day <> 36 or o.missed_notice_day is not null then
+    raise exception 'FAIL (a): the latest restore is not recorded on the row (day %, at %, cursor %)',
+      o.restored_day, o.restored_at, o.last_evaluated_day;
+  end if;
+  if d.ended_reason is distinct from 'superseded' or d.ended_at <> o.restored_at then
+    raise exception 'FAIL (a): the second replacement was not superseded in the same transaction';
+  end if;
+  if (select ended_reason from public.challenges where id = v_r) is distinct from 'superseded' then
+    raise exception 'FAIL (a): the first replacement''s record was touched';
+  end if;
+  if (select count(*) from public.challenges where owner = v_uid and ended_at is null) <> 1 then
+    raise exception 'FAIL (a): the owner does not hold exactly one alive challenge';
+  end if;
+
+  -- RESTORING CHANGES NO FLAME, the second time as the first: no flame, no
+  -- seal, no miss item. 29 + day 30 + day 31 + days 32..36 = 36 sealed.
+  if o.flame <> 36 or o.best_flame <> 36 then
+    raise exception 'FAIL (a): the second restore touched the flame (% / best %)', o.flame, o.best_flame;
+  end if;
+  if o.best_flame < v_best then raise exception 'FAIL (a): best_flame went down'; end if;
+  if (select count(*) from public.challenge_days where challenge_id = v_o and sealed_at is not null) <> 36 then
+    raise exception 'FAIL (a): the second restore sealed something (% sealed, expected 36)',
+      (select count(*) from public.challenge_days where challenge_id = v_o and sealed_at is not null);
+  end if;
+  if (select count(*) from public.feed_items where author = v_uid and kind = 'miss') <> 2 then
+    raise exception 'FAIL (a): expected the two misses and nothing more in the feed, found %',
+      (select count(*) from public.feed_items where author = v_uid and kind = 'miss');
+  end if;
+  if (select count(*) from public.feed_items where author = v_uid and kind = 'change' and text like 'reopened Day 37%') <> 1
+     or (select count(*) from public.feed_items where author = v_uid and kind = 'change' and text like 'reopened Day 30%') <> 1 then
+    raise exception 'FAIL (a): each restore should post exactly one correction beside its miss';
+  end if;
+
+  -- Day 37 is open again from its own snapshot; the replacement's sealed
+  -- day 1 arrives as day 38, unsealed, with its completions.
+  if exists (select 1 from public.challenge_days where challenge_id = v_o and day = 37
+              and (sealed_at is not null or outcome is not null or evaluated_at is not null)) then
+    raise exception 'FAIL (a): day 37 was not reopened';
+  end if;
+  if not exists (select 1 from public.challenge_days where challenge_id = v_o and day = 38 and sealed_at is null) then
+    raise exception 'FAIL (a): the replacement''s day was not carried across unsealed';
+  end if;
+  if (select count(*) from public.task_completions where challenge_id = v_o and day = 38)
+     <> (select jsonb_array_length(task_snapshot) from public.challenge_days where challenge_id = v_o and day = 38) then
+    raise exception 'FAIL (a): the carried day did not bring its completions';
+  end if;
+
+  -- HISTORY IS APPEND-ONLY, and in order: the first restore's record was
+  -- not overwritten by the second. Each names the ending it reversed and
+  -- the replacement it superseded.
+  v_n := 0;
+  for h in select * from public.challenge_restores where challenge_id = v_o order by id loop
+    v_n := v_n + 1;
+    if v_n = 1 and (h.missed_day <> 30 or h.superseded_challenge_id <> v_r or h.owner <> v_uid) then
+      raise exception 'FAIL (a): the first restore record is wrong (day %, superseded %)', h.missed_day, h.superseded_challenge_id;
+    end if;
+    if v_n = 2 and (h.missed_day <> 37 or h.superseded_challenge_id <> v_d or h.ended_at <> v_ending
+                    or h.restored_at <> o.restored_at or h.owner <> v_uid) then
+      raise exception 'FAIL (a): the second restore record is wrong (day %, superseded %, ended_at %)',
+        h.missed_day, h.superseded_challenge_id, h.ended_at;
+    end if;
+  end loop;
+  if v_n <> 2 then
+    raise exception 'FAIL (a): expected two restore records, found %', v_n;
+  end if;
+  if (select ended_at from public.challenge_restores where challenge_id = v_o and missed_day = 30) >= v_ending then
+    raise exception 'FAIL (a): the two records do not describe two distinct endings in order';
+  end if;
+
+  -- The screen can reach it, and the evaluator waits.
+  select * into v_win from public.get_day_window() w where w.day = 37;
+  if v_win.day is null or not v_win.is_open or v_win.reopened_until is null or v_win.reopened_until <= now() then
+    raise exception 'FAIL (a): get_day_window does not offer the reopened day 37';
+  end if;
+  if public.challenge_day(o) <> 39 or (select id from public.my_active_challenge()) <> v_o then
+    raise exception 'FAIL (a): after the second restore the active challenge is not the original on day 39';
+  end if;
+  v_n := public.evaluate_challenge(v_o);
+  if v_n <> 0 or (select flame from public.challenges where id = v_o) <> 36 then
+    raise exception 'FAIL (a): the evaluator judged the reopened day while it was open';
+  end if;
+
+  raise notice 'PASS (a): a run restored once is offered and allowed its second restore; it pays nothing, and both restores are on record in order';
+end $$;
+
+-- ---- (b) seal it; the carried day pays once; the best never went down ----
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-0000000000e8';
+  v_o   uuid;
+  o     public.challenges;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  v_o := t_challenge(v_uid);
+
+  call t_do_day(v_o, 37);
+  perform public.seal_day(37);
+  select * into o from public.challenges where id = v_o;
+  if o.flame <> 37 or o.best_flame <> 37 then
+    raise exception 'FAIL (b): sealing the reopened day paid % (best %), expected 37', o.flame, o.best_flame;
+  end if;
+
+  update public.challenges set restored_at = now() - interval '2 days' where id = v_o;
+  perform public.evaluate_challenge(v_o);
+  select * into o from public.challenges where id = v_o;
+  if o.ended_at is not null then
+    raise exception 'FAIL (b): the run ended after the day was sealed (%)', o.ended_reason;
+  end if;
+  if o.flame <> 38 or o.best_flame <> 38 or o.last_evaluated_day <> 38 then
+    raise exception 'FAIL (b): after the carried day flame % best % cursor %, expected 38 / 38 / 38',
+      o.flame, o.best_flame, o.last_evaluated_day;
+  end if;
+  if (select sealed_at from public.challenge_days where challenge_id = v_o and day = 38) is null then
+    raise exception 'FAIL (b): the carried day was not sealed';
+  end if;
+  perform public.evaluate_challenge(v_o);
+  if (select flame from public.challenges where id = v_o) <> 38 then
+    raise exception 'FAIL (b): a second evaluation paid the carried day again';
+  end if;
+  -- best_flame: 29 -> 30 -> 31 -> 36 -> (restore) 36 -> 37 -> 38. Never down.
+  if (select count(*) from public.challenge_restores where challenge_id = v_o) <> 2 then
+    raise exception 'FAIL (b): the history changed after the restore';
+  end if;
+  if exists (select 1 from public.my_restorable_miss()) then
+    raise exception 'FAIL (b): the offer is on while the run is alive';
+  end if;
+
+  raise notice 'PASS (b): sealed, the run continues at 37, then 38 for the carried day, paid once; best_flame only ever rose';
+end $$;
+
+-- ---- (c) the same ending twice -> refused; the history cannot be edited --
+do $$
+declare
+  v_uid    uuid := '00000000-0000-0000-0000-0000000000e8';
+  v_o      uuid;
+  v_d      uuid;
+  v_ending timestamptz;
+  v_msg    text;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  v_o := t_challenge(v_uid);
+  select superseded_challenge_id, ended_at into v_d, v_ending
+    from public.challenge_restores where challenge_id = v_o and missed_day = 37;
+
+  -- Through the RPC, as things stand: the run is alive, so there is no
+  -- ending to reopen at all.
+  begin
+    perform public.restore_missed_day();
+    raise exception 'FAIL (c): a restore went through with nothing ended';
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    if v_msg like 'FAIL%' then raise; end if;
+    if v_msg not like 'nothing to restore%' then
+      raise exception 'FAIL (c): refused for the wrong reason: %', v_msg;
+    end if;
+  end;
+
+  -- THE REPLAY. Only a superuser can do this — no client role holds UPDATE
+  -- on challenges or any write on challenge_restores — but it is the one
+  -- way to reach the predicate: put the row back exactly as it stood when
+  -- the day-37 ending was reversed, SAME ended_at, replacement alive again.
+  -- The original is ended first so one-alive-per-owner holds throughout.
+  update public.challenges
+     set ended_at = v_ending, ended_reason = 'missed_day', ended_on_day = 37
+   where id = v_o;
+  update public.challenges
+     set ended_at = null, ended_reason = null, ended_on_day = null
+   where id = v_d;
+  if exists (select 1 from public.my_restorable_miss()) then
+    raise exception 'FAIL (c): an ending already reopened is offered again';
+  end if;
+  begin
+    perform public.restore_missed_day();
+    raise exception 'FAIL (c): the same ending was restored twice';
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    if v_msg like 'FAIL%' then raise; end if;
+    if v_msg not like 'already restored%' then
+      raise exception 'FAIL (c): refused for the wrong reason: %', v_msg;
+    end if;
+  end;
+  -- And the storage layer refuses the duplicate on its own, predicate or no.
+  begin
+    insert into public.challenge_restores (challenge_id, owner, missed_day, ended_at, superseded_challenge_id)
+    values (v_o, v_uid, 37, v_ending, v_d);
+    raise exception 'FAIL (c): the same ending was recorded twice';
+  exception when unique_violation then null;
+  end;
+  -- Undo the replay: back to the real state.
+  update public.challenges
+     set ended_at = now(), ended_reason = 'superseded', ended_on_day = 1
+   where id = v_d;
+  update public.challenges
+     set ended_at = null, ended_reason = null, ended_on_day = null
+   where id = v_o;
+
+  -- APPEND-ONLY: no update, no delete, even as the superuser.
+  begin
+    update public.challenge_restores set missed_day = 1 where challenge_id = v_o;
+    raise exception 'FAIL (c): a restore record was edited';
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    if v_msg like 'FAIL%' then raise; end if;
+    if v_msg not like '%append-only%' then raise; end if;
+  end;
+  begin
+    delete from public.challenge_restores where challenge_id = v_o;
+    raise exception 'FAIL (c): a restore record was deleted';
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    if v_msg like 'FAIL%' then raise; end if;
+    if v_msg not like '%append-only%' then raise; end if;
+  end;
+  if (select count(*) from public.challenge_restores where challenge_id = v_o) <> 2 then
+    raise exception 'FAIL (c): the history is not intact';
+  end if;
+
+  raise notice 'PASS (c): the same ending is refused by the RPC and by the unique index; the history is append-only';
+end $$;
+
+-- ---- (d) a chain never reaches the original -------------------------------
+-- (i) The replacement itself misses, with a sealed day behind it. The
+-- offer names the REPLACEMENT's day, and a restore reopens the replacement.
+-- The original is one step further back and is not touched.
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-0000000000e9';
+  v_o   uuid;
+  v_r   uuid;
+  v_c   uuid;
+  v_m   record;
+begin
+  call t_restore_fixture(v_uid, 'Chain-sealed', 'Chain squad');
+  select id into v_o from public.challenges where owner = v_uid and ended_reason = 'missed_day';
+  v_r := t_challenge(v_uid);
+  -- now() is one value for this block; the original's ending came days
+  -- before the replacement's, so it is moved to yesterday.
+  update public.challenges set ended_at = ended_at - interval '1 day' where id = v_o;
+  -- The replacement (day 1 sealed) leaves its day 2 undone; a day passes.
+  call t_move_day(v_o, 33);
+  call t_move_day(v_r, 3);
+  perform public.evaluate_challenge(v_r);
+  if (select ended_reason from public.challenges where id = v_r) is distinct from 'missed_day' then
+    raise exception 'FIXTURE (d.i): the replacement did not end by a miss';
+  end if;
+  v_c := t_challenge(v_uid);
+  if v_c is null or v_c in (v_o, v_r) then
+    raise exception 'FIXTURE (d.i): no third challenge';
+  end if;
+
+  select * into v_m from public.my_restorable_miss();
+  if v_m.challenge_id is distinct from v_r or v_m.missed_day is distinct from 2 then
+    raise exception 'FAIL (d.i): the offer reaches past the direct link (challenge %, day %)',
+      v_m.challenge_id, v_m.missed_day;
+  end if;
+  perform public.restore_missed_day();
+  if (select ended_at from public.challenges where id = v_r) is not null then
+    raise exception 'FAIL (d.i): the replacement was not the one reopened';
+  end if;
+  if (select ended_reason from public.challenges where id = v_o) is distinct from 'missed_day'
+     or exists (select 1 from public.challenge_restores where challenge_id = v_o) then
+    raise exception 'FAIL (d.i): the original, two steps back, was touched';
+  end if;
+  if (select ended_reason from public.challenges where id = v_c) is distinct from 'superseded' then
+    raise exception 'FAIL (d.i): the third challenge was not superseded';
+  end if;
+  if (select count(*) from public.challenges where owner = v_uid and ended_at is null) <> 1 then
+    raise exception 'FAIL (d.i): the owner does not hold exactly one alive challenge';
+  end if;
+  raise notice 'PASS (d.i): a chain is walked one direct link at a time — the offer and the restore reach the replacement, never the original';
+end $$;
+
+-- (ii) The replacement itself misses with NOTHING sealed on either run, so
+-- 0016 ends it dormant and nothing is alive. The original's miss is two
+-- days old, inside the window, and still refused: the alive challenge is
+-- not its direct replacement, because there is none.
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-0000000000ea';
+  v_a   uuid;
+  v_b   uuid;
+  v_msg text;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  insert into public.profiles (id, name) values (v_uid, 'Chain-dormant') on conflict do nothing;
+  v_a := public.create_challenge('hard', 'America/Toronto');
+  call t_set_day(v_a, 3);                 -- day 2 untouched: a miss, the one restart
+  perform public.evaluate_challenge(v_a);
+  if (select ended_reason from public.challenges where id = v_a) is distinct from 'missed_day' then
+    raise exception 'FIXTURE (d.ii): the fresh run did not end by a miss';
+  end if;
+  v_b := t_challenge(v_uid);
+  call t_move_day(v_a, 4);
+  call t_move_day(v_b, 2);                -- the restart's day 1 untouched too
+  perform public.evaluate_challenge(v_b);
+  if (select ended_reason from public.challenges where id = v_b) is distinct from 'dormant'
+     or t_challenge(v_uid) is not null then
+    raise exception 'FIXTURE (d.ii): the second empty run did not end dormant';
+  end if;
+
+  if exists (select 1 from public.my_restorable_miss()) then
+    raise exception 'FAIL (d.ii): the offer is on with no direct replacement alive';
+  end if;
+  begin
+    perform public.restore_missed_day();
+    raise exception 'FAIL (d.ii): a restore went through with no direct replacement alive';
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    if v_msg like 'FAIL%' then raise; end if;
+    if v_msg not like 'not restorable%direct replacement%' then
+      raise exception 'FAIL (d.ii): refused for the wrong reason: %', v_msg;
+    end if;
+  end;
+  if (select ended_reason from public.challenges where id = v_a) is distinct from 'missed_day' then
+    raise exception 'FAIL (d.ii): a refused restore changed the original';
+  end if;
+  raise notice 'PASS (d.ii): with the replacement gone the original is refused — direct replacement only';
+end $$;
+
+-- ---- (e) a stranger, through the real RPC and the real table ---------------
+set role authenticated;
+do $$
+declare
+  v_me     uuid := '00000000-0000-0000-0000-0000000000eb';
+  v_victim uuid := '00000000-0000-0000-0000-0000000000e8';
+  v_msg    text;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_me, 'role','authenticated')::text, false);
+  insert into public.profiles (id, name) values (v_me, 'History-stranger') on conflict do nothing;
+  perform public.create_challenge('hard', 'UTC');
+
+  begin
+    perform public.restore_missed_day();
+    raise exception 'FAIL (e): a stranger''s restore call succeeded';
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    if v_msg like 'FAIL%' then raise; end if;
+    if v_msg not like 'nothing to restore%' then
+      raise exception 'FAIL (e): refused for the wrong reason: %', v_msg;
+    end if;
+  end;
+  -- The victim has two restores on record. The stranger reads none.
+  if (select count(*) from public.challenge_restores) <> 0 then
+    raise exception 'FAIL (e): a stranger can read somebody else''s restore history';
+  end if;
+  -- And cannot write one, for anybody, at the privilege layer.
+  begin
+    insert into public.challenge_restores (challenge_id, owner, missed_day, ended_at)
+    values (gen_random_uuid(), v_me, 1, now());
+    raise exception 'FAIL (e): a client inserted a restore record';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    delete from public.challenge_restores;
+    raise exception 'FAIL (e): a client deleted restore records';
+  exception when insufficient_privilege then null;
+  end;
+
+  -- The owner reads their own, both of them.
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_victim, 'role','authenticated')::text, false);
+  if (select count(*) from public.challenge_restores) <> 2 then
+    raise exception 'FAIL (e): the owner cannot read their own restore history';
+  end if;
+  raise notice 'PASS (e): nobody can restore or read anyone else''s history; the owner reads their own and writes nothing';
+end $$;
+reset role;
+
+-- ---- (f) delete_account cascades through the history ----------------------
+set role authenticated;
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-0000000000e8';
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  perform public.delete_account();
+end $$;
+reset role;
+do $$
+begin
+  if exists (select 1 from public.challenge_restores
+              where owner = '00000000-0000-0000-0000-0000000000e8') then
+    raise exception 'FAIL (f): delete_account left restore records behind';
+  end if;
+  if exists (select 1 from public.challenge_restores cr
+              where not exists (select 1 from public.challenges c where c.id = cr.challenge_id)) then
+    raise exception 'FAIL (f): an orphaned restore record survived';
+  end if;
+  raise notice 'PASS (f): delete_account cascades through the restore history';
 end $$;
 
 drop procedure t_restore_fixture(uuid, text, text);

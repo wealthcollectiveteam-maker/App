@@ -66,6 +66,9 @@ declare
     'restore_window_days()',
     'restored_day_closes_at(challenges)',
     'restored_day_is_open(challenges)',
+    -- 0019: the append-only guard on challenge_restores. A trigger function;
+    -- nothing calls it and no client role may hold EXECUTE on it.
+    'forbid_restore_mutation()',
     'sim_fill_day(uuid,integer)',
     -- 0011: the grace-window clock. All five take a `challenges` ROW rather
     -- than an id, so they leak nothing a client cannot already read — but
@@ -230,6 +233,15 @@ insert into public.profiles (id, name) values (auth.uid(), 'Ben');
 select public.create_challenge('hard', 'UTC');
 select public.join_squad((select invite_code from t_ctx));
 
+-- 0019: Ada has reopened a day once. Placed by the superuser, exactly as
+-- restore_missed_day() places it; the only writer in life.
+reset role;
+insert into public.challenge_restores (challenge_id, owner, missed_day, ended_at)
+select id, owner, 1, now() from public.challenges
+ where owner = '00000000-0000-0000-0000-00000000000a';
+set role authenticated;
+call test_login('00000000-0000-0000-0000-00000000000b');
+
 -- ---------------- PROOF 1: squadmate privacy ----------------
 do $$
 declare n integer;
@@ -237,6 +249,10 @@ begin
   -- Ben must see Ada in profiles (name/xp surface only)
   select count(*) into n from public.profiles where name = 'Ada';
   if n <> 1 then raise exception 'FAIL: squadmate cannot see profile name'; end if;
+
+  -- 0019: whether, when and how often a squadmate reopened a day is theirs.
+  select count(*) into n from public.challenge_restores;
+  if n <> 0 then raise exception 'FAIL: squadmate can read restore history'; end if;
 
   -- ...and NOTHING below.
   select count(*) into n from public.journal_entries;
@@ -345,6 +361,37 @@ begin
     raise exception 'FAIL: client inserted a completion directly';
   exception when insufficient_privilege then
     raise notice 'PASS: direct completion INSERT denied (insufficient_privilege)';
+  end;
+end $$;
+
+-- 2a-0019. The restore history is append-only and server-written. Ada's
+-- record (placed before PROOF 1, as restore_missed_day() would place it) is
+-- hers to read and nobody's to write; PROOF 1 showed Ben reads none of it.
+do $$
+declare n integer;
+begin
+  select count(*) into n from public.challenge_restores;
+  if n <> 1 then
+    raise exception 'FAIL: the owner reads % of their own restore records, expected 1', n;
+  end if;
+  begin
+    insert into public.challenge_restores (challenge_id, owner, missed_day, ended_at)
+    values ((select id from public.challenges where owner = auth.uid()), auth.uid(), 2, now());
+    raise exception 'FAIL: client inserted a restore record directly';
+  exception when insufficient_privilege then
+    raise notice 'PASS: direct restore-record INSERT denied (insufficient_privilege)';
+  end;
+  begin
+    update public.challenge_restores set missed_day = 9;
+    raise exception 'FAIL: client updated a restore record directly';
+  exception when insufficient_privilege then
+    raise notice 'PASS: direct restore-record UPDATE denied (insufficient_privilege)';
+  end;
+  begin
+    delete from public.challenge_restores;
+    raise exception 'FAIL: client deleted a restore record directly';
+  exception when insufficient_privilege then
+    raise notice 'PASS: direct restore-record DELETE denied (insufficient_privilege)';
   end;
 end $$;
 
@@ -499,6 +546,13 @@ begin
   select count(*) into n from public.task_completions tc
     where not exists (select 1 from public.challenges c where c.id = tc.challenge_id);
   if n > 0 then bad := bad || ' task_completions(orphan)'; end if;
+  -- 0019: the restore history is append-only EXCEPT for this cascade, which
+  -- its trigger lets through because the parent challenge is already gone.
+  select count(*) into n from public.challenge_restores where owner = v_uid;
+  if n > 0 then bad := bad || ' challenge_restores'; end if;
+  select count(*) into n from public.challenge_restores cr
+    where not exists (select 1 from public.challenges c where c.id = cr.challenge_id);
+  if n > 0 then bad := bad || ' challenge_restores(orphan)'; end if;
 
   if bad <> '' then
     raise exception 'FAIL: rows survived delete_account in:%', bad;

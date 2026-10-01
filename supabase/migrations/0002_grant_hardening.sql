@@ -62,4 +62,10 @@ begin
     execute 'revoke all on public.workout_logs from public, anon, authenticated';
     execute 'grant select, insert, update, delete on public.workout_logs to authenticated';
   end if;
+  -- 0019: the restore history. Read by its owner through RLS; written only
+  -- inside restore_missed_day(). No client write grant, ever.
+  if to_regclass('public.challenge_restores') is not null then
+    execute 'revoke all on public.challenge_restores from public, anon, authenticated';
+    execute 'grant select on public.challenge_restores to authenticated';
+  end if;
 end $$;
