@@ -1,0 +1,79 @@
+{
+  "expo": {
+    "name": "Ranked Fitness",
+    "slug": "ranked-fitness",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "rankedfitness",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0A0B0D",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/13ba3946-9bc4-46e2-afcd-d4a4fd8113ba"
+    },
+    "ios": {
+      "bundleIdentifier": "com.aly786.rankedfitness",
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0A0B0D",
+        "foregroundImage": "./assets/adaptive-icon.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-updates",
+      "expo-notifications",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0A0B0D",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "Ranked Fitness reads from Apple Health only to show you your own numbers and to offer to tick off a daily task you have linked to them. It reads: steps, active energy and workouts (today's activity, and a workout can vouch for a workout task); logged food energy (to offer to mark your diet task done); your most recent weight (to pre-fill the weekly check-in); sleep (how long you slept and when you woke, for sleep and wake-up tasks and a last-night summary); water (for a water task); mindful minutes (for a meditation task); and resting heart rate, heart rate variability and respiratory rate (shown as last night's value beside a 7-day average). It also reads the same things from the two weeks before your challenge started, so you can see how your sleep, heart rate, steps and weight compare with before. Nothing is written to Health. Everything read stays on this phone: it is never uploaded, never stored on our servers, and never visible to your squad. Only the tasks you confirm as done are shared, never the Health data behind them.",
+          "NSHealthUpdateUsageDescription": false,
+          "background": false
+        }
+      ],
+      "expo-localization",
+      "expo-asset"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "13ba3946-9bc4-46e2-afcd-d4a4fd8113ba"
+      }
+    }
+  }
+}

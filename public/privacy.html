@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Ranked Fitness</title>
+<style>
+  :root{
+    --bg:#0A0B0D; --surface:#131519; --line:#22262E;
+    --accent:#1E5BFF; --hi:#F2F3F5; --mid:#8B919B; --low:#4E545D;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--hi);
+    font:400 17px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:720px; margin:0 auto; padding:56px 24px 96px}
+  .eyebrow{
+    font-size:12px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--accent); font-weight:700; margin:0 0 12px;
+  }
+  h1{font-size:34px; line-height:1.15; font-weight:800; margin:0 0 8px; letter-spacing:-.02em}
+  .updated{color:var(--low); font-size:14px; margin:0 0 40px}
+  h2{
+    font-size:13px; letter-spacing:.12em; text-transform:uppercase; font-weight:700;
+    color:var(--mid); margin:44px 0 14px; padding-top:24px; border-top:1px solid var(--line);
+  }
+  h2:first-of-type{border-top:none; padding-top:0}
+  p{margin:0 0 16px; color:#D6D9DE}
+  ul{margin:0 0 16px; padding-left:22px; color:#D6D9DE}
+  li{margin:0 0 9px}
+  strong{color:var(--hi); font-weight:600}
+  a{color:var(--accent); text-decoration:none}
+  a:hover{text-decoration:underline}
+  .card{
+    background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    padding:20px 22px; margin:0 0 20px;
+  }
+  .card p:last-child{margin-bottom:0}
+  .card h3{
+    font-size:15px; font-weight:700; margin:0 0 10px; color:var(--hi);
+  }
+  footer{
+    margin-top:56px; padding-top:24px; border-top:1px solid var(--line);
+    color:var(--low); font-size:14px;
+  }
+  footer a{color:var(--mid)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">Ranked Fitness</p>
+  <h1>Privacy Policy</h1>
+  <p class="updated">Last updated 24 August 2026</p>
+
+  <p>Ranked Fitness is a challenge-tracking app you run with a small group of friends. This policy explains exactly what the app collects, what it never touches, and what the people in your squad can and cannot see about you.</p>
+
+  <h2>The short version</h2>
+
+  <div class="card">
+    <h3>Two things never leave your phone</h3>
+    <p><strong>Apple Health data.</strong> If you grant Health access, the app reads it into memory to show you your numbers. It is never transmitted, never written to our database, and never logged.</p>
+    <p><strong>Progress photos.</strong> The app has no camera access and no photo storage. When a challenge asks for a progress photo, you take it with your own camera app and keep it yourself. Ranked Fitness never sees it.</p>
+  </div>
+
+  <h2>What the app stores</h2>
+
+  <p>When you use Ranked Fitness, the following is saved to our database so it is there when you come back:</p>
+
+  <ul>
+    <li><strong>Your email address</strong> — used only to send you a one-time sign-in code. There is no password.</li>
+    <li><strong>Your display name</strong> and profile details you choose to enter.</li>
+    <li><strong>Your challenge</strong> — the tier and length you picked, your task list including any you added yourself, and which tasks you completed on which day.</li>
+    <li><strong>Your streak and history</strong> — completed days, missed days, and milestones.</li>
+    <li><strong>Anything you log</strong> — journal entries, meals and their macros, body metrics such as weight, and workout notes.</li>
+    <li><strong>Squad membership</strong> — which squads you belong to, invite codes, activity items and pings.</li>
+  </ul>
+
+  <h2>What your squad can see</h2>
+
+  <p>This is the part people most want to know, so it is stated plainly.</p>
+
+  <p><strong>Your squadmates can see:</strong> your display name, which day you are on, how long your challenge is, your tier, how many of today's tasks you have completed, and your streak.</p>
+
+  <p><strong>Your squadmates cannot see:</strong> your journal entries, your meals or macros, your body metrics, or your workout logs. Not a summary of them, not a count, nothing.</p>
+
+  <p>This is not enforced by hiding a screen. It is enforced in the database itself with row-level security, so those records are unreadable to anyone but you even if someone bypassed the app entirely and queried the API directly.</p>
+
+  <h2>What we don't do</h2>
+
+  <ul>
+    <li>We do not sell your data. To anyone. Ever.</li>
+    <li>We do not show advertising in the app.</li>
+    <li>We do not use third-party advertising or analytics tracking.</li>
+    <li>We do not build a profile about you for any purpose other than running your challenge.</li>
+  </ul>
+
+  <h2>Where it is stored</h2>
+
+  <p>Data is stored with <a href="https://supabase.com" rel="noopener">Supabase</a>, a hosted PostgreSQL provider, and is protected by row-level security policies as described above. Sign-in codes are delivered by email.</p>
+
+  <h2>Deleting your account</h2>
+
+  <p>You can delete your account from inside the app at any time: <strong>Settings → Delete account</strong>. This removes your account and the data associated with it — your challenge, your history, your journal entries, your logs, and your squad memberships.</p>
+
+  <p>Deletion is permanent and cannot be undone. If you would rather have it done for you, email the address below from the address on your account.</p>
+
+  <h2>Children</h2>
+
+  <p>Ranked Fitness is not directed to children under 13, and we do not knowingly collect information from them. If you believe a child has created an account, contact us and we will remove it.</p>
+
+  <h2>Changes to this policy</h2>
+
+  <p>If this policy changes in a way that affects what is collected or who can see it, the date at the top of this page changes and the updated policy is posted here.</p>
+
+  <h2>Contact</h2>
+
+  <p>Questions about privacy, or a request to delete your data:<br>
+  <a href="mailto:rankedappfitness@gmail.com">rankedappfitness@gmail.com</a></p>
+
+  <footer>
+    Ranked Fitness · <a href="/terms.html">Terms of Service</a> · <a href="/">Back to the app</a>
+  </footer>
+
+</div>
+</body>
+</html>
