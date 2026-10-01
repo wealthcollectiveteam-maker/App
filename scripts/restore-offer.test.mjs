@@ -160,6 +160,46 @@ if (!USE_OLD) {
   check('streakStatus.ts no longer owns the restore', () => {
     assert.doesNotMatch(streak, /export function restoreOffer/, 'the gated version survives in streakStatus');
   });
+
+  // ---- Phase 38P: the client keeps no memory of a restore ----------------------
+  // 0019 lets a run be restored every time a miss ends it. The server decides
+  // through my_restorable_miss(); the client must hold no "already restored"
+  // gate of its own, or the button would vanish on the second miss exactly as
+  // 0018's predicate made it vanish for the owner on 2026-09-30.
+  const offerSrc = read('src', 'lib', 'restoreOffer.ts');
+  const service = read('src', 'services', 'backend', 'SupabaseDataService.ts');
+  const apiSrc = read('src', 'services', 'backend', 'api.ts');
+  const store = read('src', 'store', 'useAppStore.ts');
+  check('38P: no client file keeps its own record of a restore', () => {
+    for (const [name, src] of [
+      ['restoreOffer.ts', offerSrc],
+      ['RestoreBlock.tsx', block],
+      ['SupabaseDataService.ts', service],
+      ['api.ts', apiSrc],
+      ['useAppStore.ts', store],
+    ]) {
+      assert.doesNotMatch(
+        src,
+        /restored_at|restoredAt|alreadyRestored|restoredBefore|restoredOnce|restoreCount|restoresUsed/,
+        `${name} keeps its own memory of a restore`,
+      );
+    }
+    assert.match(service, /api\.getRestorableMiss\(\)/, 'the service does not read the server');
+    assert.match(apiSrc, /rpc\('my_restorable_miss'\)/, 'api.ts does not call my_restorable_miss');
+  });
+  check('38P: the owner\'s second miss (day 37, 2026-09-30) is offered like the first', () => {
+    const second = { challengeId: '573dabe6', day: 37, missedOn: '2026-09-29', restoreBy: '2026-10-06', daysLeft: 6 };
+    const o = restoreOffer({ restorable: second, currentDay: 1, restoreByLabel: 'October 6' });
+    assert.ok(o, 'no offer for a run restored once before');
+    assert.equal(o.day, 37);
+    assert.equal(o.returnDay, 38);
+    assert.equal(o.deadline, 'Reopen by October 6');
+    assert.equal(
+      o.explainer,
+      'This is day 1 because day 37 of the run before it was judged missed. ' +
+        'Reopen day 37 and complete it to continue that run, at day 38 today.',
+    );
+  });
 }
 
 if (USE_OLD) {
