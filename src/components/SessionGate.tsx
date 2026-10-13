@@ -1,0 +1,182 @@
+import { WarningCircleIcon as WarningCircle } from 'phosphor-react-native';
+import React from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+
+import { Card, OutlineButton } from '@/components/ui';
+import { localDateISO, waitingLine, waitingTitle } from '@/lib/startChoice';
+import { configurationError } from '@/services';
+import { useSessionStore } from '@/store/useSessionStore';
+import { colors, font, space } from '@/theme/tokens';
+
+/**
+ * What covers the navigator while the session gate is deciding.
+ *
+ * Both of these render OVER the Stack, never instead of it: unmounting the
+ * navigator would leave expo-router with nothing to redirect.
+ */
+
+/**
+ * A production build with no Supabase credentials.
+ *
+ * This is the one state the app refuses to run in. Falling back to mock data
+ * here would look identical to a working build — tasks ticking off, a streak
+ * climbing — while nothing was saved anywhere, and the user would only find
+ * out at the relaunch that lost everything. There is no in-app fix (the
+ * credentials are baked in at build time), so there is no Retry: it says what
+ * is wrong and stops.
+ */
+export function UnconfiguredBuildScreen() {
+  return (
+    <View style={[styles.container, styles.centered]}>
+      <Card style={styles.card}>
+        <WarningCircle size={34} color={colors.neutral500} />
+        <Text style={styles.title}>This build isn{'’'}t configured.</Text>
+        <Text style={styles.body}>
+          {configurationError} Rather than show you a challenge that
+          isn{'’'}t real, it stops here. Please install an official build
+          from TestFlight or the App Store.
+        </Text>
+      </Card>
+    </View>
+  );
+}
+
+/**
+ * Restoring a session, or waiting for a redirect to land. Without this the
+ * tabs would be visible for the frame between "signed out" and the jump to
+ * the sign-in screen — and on a slow connection, for a lot longer.
+ */
+export function SessionLoadingScreen() {
+  return (
+    <View style={[styles.container, styles.centered]}>
+      <ActivityIndicator color={colors.accent400} />
+    </View>
+  );
+}
+
+/**
+ * The session is valid but the account could not be loaded — offline, or the
+ * server refused a read. Showing the tabs here would be worse than showing
+ * nothing: every screen reads the mirror, and an empty mirror looks exactly
+ * like a fresh day 1 with a lost streak.
+ */
+export function SessionErrorScreen() {
+  const error = useSessionStore((s) => s.error);
+  const retry = useSessionStore((s) => s.retry);
+  const signOut = useSessionStore((s) => s.signOut);
+
+  return (
+    <View style={[styles.container, styles.centered]}>
+      <Card style={styles.card}>
+        <WarningCircle size={34} color={colors.neutral500} />
+        <Text style={styles.title}>Couldn{'’'}t load your challenge.</Text>
+        <Text style={styles.body}>
+          You{'’'}re signed in, but your data didn{'’'}t load. Check
+          your connection and try again — nothing has been lost.
+        </Text>
+        {error ? <Text style={styles.detail}>{error}</Text> : null}
+        <OutlineButton
+          label="Retry"
+          onPress={() => {
+            retry().catch(() => {});
+          }}
+          style={{ marginTop: 16, alignSelf: 'stretch' }}
+        />
+        <OutlineButton
+          label="Sign out"
+          tone="neutral"
+          small
+          onPress={() => {
+            signOut().catch(() => {});
+          }}
+          style={{ marginTop: 10, alignSelf: 'stretch' }}
+        />
+      </Card>
+    </View>
+  );
+}
+
+/**
+ * THE DAY BEFORE THE START (Phase 38F). The challenge exists and day 1 is
+ * tomorrow. Nothing is wrong and nothing is asked. Without this screen the
+ * evening of a start-tomorrow sign-up was either an error (get_or_freeze_today
+ * refusing) or an empty setup form that let the person create a second
+ * challenge into the unique index. The copy is decided in lib/startChoice.ts
+ * and pinned by scripts/start-choice.test.mjs.
+ *
+ * It re-asks the server on foreground (root layout) and on the button; at
+ * midnight in the challenge's zone the next ask lands on day 1.
+ */
+export function SessionWaitingScreen() {
+  const waiting = useSessionStore((s) => s.waiting);
+  const retry = useSessionStore((s) => s.retry);
+  const signOut = useSessionStore((s) => s.signOut);
+  const today = localDateISO();
+  const start = waiting?.startDate ?? today;
+
+  return (
+    <View style={[styles.container, styles.centered]}>
+      <Card style={styles.card}>
+        <Text style={styles.title}>{waitingTitle(start, today)}</Text>
+        <Text style={styles.body}>{waitingLine(start, today)}</Text>
+        {waiting?.timezone ? (
+          <Text style={styles.detail}>Days turn at midnight, {waiting.timezone}.</Text>
+        ) : null}
+        <OutlineButton
+          label="Check again"
+          onPress={() => {
+            retry().catch(() => {});
+          }}
+          style={{ marginTop: 16, alignSelf: 'stretch' }}
+        />
+        <OutlineButton
+          label="Sign out"
+          tone="neutral"
+          small
+          onPress={() => {
+            signOut().catch(() => {});
+          }}
+          style={{ marginTop: 10, alignSelf: 'stretch' }}
+        />
+      </Card>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    paddingHorizontal: space.screenX,
+  },
+  centered: {
+    justifyContent: 'center',
+  },
+  card: {
+    alignItems: 'center',
+    paddingVertical: 28,
+  },
+  title: {
+    fontFamily: font.medium,
+    fontSize: 17,
+    color: colors.text,
+    marginTop: 10,
+    textAlign: 'center',
+  },
+  body: {
+    fontFamily: font.regular,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.neutral500,
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  detail: {
+    fontFamily: font.regular,
+    fontSize: 11.5,
+    lineHeight: 16,
+    color: colors.neutral600,
+    marginTop: 10,
+    textAlign: 'center',
+  },
+});

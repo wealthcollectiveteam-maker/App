@@ -1,0 +1,20 @@
+# Line endings. Every text file is stored LF and checked out LF on every
+# platform. Phase 32: the working tree had drifted to CRLF on Windows while
+# HEAD was LF, so every content diff was buried under a whole-file rewrite.
+* text=auto eol=lf
+
+# Binary: never normalised, never diffed as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.wav binary
+*.mp3 binary
+*.m4a binary
+*.pdf binary
