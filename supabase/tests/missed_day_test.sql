@@ -43,7 +43,13 @@ insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000e8', 'restore-twice@test.dev'),
   ('00000000-0000-0000-0000-0000000000e9', 'chain-sealed@test.dev'),
   ('00000000-0000-0000-0000-0000000000ea', 'chain-dormant@test.dev'),
-  ('00000000-0000-0000-0000-0000000000eb', 'history-stranger@test.dev')
+  ('00000000-0000-0000-0000-0000000000eb', 'history-stranger@test.dev'),
+  ('00000000-0000-0000-0000-000000003801', 'catchup-owner@test.dev'),
+  ('00000000-0000-0000-0000-000000003802', 'catchup-partial@test.dev'),
+  ('00000000-0000-0000-0000-000000003803', 'catchup-late@test.dev'),
+  ('00000000-0000-0000-0000-000000003804', 'catchup-sealed-later@test.dev'),
+  ('00000000-0000-0000-0000-000000003805', 'catchup-fresh-alive@test.dev'),
+  ('00000000-0000-0000-0000-000000003806', 'catchup-stranger@test.dev')
 on conflict do nothing;
 
 -- Complete every task in a day's snapshot, without sealing. The engine's
@@ -1867,15 +1873,16 @@ begin
   call t_restore_fixture(v_uid, 'Restore-late', 'Late squad');
   select id into v_o from public.challenges where owner = v_uid and ended_reason = 'missed_day';
   v_r := t_challenge(v_uid);
-  -- Five more days pass for both rows: the missed day is now SEVEN days
-  -- ago, the last day of the window. Still offered, with nothing to spare.
-  update public.challenges set start_date = start_date - 5 where id in (v_o, v_r);
+  -- Twelve more days pass for both rows: the missed day is now FOURTEEN
+  -- days ago (0020: one window, fourteen days, single restores and catch-up
+  -- alike), the last day of the window. Still offered, with nothing to spare.
+  update public.challenges set start_date = start_date - 12 where id in (v_o, v_r);
   select * into v_m from public.my_restorable_miss();
   if v_m.missed_day is distinct from 30 or v_m.days_left <> 0 then
     raise exception 'FAIL (d): on the window''s last day the offer should be on with 0 days left (day %, left %)',
       v_m.missed_day, v_m.days_left;
   end if;
-  -- One more: eight days. Refused.
+  -- One more: fifteen days. Refused.
   update public.challenges set start_date = start_date - 1 where id in (v_o, v_r);
 
   if exists (select 1 from public.my_restorable_miss()) then
@@ -1883,7 +1890,7 @@ begin
   end if;
   begin
     perform public.restore_missed_day();
-    raise exception 'FAIL (d): an eight-day-old miss was restored';
+    raise exception 'FAIL (d): a fifteen-day-old miss was restored';
   exception when others then
     get stacked diagnostics v_msg = message_text;
     if v_msg like 'FAIL%' then raise; end if;
@@ -1895,7 +1902,7 @@ begin
     raise exception 'FAIL (d): a refused restore changed the original';
   end if;
 
-  raise notice 'PASS (d): seven days after the miss the offer is on; eight days after it is refused, and the offer is off';
+  raise notice 'PASS (d): fourteen days after the miss the offer is on; fifteen days after it is refused, and the offer is off';
 end $$;
 
 -- ---- (e) a stranger, through the real RPC, as authenticated ----------------
@@ -2047,10 +2054,11 @@ begin
   update public.challenges set ended_at = ended_at - interval '1 day' where id = v_o;
   select ended_at into v_ending from public.challenges where id = v_o;
 
-  -- THE NEW RULE. The offer is on, for day 37, with six days left.
+  -- THE NEW RULE. The offer is on, for day 37, with thirteen days left
+  -- (0020 widened the window to fourteen; it was six of seven here).
   select * into v_m from public.my_restorable_miss();                 -- FAILS on 0018: empty
   if v_m.challenge_id is distinct from v_o or v_m.missed_day is distinct from 37
-     or v_m.days_left is distinct from 6 then
+     or v_m.days_left is distinct from 13 then
     raise exception 'FAIL (a): a run restored once is not offered its second restore (challenge %, day %, left %)',
       v_m.challenge_id, v_m.missed_day, v_m.days_left;
   end if;
@@ -2471,6 +2479,683 @@ begin
   raise notice 'PASS (f): delete_account cascades through the restore history';
 end $$;
 
+-- =============================================================================
+-- PROOF 16 — CATCH-UP: A RUN OF UNLOGGED DAYS REOPENS IN ONE GO
+-- (Phase 38Q; migration 0020)
+--
+-- The owner's shape, 2026-10-13: a run sealed and met through day 42, day 43
+-- missed and the run ended at noon on day 44; an empty restart whose day 1
+-- was missed; its restart, ended dormant; a fresh challenge started by hand
+-- on day 47 with nothing ticked, its day 2 missed; its restart, ended
+-- dormant. Nothing alive. Today is day 51, and under 0019 nothing can be
+-- reopened: day 43 is eight days old against a seven-day window, nothing
+-- alive is the direct replacement, and a dormant link and an unlinked fresh
+-- start sit in the chain.
+--
+-- THE RULE (0020). The ANCHOR is the caller's most recent challenge that has
+-- a sealed day, ended by 'missed_day' or 'dormant', whose current ending
+-- (challenge id + ended_at, 0019) has not been reversed. The GAP runs from
+-- its first missed day through yesterday in its zone, and the window — now
+-- fourteen days, one function, single restores and catch-up alike — is
+-- measured from that first missed day. Every challenge created after the
+-- anchor's ending must have ZERO sealed days; an alive one is superseded and
+-- its ticks carry over by calendar date. Gap days never frozen get the
+-- snapshot the app would have frozen for them — compose_task_set(id, day),
+-- exactly as get_or_freeze_day() does (0011:151-152). All reopened days
+-- share one close, noon the day after the catch-up. Catch-up pays nothing.
+--
+--   (a) the owner's shape: offered as days 43–50, and the catch-up reopens
+--       them, supersedes nothing, pays nothing, records one row, posts one
+--       correction                                               FAILS on 0019
+--   (b) seal every day in order -> flame 50, alive at day 51; nothing left
+--   (c) seal 43–46, leave 47 -> after the deadline 47 is missed, flame 46,
+--       the run ends again, nothing manufactured; and the new ending is
+--       offered in turn
+--   (d) fourteen days old -> offered with nothing to spare; fifteen -> refused
+--   (e) a later challenge with a sealed day -> catch-up refused, and the
+--       offer is 0019's single day
+--   (f) an alive fresh start with ticks -> superseded, its ticks carried by
+--       DATE, paid once
+--   (g) never-frozen gap days get the task set of their dates, a task added
+--       mid-gap included from its day and not before
+--   (h) the same ending caught up twice -> refused
+--   (i) a stranger can neither catch up the run nor read its record
+-- =============================================================================
+
+-- Move every challenge this owner holds k days into the past: time passes
+-- k days for all of them at once, in the one zone they share.
+create or replace procedure t_shift_owner(p_uid uuid, p_days integer)
+language plpgsql as $$
+begin
+  update public.challenges set start_date = start_date - p_days where owner = p_uid;
+end $$;
+
+-- The owner's chain, in stages. Leaves the squad joined and every challenge
+-- in the test zone (local 13:00, see t_set_day).
+--   stage 1: A ended on day 43; B, its empty restart, alive on its day 1;
+--            today = A day 44
+--   stage 2: B's day 1 missed -> C; C dormant; nothing alive; today = A day 46
+--   stage 3: D, a fresh challenge, alive on its day 1; today = A day 47
+--   stage 4: D's day 2 missed -> E; E dormant; nothing alive; today = A day 51
+create or replace procedure t_catchup_fixture(p_uid uuid, p_name text, p_squad text, p_stage integer)
+language plpgsql as $$
+declare
+  v_a  uuid;
+  v_b  uuid;
+  v_c  uuid;
+  v_d  uuid;
+  v_e  uuid;
+  v_tz text;
+  a    public.challenges;
+  i    integer;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', p_uid, 'role','authenticated')::text, false);
+  insert into public.profiles (id, name) values (p_uid, p_name) on conflict do nothing;
+  v_a := public.create_challenge('hard', 'America/Toronto');
+  perform id from public.create_squad(p_squad);
+
+  -- Day 44 today. Days 1..42 done; day 43 untouched. A custom task that was
+  -- added before the end and takes effect from day 46 — INSIDE the gap.
+  call t_set_day(v_a, 44);
+  perform public.add_custom_task('Stretch', 'Ten minutes.', false, null);
+  update public.custom_tasks set active_from_day = 46 where challenge_id = v_a;
+  for i in 1 .. 42 loop
+    call t_do_day(v_a, i);
+  end loop;
+  perform public.evaluate_challenge(v_a);        -- 1..42 met, 43 missed -> B
+  select * into a from public.challenges where id = v_a;
+  if a.ended_reason is distinct from 'missed_day' or a.ended_on_day <> 43
+     or a.flame <> 42 or a.best_flame <> 42 then
+    raise exception 'FIXTURE: A is % on day % with flame % / best %',
+      coalesce(a.ended_reason, 'alive'), a.ended_on_day, a.flame, a.best_flame;
+  end if;
+  v_tz := a.timezone;
+  v_b := t_challenge(p_uid);
+  if v_b is null or (select restarted_from from public.challenges where id = v_b) <> v_a then
+    raise exception 'FIXTURE: no restart after A';
+  end if;
+  if p_stage = 1 then return; end if;
+
+  -- B's day 1 passes untouched -> missed -> C (A has sealed days, so not
+  -- dormant). C's day 1 passes untouched -> dormant: nothing alive.
+  call t_shift_owner(p_uid, 1);                  -- today = A45, B day 2
+  perform public.evaluate_challenge(v_b);
+  v_c := t_challenge(p_uid);
+  if (select ended_reason from public.challenges where id = v_b) is distinct from 'missed_day'
+     or v_c is null or v_c in (v_a, v_b) then
+    raise exception 'FIXTURE: B did not miss its day 1 into a restart';
+  end if;
+  call t_shift_owner(p_uid, 1);                  -- today = A46, C day 2
+  perform public.evaluate_challenge(v_c);
+  if (select ended_reason from public.challenges where id = v_c) is distinct from 'dormant'
+     or t_challenge(p_uid) is not null then
+    raise exception 'FIXTURE: C did not end dormant';
+  end if;
+  if p_stage = 2 then return; end if;
+
+  -- A fresh challenge, started by hand on A's day 47. Not linked to anything.
+  call t_shift_owner(p_uid, 1);                  -- today = A47
+  v_d := public.create_challenge('hard', v_tz);
+  update public.challenges
+     set timezone = v_tz, start_date = (now() at time zone v_tz)::date
+   where id = v_d;
+  if (select restarted_from from public.challenges where id = v_d) is not null then
+    raise exception 'FIXTURE: D should be unlinked';
+  end if;
+  if p_stage = 3 then return; end if;
+
+  -- D's day 2 passes untouched -> missed (its day 1 is never judged) -> E.
+  -- E's day 1 passes untouched -> dormant. Nothing alive; today = A51.
+  call t_shift_owner(p_uid, 2);                  -- today = A49, D day 3
+  perform public.evaluate_challenge(v_d);
+  v_e := t_challenge(p_uid);
+  if (select ended_reason from public.challenges where id = v_d) is distinct from 'missed_day'
+     or (select ended_on_day from public.challenges where id = v_d) <> 2
+     or v_e is null then
+    raise exception 'FIXTURE: D did not miss its day 2 into a restart';
+  end if;
+  call t_shift_owner(p_uid, 1);                  -- today = A50, E day 2
+  perform public.evaluate_challenge(v_e);
+  if (select ended_reason from public.challenges where id = v_e) is distinct from 'dormant'
+     or t_challenge(p_uid) is not null then
+    raise exception 'FIXTURE: E did not end dormant';
+  end if;
+  call t_shift_owner(p_uid, 1);                  -- today = A51
+  select * into a from public.challenges where id = v_a;
+  if public.challenge_day(a) <> 51 then
+    raise exception 'FIXTURE: today is A day %, expected 51', public.challenge_day(a);
+  end if;
+end $$;
+
+-- ---- (a) the owner's shape: offered, reopened, nothing paid --------------
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-000000003801';
+  v_a   uuid;
+  a     public.challenges;
+  v_m   record;
+  v_n   integer;
+  v_win record;
+  h     record;
+  i     integer;
+  v_before_rows integer;
+  v_ending timestamptz;
+begin
+  call t_catchup_fixture(v_uid, 'Catchup-owner', 'Catchup squad', 4);
+  select id into v_a from public.challenges
+   where owner = v_uid and ended_on_day = 43 and ended_reason = 'missed_day';
+  select ended_at into v_ending from public.challenges where id = v_a;
+  -- now() is one value for this block; the ending was eight days ago.
+  update public.challenges set ended_at = ended_at - interval '7 days' where id = v_a;
+  select ended_at into v_ending from public.challenges where id = v_a;
+
+  -- 0019 has nothing to offer here, and the owner's shape says why.
+  if exists (select 1 from public.my_restorable_miss()) then
+    raise exception 'FIXTURE (a): 0019 should not offer a single-day restore with nothing alive';
+  end if;
+
+  -- THE OFFER: days 43 to 50, eight days after the first, six to spare.
+  select * into v_m from public.my_reopen_offer();                     -- FAILS on 0019: no such function
+  if v_m.challenge_id is distinct from v_a or v_m.kind is distinct from 'catchup'
+     or v_m.missed_day is distinct from 43 or v_m.last_day is distinct from 50
+     or v_m.days_left is distinct from 6 then
+    raise exception 'FAIL (a): the catch-up is not offered as days 43-50 (challenge %, kind %, % to %, left %)',
+      v_m.challenge_id, v_m.kind, v_m.missed_day, v_m.last_day, v_m.days_left;
+  end if;
+  if v_m.missed_on <> v_m.last_on - 7 or v_m.restore_by <> v_m.missed_on + 14 then
+    raise exception 'FAIL (a): the offer''s dates are wrong (% .. %, by %)',
+      v_m.missed_on, v_m.last_on, v_m.restore_by;
+  end if;
+
+  select count(*) into v_before_rows from public.challenge_days where challenge_id = v_a;
+  perform public.catch_up_missed_days();
+
+  select * into a from public.challenges where id = v_a;
+  if a.ended_at is not null or a.ended_reason is not null or a.ended_on_day is not null then
+    raise exception 'FAIL (a): the anchor was not reopened';
+  end if;
+  if a.restored_day <> 43 or a.restored_last_day <> 50 or a.restored_at is null
+     or a.last_evaluated_day <> 42 or a.missed_notice_day is not null then
+    raise exception 'FAIL (a): the range is not on the row (% to %, cursor %)',
+      a.restored_day, a.restored_last_day, a.last_evaluated_day;
+  end if;
+  if (select count(*) from public.challenges where owner = v_uid and ended_at is null) <> 1 then
+    raise exception 'FAIL (a): the owner does not hold exactly one alive challenge';
+  end if;
+  if (select id from public.my_active_challenge()) <> v_a or public.challenge_day(a) <> 51 then
+    raise exception 'FAIL (a): the active challenge is not the anchor on day 51';
+  end if;
+
+  -- CATCH-UP CHANGES NO FLAME: 42 sealed, flame 42, best 42, no new miss.
+  if a.flame <> 42 or a.best_flame <> 42 then
+    raise exception 'FAIL (a): the catch-up touched the flame (% / %)', a.flame, a.best_flame;
+  end if;
+  if (select count(*) from public.challenge_days where challenge_id = v_a and sealed_at is not null) <> 42 then
+    raise exception 'FAIL (a): the catch-up sealed something';
+  end if;
+  -- Day 43 reopened from its own snapshot; 44..50 created, 51 (today) too.
+  if exists (select 1 from public.challenge_days where challenge_id = v_a and day = 43
+              and (sealed_at is not null or outcome is not null or evaluated_at is not null)) then
+    raise exception 'FAIL (a): day 43 was not reopened';
+  end if;
+  if (select count(*) from public.challenge_days where challenge_id = v_a and day between 43 and 50) <> 8 then
+    raise exception 'FAIL (a): the gap days were not all frozen (% of 8)',
+      (select count(*) from public.challenge_days where challenge_id = v_a and day between 43 and 50);
+  end if;
+  if exists (select 1 from public.challenge_days where challenge_id = v_a and day > 51) then
+    raise exception 'FAIL (a): a day past today was frozen';
+  end if;
+  if (select count(*) from public.task_completions where challenge_id = v_a and day >= 43) <> 0 then
+    raise exception 'FAIL (a): the catch-up ticked something';
+  end if;
+
+  -- Nothing was superseded (nothing was alive) and the chain is untouched.
+  if (select count(*) from public.challenges where owner = v_uid and ended_reason = 'superseded') <> 0 then
+    raise exception 'FAIL (a): something was superseded with nothing alive';
+  end if;
+  if (select count(*) from public.challenges where owner = v_uid and ended_reason = 'dormant') <> 2
+     or (select count(*) from public.challenges where owner = v_uid and ended_reason = 'missed_day') <> 2 then
+    raise exception 'FAIL (a): the ended chain was rewritten';
+  end if;
+
+  -- HISTORY: one row, naming the anchor, its ending, the range, no supersede.
+  v_n := 0;
+  for h in select * from public.challenge_restores where challenge_id = v_a order by id loop
+    v_n := v_n + 1;
+    if h.missed_day <> 43 or h.last_day <> 50 or h.ended_at <> v_ending
+       or h.superseded_challenge_id is not null or h.restored_at <> a.restored_at or h.owner <> v_uid then
+      raise exception 'FAIL (a): the catch-up record is wrong (% to %, ended_at %, superseded %)',
+        h.missed_day, h.last_day, h.ended_at, h.superseded_challenge_id;
+    end if;
+  end loop;
+  if v_n <> 1 then
+    raise exception 'FAIL (a): expected one catch-up record, found %', v_n;
+  end if;
+
+  -- THE FEED: the misses stay; exactly one correction, naming the range.
+  if (select count(*) from public.feed_items where author = v_uid and kind = 'miss') <> 3 then
+    raise exception 'FAIL (a): the three misses (A day 43, B day 1, D day 2) should stand, found %',
+      (select count(*) from public.feed_items where author = v_uid and kind = 'miss');
+  end if;
+  if (select count(*) from public.feed_items where author = v_uid and kind = 'change') <> 1
+     or not exists (select 1 from public.feed_items where author = v_uid and kind = 'change'
+                     and text like 'reopened Days 43–50.%') then
+    raise exception 'FAIL (a): expected exactly one correction "reopened Days 43–50"';
+  end if;
+
+  -- THE CLOCK: every reopened day is open with the one close; today is there.
+  for i in 43 .. 50 loop
+    select * into v_win from public.get_day_window() w where w.day = i;
+    if v_win.day is null or not v_win.is_open or v_win.reopened_until is null
+       or v_win.reopened_until <= now() or v_win.reopened_until <> public.restored_day_closes_at(a) then
+      raise exception 'FAIL (a): get_day_window does not offer reopened day % (open %, until %)',
+        i, v_win.is_open, v_win.reopened_until;
+    end if;
+  end loop;
+  if not exists (select 1 from public.get_day_window() w where w.day = 51 and w.is_today) then
+    raise exception 'FAIL (a): today (day 51) vanished from the window';
+  end if;
+  -- And the evaluator, run now, judges nothing.
+  v_n := public.evaluate_challenge(v_a);
+  if v_n <> 0 or (select flame from public.challenges where id = v_a) <> 42 then
+    raise exception 'FAIL (a): the evaluator judged a reopened day while it was open';
+  end if;
+
+  raise notice 'PASS (a): the owner''s shape is offered as days 43-50; the catch-up reopens them, supersedes nothing, pays nothing, records one row and posts one correction';
+end $$;
+
+-- ---- (g) the never-frozen gap days carry the task set of their dates -----
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-000000003801';
+  v_a   uuid;
+  v_key text;
+  i     integer;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  v_a := t_challenge(v_uid);
+  select 'custom-' || id into v_key from public.custom_tasks where challenge_id = v_a and name = 'Stretch';
+  for i in 44 .. 50 loop
+    if (select task_snapshot from public.challenge_days where challenge_id = v_a and day = i)
+       <> public.compose_task_set(v_a, i) then
+      raise exception 'FAIL (g): day % was not frozen from the task set in effect for it', i;
+    end if;
+    if (exists (select 1 from public.challenge_days cd, jsonb_array_elements(cd.task_snapshot) t
+                 where cd.challenge_id = v_a and cd.day = i and t->>'key' = v_key)) <> (i >= 46) then
+      raise exception 'FAIL (g): the task added from day 46 is % day %''s snapshot',
+        case when i >= 46 then 'missing from' else 'present in' end, i;
+    end if;
+  end loop;
+  -- Day 43's snapshot is the one it was judged from, untouched.
+  if exists (select 1 from public.challenge_days cd, jsonb_array_elements(cd.task_snapshot) t
+              where cd.challenge_id = v_a and cd.day = 43 and t->>'key' = v_key) then
+    raise exception 'FAIL (g): day 43''s snapshot was rewritten';
+  end if;
+  raise notice 'PASS (g): gap days are frozen from the task set of their own dates; a task added mid-gap appears from its day and not before';
+end $$;
+
+-- ---- (h) the same ending twice -> refused -------------------------------
+do $$
+declare
+  v_uid    uuid := '00000000-0000-0000-0000-000000003801';
+  v_a      uuid;
+  v_ending timestamptz;
+  v_msg    text;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  v_a := t_challenge(v_uid);
+  select ended_at into v_ending from public.challenge_restores where challenge_id = v_a and last_day = 50;
+  begin
+    perform public.catch_up_missed_days();
+    raise exception 'FAIL (h): a catch-up went through with the run alive';
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    if v_msg like 'FAIL%' then raise; end if;
+    if v_msg not like 'nothing to catch up%' then
+      raise exception 'FAIL (h): refused for the wrong reason: %', v_msg;
+    end if;
+  end;
+  -- THE REPLAY, superuser only (see PROOF 15 c): the ending put back as it
+  -- stood, same ended_at. Refused, and not offered.
+  update public.challenges
+     set ended_at = v_ending, ended_reason = 'missed_day', ended_on_day = 43
+   where id = v_a;
+  if exists (select 1 from public.my_reopen_offer()) then
+    raise exception 'FAIL (h): an ending already caught up is offered again';
+  end if;
+  begin
+    perform public.catch_up_missed_days();
+    raise exception 'FAIL (h): the same ending was caught up twice';
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    if v_msg like 'FAIL%' then raise; end if;
+    if v_msg not like 'already restored%' then
+      raise exception 'FAIL (h): refused for the wrong reason: %', v_msg;
+    end if;
+  end;
+  update public.challenges
+     set ended_at = null, ended_reason = null, ended_on_day = null
+   where id = v_a;
+  raise notice 'PASS (h): the same ending is refused a second catch-up, and is not offered';
+end $$;
+
+-- ---- (b) seal every day in order -> 50, alive at 51 ------------------------
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-000000003801';
+  v_a   uuid;
+  a     public.challenges;
+  i     integer;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_uid, 'role','authenticated')::text, false);
+  v_a := t_challenge(v_uid);
+  for i in 43 .. 50 loop
+    call t_do_day(v_a, i);
+    perform public.seal_day(i);
+    select * into a from public.challenges where id = v_a;
+    if a.flame <> i or a.best_flame <> i then
+      raise exception 'FAIL (b): sealing day % paid % (best %), expected %', i, a.flame, a.best_flame, i;
+    end if;
+  end loop;
+  if exists (select 1 from public.my_reopen_offer()) then
+    raise exception 'FAIL (b): the offer is on while the run is alive';
+  end if;
+  -- The deadline passes; the evaluator finds every reopened day sealed and
+  -- pays nothing twice.
+  update public.challenges set restored_at = now() - interval '2 days' where id = v_a;
+  perform public.evaluate_challenge(v_a);
+  select * into a from public.challenges where id = v_a;
+  if a.ended_at is not null or a.flame <> 50 or a.best_flame <> 50 or a.last_evaluated_day <> 50 then
+    raise exception 'FAIL (b): after the deadline flame % best % cursor %, expected 50 / 50 / 50 and alive',
+      a.flame, a.best_flame, a.last_evaluated_day;
+  end if;
+  if public.challenge_day(a) <> 51 then
+    raise exception 'FAIL (b): the run is not at day 51';
+  end if;
+  raise notice 'PASS (b): sealed in order, 43 through 50 pay once each; the run is alive at day 51 with flame 50';
+end $$;
+
+-- ---- (c) seal 43-46, leave 47 -> the run ends again at 47 ------------------
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-000000003802';
+  v_a   uuid;
+  a     public.challenges;
+  v_m   record;
+  i     integer;
+begin
+  call t_catchup_fixture(v_uid, 'Catchup-partial', 'Partial squad', 4);
+  select id into v_a from public.challenges
+   where owner = v_uid and ended_on_day = 43 and ended_reason = 'missed_day';
+  update public.challenges set ended_at = ended_at - interval '7 days' where id = v_a;
+  perform public.catch_up_missed_days();
+  for i in 43 .. 46 loop
+    call t_do_day(v_a, i);
+    perform public.seal_day(i);
+  end loop;
+  -- 48 done but not sealed: a met day the evaluator would pay — but 47 comes
+  -- first, and 47 is a miss.
+  call t_do_day(v_a, 48);
+  update public.challenges set restored_at = now() - interval '2 days' where id = v_a;
+  perform public.evaluate_challenge(v_a);
+  select * into a from public.challenges where id = v_a;
+  if a.ended_reason is distinct from 'missed_day' or a.ended_on_day <> 47 then
+    raise exception 'FAIL (c): the run did not end again at day 47 (% / %)',
+      coalesce(a.ended_reason, 'alive'), a.ended_on_day;
+  end if;
+  if a.flame <> 46 or a.best_flame <> 46 then
+    raise exception 'FAIL (c): flame moved past the miss (% / %)', a.flame, a.best_flame;
+  end if;
+  if (select count(*) from public.challenge_days where challenge_id = v_a and sealed_at is not null) <> 46 then
+    raise exception 'FAIL (c): a sealed day was manufactured';
+  end if;
+  if (select outcome from public.challenge_days where challenge_id = v_a and day = 47) is distinct from 'missed'
+     or exists (select 1 from public.challenge_days where challenge_id = v_a and day = 48 and evaluated_at is not null) then
+    raise exception 'FAIL (c): the evaluator did not stop at the first unsealed day';
+  end if;
+  if t_challenge(v_uid) is null then
+    raise exception 'FAIL (c): the second miss did not restart';
+  end if;
+  -- A NEW ENDING, with an empty restart after it: offered in turn, from 47.
+  select * into v_m from public.my_reopen_offer();
+  if v_m.challenge_id is distinct from v_a or v_m.kind is distinct from 'catchup'
+     or v_m.missed_day is distinct from 47 or v_m.last_day is distinct from 50 then
+    raise exception 'FAIL (c): the new ending is not offered as days 47-50 (kind %, % to %)',
+      v_m.kind, v_m.missed_day, v_m.last_day;
+  end if;
+  raise notice 'PASS (c): with 47 left undone the deadline ends the run at 47, flame 46, nothing manufactured — and the new ending is offered in turn';
+end $$;
+
+-- ---- (d) the window: fourteen days offered, fifteen refused ----------------
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-000000003803';
+  v_a   uuid;
+  v_m   record;
+  v_msg text;
+begin
+  call t_catchup_fixture(v_uid, 'Catchup-late', 'Late catchup squad', 4);
+  select id into v_a from public.challenges
+   where owner = v_uid and ended_on_day = 43 and ended_reason = 'missed_day';
+  update public.challenges set ended_at = ended_at - interval '7 days' where id = v_a;
+  call t_shift_owner(v_uid, 6);                   -- day 43 is fourteen days ago; today = A57
+  select * into v_m from public.my_reopen_offer();
+  if v_m.missed_day is distinct from 43 or v_m.last_day is distinct from 56 or v_m.days_left is distinct from 0 then
+    raise exception 'FAIL (d): on the window''s last day the offer should be 43-56 with 0 days left (% to %, left %)',
+      v_m.missed_day, v_m.last_day, v_m.days_left;
+  end if;
+  call t_shift_owner(v_uid, 1);                   -- fifteen
+  if exists (select 1 from public.my_reopen_offer()) then
+    raise exception 'FAIL (d): the offer is on outside the window';
+  end if;
+  begin
+    perform public.catch_up_missed_days();
+    raise exception 'FAIL (d): a fifteen-day-old gap was caught up';
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    if v_msg like 'FAIL%' then raise; end if;
+    if v_msg not like 'catch-up window closed%' then
+      raise exception 'FAIL (d): refused for the wrong reason: %', v_msg;
+    end if;
+  end;
+  if (select ended_reason from public.challenges where id = v_a) is distinct from 'missed_day' then
+    raise exception 'FAIL (d): a refused catch-up changed the anchor';
+  end if;
+  raise notice 'PASS (d): fourteen days after the first missed day the catch-up is offered; fifteen days after it is refused';
+end $$;
+
+-- ---- (e) a later challenge with a sealed day -> 0019's path only ----------
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-000000003804';
+  v_a   uuid;
+  v_b   uuid;
+  v_m   record;
+  v_msg text;
+begin
+  call t_catchup_fixture(v_uid, 'Catchup-sealed-later', 'Sealed-later squad', 1);
+  select id into v_a from public.challenges
+   where owner = v_uid and ended_on_day = 43 and ended_reason = 'missed_day';
+  update public.challenges set ended_at = ended_at - interval '1 day' where id = v_a;
+  v_b := t_challenge(v_uid);
+  -- The restart's day 1 is done and sealed by the evaluator: a sealed day
+  -- after the anchor's ending. Catch-up is off the table; 0019 is the way.
+  call t_do_day(v_b, 1);
+  call t_shift_owner(v_uid, 1);                   -- today = A45, B day 2
+  perform public.evaluate_challenge(v_b);
+  if not public.challenge_has_sealed_day(v_b) then
+    raise exception 'FIXTURE (e): B''s day 1 was not sealed';
+  end if;
+  select * into v_m from public.my_reopen_offer();
+  if v_m.challenge_id is distinct from v_a or v_m.kind is distinct from 'single'
+     or v_m.missed_day is distinct from 43 or v_m.last_day is distinct from 43 then
+    raise exception 'FAIL (e): expected 0019''s single-day offer for day 43 (kind %, % to %)',
+      v_m.kind, v_m.missed_day, v_m.last_day;
+  end if;
+  begin
+    perform public.catch_up_missed_days();
+    raise exception 'FAIL (e): a catch-up went through over a later sealed day';
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    if v_msg like 'FAIL%' then raise; end if;
+    if v_msg not like 'not catch-up-able%' then
+      raise exception 'FAIL (e): refused for the wrong reason: %', v_msg;
+    end if;
+  end;
+  -- And 0019's restore still works exactly as before.
+  perform public.restore_missed_day();
+  if (select ended_at from public.challenges where id = v_a) is not null
+     or (select restored_day from public.challenges where id = v_a) <> 43
+     or (select restored_last_day from public.challenges where id = v_a) <> 43 then
+    raise exception 'FAIL (e): the single-day restore did not reopen day 43 alone';
+  end if;
+  raise notice 'PASS (e): a sealed day on a later challenge refuses the catch-up; the single-day restore is offered and works';
+end $$;
+
+-- ---- (f) an alive fresh start with ticks: superseded, carried by date -----
+do $$
+declare
+  v_uid uuid := '00000000-0000-0000-0000-000000003805';
+  v_a   uuid;
+  v_d   uuid;
+  a     public.challenges;
+  d     public.challenges;
+  v_m   record;
+  v_key text;
+  i     integer;
+begin
+  call t_catchup_fixture(v_uid, 'Catchup-fresh-alive', 'Fresh-alive squad', 3);
+  select id into v_a from public.challenges
+   where owner = v_uid and ended_on_day = 43 and ended_reason = 'missed_day';
+  update public.challenges set ended_at = ended_at - interval '4 days' where id = v_a;
+  v_d := t_challenge(v_uid);
+  -- D's day 1 (A's day 47): one standard task. A day passes; D's day 2
+  -- (A's day 48, today): everything. Then the catch-up, with D alive.
+  perform public.get_or_freeze_today();           -- D's day 1, as the app freezes it
+  select t->>'key' into v_key from public.challenge_days cd, jsonb_array_elements(cd.task_snapshot) t
+   where cd.challenge_id = v_d and cd.day = 1 and t->>'key' not like 'custom-%' limit 1;
+  perform public.complete_task(v_key, null, 1);
+  call t_shift_owner(v_uid, 1);                   -- today = A48, D day 2
+  call t_do_day(v_d, 2);
+  select * into v_m from public.my_reopen_offer();
+  if v_m.kind is distinct from 'catchup' or v_m.missed_day is distinct from 43 or v_m.last_day is distinct from 47 then
+    raise exception 'FAIL (f): expected a catch-up offer for 43-47 (kind %, % to %)', v_m.kind, v_m.missed_day, v_m.last_day;
+  end if;
+  perform public.catch_up_missed_days();
+  select * into a from public.challenges where id = v_a;
+  select * into d from public.challenges where id = v_d;
+  if d.ended_reason is distinct from 'superseded' or d.ended_at <> a.restored_at then
+    raise exception 'FAIL (f): the alive fresh start was not superseded in the same transaction';
+  end if;
+  if a.restored_day <> 43 or a.restored_last_day <> 47 then
+    raise exception 'FAIL (f): the range is wrong (% to %)', a.restored_day, a.restored_last_day;
+  end if;
+  if (select superseded_challenge_id from public.challenge_restores where challenge_id = v_a) <> v_d then
+    raise exception 'FAIL (f): the record does not name the superseded challenge';
+  end if;
+  -- BY DATE: D day 1 -> A day 47 (one tick); D day 2 -> A day 48, today (all).
+  if (select count(*) from public.task_completions where challenge_id = v_a and day = 47) <> 1
+     or not exists (select 1 from public.task_completions where challenge_id = v_a and day = 47 and task_key = v_key) then
+    raise exception 'FAIL (f): D''s day-1 tick did not land on A day 47';
+  end if;
+  -- Every key D ticked on its day 2 is on A's day 48, and nothing else is.
+  -- (A's day 48 also carries the 'Stretch' task D never had, so the day is
+  -- not yet met: that one is ticked by hand below, like any other task.)
+  if (select count(*) from public.task_completions where challenge_id = v_a and day = 48)
+     <> (select count(*) from public.task_completions where challenge_id = v_d and day = 2)
+     or exists (select 1 from public.task_completions tc where tc.challenge_id = v_d and tc.day = 2
+                 and not exists (select 1 from public.task_completions x
+                                  where x.challenge_id = v_a and x.day = 48 and x.task_key = tc.task_key)) then
+    raise exception 'FAIL (f): D''s day-2 ticks did not land on A day 48 (today)';
+  end if;
+  if public.day_is_met(v_a, 48) then
+    raise exception 'FAIL (f): day 48 reads met without the task D never had';
+  end if;
+  call t_do_day(v_a, 48);                         -- the one remaining task
+  if not public.day_is_met(v_a, 48) then
+    raise exception 'FAIL (f): day 48 is not met after its last task';
+  end if;
+  if (select count(*) from public.task_completions where challenge_id = v_a and day between 43 and 46) <> 0 then
+    raise exception 'FAIL (f): ticks appeared on days nothing was ticked for';
+  end if;
+  -- D's own rows are exactly as they were.
+  if (select count(*) from public.task_completions where challenge_id = v_d) <> 1 + (
+       select jsonb_array_length(task_snapshot) from public.challenge_days where challenge_id = v_d and day = 2) then
+    raise exception 'FAIL (f): the superseded challenge''s completions were moved or lost';
+  end if;
+  -- Catch-up paid nothing; now seal 43..46 by hand, finish and seal 47.
+  if a.flame <> 42 then raise exception 'FAIL (f): the catch-up paid'; end if;
+  for i in 43 .. 46 loop
+    call t_do_day(v_a, i);
+    perform public.seal_day(i);
+  end loop;
+  call t_do_day(v_a, 47);
+  perform public.seal_day(47);
+  if (select flame from public.challenges where id = v_a) <> 47 then
+    raise exception 'FAIL (f): sealing through 47 did not pay 47';
+  end if;
+  -- Today (48) closes; the evaluator pays the carried day exactly once.
+  update public.challenges set restored_at = now() - interval '2 days' where id = v_a;
+  call t_shift_owner(v_uid, 1);                   -- today = A49
+  perform public.evaluate_challenge(v_a);
+  select * into a from public.challenges where id = v_a;
+  if a.ended_at is not null or a.flame <> 48 or a.best_flame <> 48 or a.last_evaluated_day <> 48 then
+    raise exception 'FAIL (f): the carried day did not pay once (flame %, best %, cursor %, %)',
+      a.flame, a.best_flame, a.last_evaluated_day, coalesce(a.ended_reason, 'alive');
+  end if;
+  perform public.evaluate_challenge(v_a);
+  if (select flame from public.challenges where id = v_a) <> 48 then
+    raise exception 'FAIL (f): a second evaluation paid the carried day again';
+  end if;
+  raise notice 'PASS (f): an alive fresh start is superseded, its ticks carry by calendar date, and the carried day pays once';
+end $$;
+
+-- ---- (i) a stranger, through the real RPC and the real table ---------------
+set role authenticated;
+do $$
+declare
+  v_me     uuid := '00000000-0000-0000-0000-000000003806';
+  v_victim uuid := '00000000-0000-0000-0000-000000003802';
+  v_msg    text;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_me, 'role','authenticated')::text, false);
+  insert into public.profiles (id, name) values (v_me, 'Catchup-stranger') on conflict do nothing;
+  perform public.create_challenge('hard', 'UTC');
+  begin
+    perform public.catch_up_missed_days();
+    raise exception 'FAIL (i): a stranger''s catch-up call succeeded';
+  exception when others then
+    get stacked diagnostics v_msg = message_text;
+    if v_msg like 'FAIL%' then raise; end if;
+    if v_msg not like 'nothing to catch up%' then
+      raise exception 'FAIL (i): refused for the wrong reason: %', v_msg;
+    end if;
+  end;
+  if exists (select 1 from public.my_reopen_offer()) then
+    raise exception 'FAIL (i): a stranger is offered somebody else''s run';
+  end if;
+  if (select count(*) from public.challenge_restores) <> 0
+     or (select count(*) from public.challenges where owner = v_victim) <> 0 then
+    raise exception 'FAIL (i): a stranger can read somebody else''s run or record';
+  end if;
+  raise notice 'PASS (i): nobody can catch up or read anyone else''s run — the RPC acts for its caller alone';
+end $$;
+reset role;
+do $$
+begin
+  if (select count(*) from public.challenges
+       where owner = '00000000-0000-0000-0000-000000003802' and ended_reason = 'missed_day' and ended_on_day = 47) <> 1 then
+    raise exception 'FAIL (i): the stranger''s call changed the other owner''s run';
+  end if;
+end $$;
+
+drop procedure t_catchup_fixture(uuid, text, text, integer);
+drop procedure t_shift_owner(uuid, integer);
 drop procedure t_restore_fixture(uuid, text, text);
 drop procedure t_move_day(uuid, integer);
 drop procedure t_do_day(uuid, integer);
