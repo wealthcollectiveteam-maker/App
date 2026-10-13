@@ -133,11 +133,18 @@ export interface DayWindowRow {
   reopened_until: string | null;
 }
 
-/** One row of my_restorable_miss() (0018), or none. */
+/**
+ * One row of my_reopen_offer() (0020; my_restorable_miss()'s successor), or
+ * none. A single day has last_day = missed_day; `kind` names the RPC that
+ * reopens it.
+ */
 export interface RestorableMissRow {
   challenge_id: string;
+  kind: 'single' | 'catchup';
   missed_day: number;
+  last_day: number;
   missed_on: string;
+  last_on: string;
   restore_by: string;
   days_left: number;
 }
@@ -363,12 +370,23 @@ export const BackendApi = {
    * it can still be reopened. null when there is nothing to reopen.
    */
   getRestorableMiss: async () => {
+    // 0020: the successor to my_restorable_miss(). One row: the catch-up
+    // range when the rule allows it, else 0019's single day, else none.
     const rows = unwrap(
-      await sb().rpc('my_restorable_miss'),
-      'load restorable miss',
+      await sb().rpc('my_reopen_offer'),
+      'load reopen offer',
     ) as RestorableMissRow[] | null;
     return rows?.[0] ?? null;
   },
+
+  /**
+   * 0020: reopen every unlogged day since the run ended, in one go. The
+   * server decides everything — the run, the range, the window, what sits
+   * after it — supersedes an alive later challenge, carries its ticks by
+   * date, and changes no flame. Throws with the server's own reason.
+   */
+  catchUpMissedDays: async () =>
+    unwrap(await sb().rpc('catch_up_missed_days'), 'catch up missed days') as string,
 
   /**
    * 0018: reopen the missed day. The server decides everything — which
@@ -455,6 +473,32 @@ export const BackendApi = {
     const out: Partial<Record<TaskKey, string>> = {};
     for (const row of data ?? []) {
       out[row.task_key as TaskKey] = formatClock(Date.parse(row.completed_at));
+    }
+    return out;
+  },
+
+  /**
+   * 0020: the completions of several days at once — every non-today day the
+   * window returned, which after a catch-up is up to fourteen of them. One
+   * read, keyed by day; a day with no ticks is simply absent.
+   */
+  listCompletionsForDays: async (
+    challengeId: string,
+    days: number[],
+  ): Promise<Record<number, Partial<Record<TaskKey, string>>>> => {
+    const out: Record<number, Partial<Record<TaskKey, string>>> = {};
+    if (days.length === 0) return out;
+    const data = unwrap(
+      await sb()
+        .from('task_completions')
+        .select('day, task_key, completed_at')
+        .eq('challenge_id', challengeId)
+        .in('day', days),
+      'load completions',
+    );
+    for (const row of data ?? []) {
+      const d = Number(row.day);
+      (out[d] ??= {})[row.task_key as TaskKey] = formatClock(Date.parse(row.completed_at));
     }
     return out;
   },

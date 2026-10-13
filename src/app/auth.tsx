@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Micro, PrimaryButton, Serif } from '@/components/primitives';
+import { RestoreBlock } from '@/components/RestoreBlock';
 import { Card, OutlineButton } from '@/components/ui';
 import {
   CHALLENGE,
@@ -29,6 +30,7 @@ import {
   type StartChoice,
 } from '@/lib/startChoice';
 import { AuthService } from '@/services/backend/AuthService';
+import { useAppStore } from '@/store/useAppStore';
 import { useSessionStore } from '@/store/useSessionStore';
 import { toast } from '@/store/useToastStore';
 import { colors, font, microTracking, radius, space } from '@/theme/tokens';
@@ -314,6 +316,9 @@ export default function AuthScreen() {
   // One sentence for a person whose last challenge ended as dormant (0016),
   // null for everyone else. Decided in lib/startChoice.ts.
   const returning = returningLine(setupContext?.lastEndedReason);
+  // 0020: the server's offer to reopen the run that ended, read by
+  // completeSignIn() when it found nothing alive. Null for everyone else.
+  const reopenOffer = useAppStore((s) => s.restorable);
 
   const [step, setStep] = useState<Step>(status === 'setup' ? 'setup' : 'email');
   const [email, setEmail] = useState('');
@@ -507,7 +512,20 @@ export default function AuthScreen() {
 
         {step === 'setup' && (
           <View style={styles.setup}>
-            <Text style={styles.label}>Display name</Text>
+            {/* THE DOOR, WHEN NOTHING IS ALIVE (Phase 38Q, Q3 d). A person
+                whose run ended lands here because the server has no
+                challenge to show — and until 0020 this screen only ever
+                steered them into starting over. If the server offers a
+                catch-up, it is shown FIRST, in the same block Home uses.
+                Starting fresh stays available below, named as the second
+                action. The block renders nothing when there is no offer. */}
+            {reopenOffer ? (
+              <>
+                <RestoreBlock compact />
+                <Text style={styles.pickTitle}>Or start a new challenge</Text>
+              </>
+            ) : null}
+            <Text style={[styles.label, reopenOffer ? { marginTop: 16 } : null]}>Display name</Text>
             <TextInput
               value={name}
               onChangeText={setName}

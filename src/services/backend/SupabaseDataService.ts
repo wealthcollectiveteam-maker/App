@@ -21,6 +21,7 @@ import type {
   ReportReason,
   SavedMeal,
   Scenario,
+  OpenDay,
   RestorableMiss,
   ScenarioState,
   Squad,
@@ -33,6 +34,7 @@ import type {
   WorkoutLog,
   WorkoutLogInput,
 } from '@/data/types';
+import { currentOpenDay } from '@/lib/catchUp';
 import { formatClock } from '@/lib/intl';
 import { normalizeInviteCode } from '@/lib/inviteCode';
 import {
@@ -421,15 +423,17 @@ export class SupabaseDataService implements IDataService {
     this.challengeId = day?.challenge_id ?? null;
     this.state.day = day?.day ?? 1;
     this.state.dayComplete = !!day?.sealed_at;
-    const prev = window.find((r) => !r.is_today) ?? null;
+    // 0020: every non-today day the window returned — one yesterday, or the
+    // reopened range after a catch-up — read in one call.
+    const prevDays = window.filter((r) => !r.is_today).map((r) => r.day);
 
     const [completions, prevCompletions, config] = await Promise.all([
       this.challengeId
         ? api.listTodayCompletions(this.challengeId, this.state.day)
         : Promise.resolve({} as Partial<Record<TaskKey, string>>),
-      this.challengeId && prev
-        ? api.listTodayCompletions(this.challengeId, prev.day)
-        : Promise.resolve({} as Partial<Record<TaskKey, string>>),
+      this.challengeId
+        ? api.listCompletionsForDays(this.challengeId, prevDays)
+        : Promise.resolve({} as Record<number, Partial<Record<TaskKey, string>>>),
       this.challengeId
         ? api.getChallengeConfig(this.challengeId, this.state.day)
         : Promise.resolve(null),
@@ -474,13 +478,7 @@ export class SupabaseDataService implements IDataService {
     // Yesterday, after the config lands — a custom task's sub-line lives on
     // custom_tasks, not in the frozen snapshot, so the mapping needs it.
     this.applyDayWindow(window);
-    if (this.state.yesterday) {
-      this.state.yesterday = {
-        ...this.state.yesterday,
-        tasksDone: prevCompletions,
-      };
-      this.daySnapshots[this.state.yesterday.day] = this.state.yesterday.tasks;
-    }
+    this.applyReopenedCompletions(prevCompletions);
 
     // ---- OPTIONAL ----
     // Each assignment is guarded: a read that failed leaves the mirror's
@@ -563,12 +561,11 @@ export class SupabaseDataService implements IDataService {
     const day = await api.getOrFreezeToday();
     if (!day) return;
     const window = await api.getDayWindow();
-    const prev = window.find((r) => !r.is_today) ?? null;
+    // 0020: every non-today day, in one read (see hydrate()).
+    const prevDays = window.filter((r) => !r.is_today).map((r) => r.day);
     const [completions, prevCompletions, config, profile] = await Promise.all([
       api.listTodayCompletions(day.challenge_id, day.day),
-      prev
-        ? api.listTodayCompletions(day.challenge_id, prev.day)
-        : Promise.resolve({} as Partial<Record<TaskKey, string>>),
+      api.listCompletionsForDays(day.challenge_id, prevDays),
       api.getChallengeConfig(day.challenge_id, day.day),
       api.getProfile(this.userId),
     ]);
@@ -602,13 +599,7 @@ export class SupabaseDataService implements IDataService {
     // Crossing noon is a rollover of its own: this is where an open yesterday
     // becomes a closed one, and where the screen stops offering it.
     this.applyDayWindow(window);
-    if (this.state.yesterday) {
-      this.state.yesterday = {
-        ...this.state.yesterday,
-        tasksDone: prevCompletions,
-      };
-      this.daySnapshots[this.state.yesterday.day] = this.state.yesterday.tasks;
-    }
+    this.applyReopenedCompletions(prevCompletions);
   }
 
   /**
@@ -842,34 +833,57 @@ export class SupabaseDataService implements IDataService {
    */
   private applyDayWindow(rows: DayWindowRow[]): DayWindowRow | null {
     const today = rows.find((r) => r.is_today) ?? null;
-    const prev = rows.find((r) => !r.is_today) ?? null;
 
     // The server's instant for today's boundary, carried for the date
     // label exactly as `open` and `closesAt` are carried for yesterday.
     this.state.todayClosesAt = today?.closes_at ?? null;
 
-    if (prev) {
-      const done: Partial<Record<TaskKey, string>> = {};
-      // The window read carries counts, not completion times; the times come
-      // from the completions read alongside it in hydrate(). Seed the keys we
-      // already know are done so a rollover never renders an empty yesterday
-      // that the user had in fact finished.
-      this.state.yesterday = {
-        day: prev.day,
+    // 0020: EVERY non-today row, oldest first — one ordinary yesterday, or
+    // the reopened range after a catch-up. Completion times come from the
+    // completions read alongside the window in hydrate()/refreshToday();
+    // here each day starts empty and is filled by the caller.
+    this.state.reopened = rows
+      .filter((r) => !r.is_today)
+      .sort((a, b) => a.day - b.day)
+      .map((r) => ({
+        day: r.day,
         isToday: false,
-        open: prev.is_open,
-        closesAt: prev.closes_at,
-        reopenedUntil: prev.reopened_until ?? null,
-        tasks: prev.task_snapshot.map((t) =>
+        open: r.is_open,
+        closesAt: r.closes_at,
+        reopenedUntil: r.reopened_until ?? null,
+        tasks: r.task_snapshot.map((t) =>
           taskFromSnapshot(t, this.customTasks, this.state.tier),
         ),
-        tasksDone: done,
-        sealed: !!prev.sealed_at,
-      };
-    } else {
-      this.state.yesterday = null;
-    }
+        tasksDone: {},
+        sealed: !!r.sealed_at,
+      }));
+    // The one the deck is on: the oldest open, unsealed day (lib/catchUp.ts).
+    // With a single yesterday this is that day, exactly as before 0020.
+    this.state.yesterday = currentOpenDay(this.state.reopened);
     return today;
+  }
+
+  /**
+   * 0020: put the completions read for the non-today days onto each of
+   * them, and onto `yesterday`, which is one of them.
+   */
+  private applyReopenedCompletions(
+    byDay: Record<number, Partial<Record<TaskKey, string>>>,
+  ): void {
+    this.state.reopened = (this.state.reopened ?? []).map((d) => ({
+      ...d,
+      tasksDone: byDay[d.day] ?? {},
+    }));
+    const y = this.state.yesterday;
+    if (y) this.state.yesterday = { ...y, tasksDone: byDay[y.day] ?? {} };
+    for (const d of this.state.reopened) this.daySnapshots[d.day] = d.tasks;
+  }
+
+  /** 0020: keep the entry in `reopened` in step with `yesterday`. */
+  private syncReopened(day: number, patch: Partial<OpenDay>): void {
+    this.state.reopened = (this.state.reopened ?? []).map((d) =>
+      d.day === day ? { ...d, ...patch } : d,
+    );
   }
 
   /** True when `day` names the previous day the server told us is open. */
@@ -882,12 +896,15 @@ export class SupabaseDataService implements IDataService {
     if (this.isGrace(day)) {
       const y = this.state.yesterday!;
       const previous = { ...y.tasksDone };
-      this.state.yesterday = { ...y, tasksDone: { ...previous, [taskKey]: at } };
+      const next = { ...previous, [taskKey]: at };
+      this.state.yesterday = { ...y, tasksDone: next };
+      this.syncReopened(y.day, { tasksDone: next });
       this.write(
         () => api.completeTask(taskKey, undefined, day),
         () => {
           const cur = this.state.yesterday;
-          if (cur) this.state.yesterday = { ...cur, tasksDone: previous };
+          if (cur && cur.day === y.day) this.state.yesterday = { ...cur, tasksDone: previous };
+          this.syncReopened(y.day, { tasksDone: previous });
         },
         { op: 'complete', taskKey, day },
       );
@@ -911,11 +928,13 @@ export class SupabaseDataService implements IDataService {
       const next = { ...previous };
       delete next[taskKey];
       this.state.yesterday = { ...y, tasksDone: next };
+      this.syncReopened(y.day, { tasksDone: next });
       this.write(
         () => api.uncompleteTask(taskKey, day),
         () => {
           const cur = this.state.yesterday;
-          if (cur) this.state.yesterday = { ...cur, tasksDone: previous };
+          if (cur && cur.day === y.day) this.state.yesterday = { ...cur, tasksDone: previous };
+          this.syncReopened(y.day, { tasksDone: previous });
         },
         { op: 'uncomplete', taskKey, day },
       );
@@ -937,12 +956,18 @@ export class SupabaseDataService implements IDataService {
   sealDay(day?: number): void {
     if (this.isGrace(day)) {
       const y = this.state.yesterday!;
-      this.state.yesterday = { ...y, sealed: true };
+      // 0020: the sealed day stays in `reopened` as sealed, and the deck
+      // moves to the next open, unsealed one — or to nothing, which is
+      // today (lib/catchUp.ts). Before 0020 the one yesterday was simply
+      // marked sealed, which is what this does when it is the only day.
+      this.syncReopened(y.day, { sealed: true });
+      this.state.yesterday =
+        currentOpenDay(this.state.reopened ?? []) ?? { ...y, sealed: true };
       this.write(
         () => api.sealDay(day),
         () => {
-          const cur = this.state.yesterday;
-          if (cur) this.state.yesterday = { ...cur, sealed: y.sealed };
+          this.syncReopened(y.day, { sealed: y.sealed });
+          this.state.yesterday = currentOpenDay(this.state.reopened ?? []) ?? { ...y };
         },
         { op: 'seal', day },
       );
@@ -1916,9 +1941,12 @@ export class SupabaseDataService implements IDataService {
         ? {
             challengeId: row.challenge_id,
             day: row.missed_day,
+            lastDay: row.last_day,
             missedOn: row.missed_on,
+            lastOn: row.last_on,
             restoreBy: row.restore_by,
             daysLeft: row.days_left,
+            kind: row.kind,
           }
         : null;
     } catch {
@@ -1933,7 +1961,13 @@ export class SupabaseDataService implements IDataService {
    * server has done it, or throws with the server's reason.
    */
   async restoreMissedDay(): Promise<void> {
-    await api.restoreMissedDay();
+    // 0020: the offer names the RPC. A catch-up reopens the whole range;
+    // anything else is 0019's single day. The server decides the rest.
+    if (this.state.restorable?.kind === 'catchup') {
+      await api.catchUpMissedDays();
+    } else {
+      await api.restoreMissedDay();
+    }
     this.state.restorable = null;
   }
 

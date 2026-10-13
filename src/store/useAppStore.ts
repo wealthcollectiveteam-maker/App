@@ -10,6 +10,7 @@ import {
   serializeFlag,
   serializePrefs,
 } from '@/lib/prefsStorage';
+import { nextAfterSeal } from '@/lib/catchUp';
 import { undoPing } from '@/lib/pingRollback';
 import { writeDay, type DayView } from '@/lib/writeDay';
 import type { SyncedPreferences } from '@/lib/serverPrefs';
@@ -846,25 +847,34 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (y.sealed) return;
       rememberForRollback(`seal:${y.day}`, {
         yesterday: y,
+        // 0020: a refused seal puts the deck back on the day it was on.
+        reopened: s.reopened,
+        activeDay: s.activeDay,
         xp: s.xp,
         flame: s.flame,
         bestFlame: s.bestFlame,
         perfectDays: s.perfectDays,
       });
-      set((st) => ({
-        yesterday: st.yesterday ? { ...st.yesterday, sealed: true } : st.yesterday,
-        xp: st.xp + XP.dayComplete,
-        // A day finished inside the window is a met day, so it pays the
-        // flame like any other. The server recomputes both on the next
-        // hydrate; this is the optimistic mirror, not the record.
-        flame: st.flame + 1,
-        bestFlame: Math.max(st.bestFlame, st.flame + 1),
-        perfectDays: st.perfectDays + 1,
-        // Back to today the moment yesterday is done. Leaving the screen in
-        // yesterday-mode after there is nothing left to do there is how a
-        // user ends up ticking the wrong day.
-        activeDay: 'today',
-      }));
+      set((st) => {
+        // 0020: the deck moves to the NEXT reopened day that is open and
+        // unsealed, and to today only when none is left (lib/catchUp.ts).
+        // With one ordinary yesterday that is "back to today the moment it
+        // is done", exactly as before: leaving the screen in yesterday-mode
+        // with nothing left to do there is how a user ticks the wrong day.
+        const after = nextAfterSeal(st.reopened ?? [y], y.day);
+        return {
+          reopened: after.days,
+          yesterday: after.current ?? (st.yesterday ? { ...st.yesterday, sealed: true } : st.yesterday),
+          xp: st.xp + XP.dayComplete,
+          // A day finished inside the window is a met day, so it pays the
+          // flame like any other. The server recomputes both on the next
+          // hydrate; this is the optimistic mirror, not the record.
+          flame: st.flame + 1,
+          bestFlame: Math.max(st.bestFlame, st.flame + 1),
+          perfectDays: st.perfectDays + 1,
+          activeDay: after.activeDay,
+        };
+      });
       DataService.sealDay(y.day);
       return;
     }
@@ -1294,6 +1304,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       tasksDone: st.tasksDone,
       dayComplete: st.dayComplete,
       yesterday: st.yesterday,
+      reopened: st.reopened ?? [],
       // Crossing NOON is a rollover of its own, and this is where it lands.
       // The moment the server stops calling yesterday open, the screen stops
       // being in yesterday-mode — it must never be sitting on a day every

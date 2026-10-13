@@ -185,7 +185,9 @@ if (!USE_OLD) {
       );
     }
     assert.match(service, /api\.getRestorableMiss\(\)/, 'the service does not read the server');
-    assert.match(apiSrc, /rpc\('my_restorable_miss'\)/, 'api.ts does not call my_restorable_miss');
+    // 0020: the offer is read from my_restorable_miss()'s successor, which
+    // carries the same single-day rows plus the catch-up range.
+    assert.match(apiSrc, /rpc\('my_reopen_offer'\)/, 'api.ts does not call my_reopen_offer');
   });
   check('38P: the owner\'s second miss (day 37, 2026-09-30) is offered like the first', () => {
     const second = { challengeId: '573dabe6', day: 37, missedOn: '2026-09-29', restoreBy: '2026-10-06', daysLeft: 6 };

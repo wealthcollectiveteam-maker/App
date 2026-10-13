@@ -28,6 +28,7 @@ import { HealthSuggestionRow } from '@/components/HealthSuggestion';
 import type { OpenDay, TaskDef } from '@/data/types';
 import { useStartTimer } from '@/hooks/useStartTimer';
 import { dayDateLabel } from '@/lib/dayLabel';
+import { catchUpProgress } from '@/lib/catchUp';
 import { checkinDeck, type FinishedAction } from '@/lib/checkinDeck';
 import { dayOneLine } from '@/lib/streakStatus';
 import type { HealthSuggestion } from '@/lib/healthLinks';
@@ -312,6 +313,7 @@ function DaySwitcher({
   graceTotal,
   active,
   onPick,
+  progress,
 }: {
   today: number;
   todayDone: number;
@@ -321,12 +323,18 @@ function DaySwitcher({
   graceTotal: number;
   active: 'today' | 'yesterday';
   onPick: (which: 'today' | 'yesterday') => void;
+  /** 0020: how far through the reopened days the person is. */
+  progress: { total: number; done: number; remaining: number };
 }) {
   // 0018: a reopened day is the open non-today day too, but it is not
   // yesterday, and its close is its own. Named by what it is.
   const reopened = !!grace.reopenedUntil;
   const left = useCountdown(grace.reopenedUntil ?? grace.closesAt);
   const otherName = reopened ? 'REOPENED' : 'YESTERDAY';
+  // 0020: a CATCH-UP is several reopened days, oldest first, one at a time.
+  // Say where in the run of them this one sits. No label of lateness: they
+  // are days being locked in, the same as any other.
+  const catchUp = reopened && progress.total > 1;
   return (
     <View style={styles.switcherWrap}>
       <View style={styles.switcher}>
@@ -349,7 +357,9 @@ function DaySwitcher({
         />
       </View>
       <Micro color={colors.textMid} style={{ marginTop: 8 }}>
-        {`Day ${grace.day} locks at noon — ${left} left`}
+        {catchUp
+          ? `Day ${grace.day} · ${progress.done + 1} of ${progress.total} to lock in — all lock at noon, ${left} left`
+          : `Day ${grace.day} locks at noon — ${left} left`}
       </Micro>
     </View>
   );
@@ -374,6 +384,10 @@ export default function CheckinScreen() {
   const startTimer = useStartTimer();
 
   const yesterday = useAppStore((s) => s.yesterday);
+  // 0020: every non-today day the server returned — the reopened range
+  // after a catch-up. `yesterday` is the one of them the deck is on.
+  const reopened = useAppStore((s) => s.reopened);
+  const progress = catchUpProgress(reopened ?? []);
   const todayClosesAt = useAppStore((s) => s.todayClosesAt);
   const challengeTimezone = useAppStore((s) => s.challengeTimezone);
   const activeDay = useAppStore((s) => s.activeDay);
@@ -499,6 +513,7 @@ export default function CheckinScreen() {
             graceTotal={yTotal}
             active={grace ? 'yesterday' : 'today'}
             onPick={setActiveDay}
+            progress={progress}
           />
         ) : null}
 

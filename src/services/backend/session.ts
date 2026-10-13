@@ -1,6 +1,6 @@
 import { getCalendars } from 'expo-localization';
 
-import type { ChallengeLength, SetupCustomTask, Tier } from '@/data/types';
+import type { ChallengeLength, RestorableMiss, SetupCustomTask, Tier } from '@/data/types';
 import { type AccountState, classifyAccountError } from '@/lib/accountState';
 import { api, type ChallengeStatusRow } from '@/services/backend/api';
 import { toBackendError } from '@/services/contract';
@@ -77,6 +77,32 @@ export async function readLastEndedChallenge(
   try {
     const row = await api.getLastEndedChallenge(userId);
     return row ? { lastEndedReason: row.ended_reason, bestFlame: row.best_flame } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 0020: the server's offer to reopen the run that ended, for a person with
+ * nothing alive. The same row the hydrated app reads through the service;
+ * mapped here because there is no service to hydrate yet. Never throws into
+ * the setup path: the offer is a courtesy, and a failed read is "no offer".
+ */
+export async function readReopenOffer(): Promise<RestorableMiss | null> {
+  try {
+    const row = await api.getRestorableMiss();
+    return row
+      ? {
+          challengeId: row.challenge_id,
+          day: row.missed_day,
+          lastDay: row.last_day,
+          missedOn: row.missed_on,
+          lastOn: row.last_on,
+          restoreBy: row.restore_by,
+          daysLeft: row.days_left,
+          kind: row.kind,
+        }
+      : null;
   } catch {
     return null;
   }

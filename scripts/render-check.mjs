@@ -172,9 +172,16 @@ function cannedBody(url, method = 'GET') {
     state.restored = true;
     return ORIGINAL_ID;
   }
-  if (u.includes('/rpc/my_restorable_miss')) {
+  // 0020: the client reads my_reopen_offer(), my_restorable_miss()'s
+  // successor. This scenario's replacement has a SEALED day 1, so the rule
+  // answers with 0019's single day (kind 'single', last_day = missed_day),
+  // exactly as production would. The old name is kept for an older bundle.
+  if (u.includes('/rpc/my_reopen_offer') || u.includes('/rpc/my_restorable_miss')) {
     return restorable && !state.restored
-      ? [{ challenge_id: ORIGINAL_ID, missed_day: 30, missed_on: isoDate(-2), restore_by: isoDate(5), days_left: 5 }]
+      ? [{
+          challenge_id: ORIGINAL_ID, kind: 'single', missed_day: 30, last_day: 30,
+          missed_on: isoDate(-2), last_on: isoDate(-2), restore_by: isoDate(12), days_left: 12,
+        }]
       : [];
   }
   if (u.includes('/rpc/get_or_freeze_today')) {

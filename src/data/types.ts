@@ -376,10 +376,17 @@ export interface OpenDay {
 /** The missed day that can still be reopened (0018), as the store holds it. */
 export interface RestorableMiss {
   challengeId: string;
+  /** The first day that would be reopened. */
   day: number;
+  /** 0020: the last day that would be reopened; equal to `day` for one day. */
+  lastDay: number;
   missedOn: string;
+  /** 0020: the last reopened day's date, YYYY-MM-DD in the challenge's zone. */
+  lastOn: string;
   restoreBy: string;
   daysLeft: number;
+  /** 0020: which RPC reopens it — the whole range, or 0019's single day. */
+  kind: 'single' | 'catchup';
 }
 
 export interface ScenarioState {
@@ -422,6 +429,13 @@ export interface ScenarioState {
    * is here, and every write says which one it means.
    */
   yesterday: OpenDay | null;
+  /**
+   * 0020: every non-today day the server's window returned, oldest first —
+   * the reopened range after a catch-up, or the one ordinary yesterday.
+   * `yesterday` is the one of these the deck is on (lib/catchUp.ts). Optional:
+   * the mock has none.
+   */
+  reopened?: OpenDay[];
   /**
    * When TODAY stops being completable — the server's own instant, noon in
    * the CHALLENGE's timezone on the following day. Carried, never derived.

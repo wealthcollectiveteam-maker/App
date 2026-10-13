@@ -14,6 +14,7 @@ import {
   ensureProfile,
   readChallengeStatus,
   readLastEndedChallenge,
+  readReopenOffer,
   saveWhy,
 } from '@/services/backend/session';
 import { getSupabase } from '@/services/backend/supabaseClient';
@@ -218,7 +219,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         // difference is one read, and one sentence (F3). Read BEFORE the
         // status flips so the screen never renders the new-account version
         // first and then corrects itself.
-        const setupContext = await readLastEndedChallenge(userId);
+        //
+        // 0020: and, for a person whose run ended, the offer to reopen it.
+        // Nothing is alive, so there is no hydrate to carry it in; it goes
+        // straight to the app store, where the same RestoreBlock Home uses
+        // reads it. A failed read reads as "no offer" — a courtesy must
+        // never turn a sign-up into an error screen.
+        const [setupContext, offer] = await Promise.all([
+          readLastEndedChallenge(userId),
+          readReopenOffer(),
+        ]);
+        useAppStore.setState({ restorable: offer });
         set({ status: 'setup', waiting: null, setupContext });
         return;
       }

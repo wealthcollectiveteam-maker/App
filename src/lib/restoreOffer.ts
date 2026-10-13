@@ -35,17 +35,33 @@ function daysBetween(from: string, to: string): number {
   return Math.round((b - a) / 86_400_000);
 }
 
-/** One row of my_restorable_miss(), as the store holds it. */
+/**
+ * One row of my_reopen_offer() (0020; my_restorable_miss()'s successor), as
+ * the store holds it. A single day has lastDay = day.
+ */
 export interface RestorableMissInput {
   challengeId: string;
-  /** The missed day's number on the challenge that ended. */
+  /** The first missed day's number on the challenge that ended. */
   day: number;
+  /**
+   * The last reopened day (0020). Equal to `day` for a single-day restore.
+   * Optional: a row read before 0020 carried one day only.
+   */
+  lastDay?: number;
   /** YYYY-MM-DD, in the challenge's zone. */
   missedOn: string;
+  /** YYYY-MM-DD, the last reopened day's date (0020). Optional, as lastDay. */
+  lastOn?: string;
   /** YYYY-MM-DD, the last day the restore is accepted. */
   restoreBy: string;
   /** Whole days from today (in the challenge's zone) to restoreBy. */
   daysLeft: number;
+  /**
+   * Which RPC the tap must call (0020): 'catchup' reopens the whole range
+   * through catch_up_missed_days(); 'single' is 0019's restore_missed_day().
+   * Optional: a row read before 0020 is a single.
+   */
+  kind?: 'single' | 'catchup';
 }
 
 export interface RestoreOfferInput {
@@ -57,11 +73,13 @@ export interface RestoreOfferInput {
 }
 
 export interface RestoreOffer {
-  /** The day that would be reopened. */
+  /** The (first) day that would be reopened. */
   day: number;
+  /** The last day that would be reopened; equal to `day` for one day. */
+  lastDay: number;
   /** The day number the person would be on today, on the run that ended. */
   returnDay: number;
-  /** Two sentences: what happened, and what the action does. */
+  /** Plain sentences: what happened, and what the action does. */
   explainer: string;
   /** "Reopen by September 29" — the window, as a label. */
   deadline: string;
@@ -84,14 +102,33 @@ export function restoreOffer(input: RestoreOfferInput): RestoreOffer | null {
   const r = input.restorable;
   if (!r) return null;
   const returnDay = returnDayToday(r);
+  const lastDay = r.lastDay ?? r.day;
+  const deadline = `Reopen by ${input.restoreByLabel}`;
+  // CATCH-UP (Phase 38Q): a range of unlogged days. The same plain register:
+  // what happened, what the action does, where the run continues, how long
+  // the days stay open. Never "late", never a tick-all.
+  if (lastDay > r.day) {
+    return {
+      day: r.day,
+      lastDay,
+      returnDay,
+      explainer:
+        `Days ${r.day} to ${lastDay} weren't logged. Reopen them and tick each ` +
+        `day you did. Your run continues at Day ${returnDay} today. Open until ` +
+        `noon tomorrow.`,
+      deadline,
+      button: `Reopen Days ${r.day} to ${lastDay}`,
+    };
+  }
   return {
     day: r.day,
+    lastDay,
     returnDay,
     explainer:
       `This is day ${input.currentDay} because day ${r.day} of the run before it ` +
       `was judged missed. Reopen day ${r.day} and complete it to continue that ` +
       `run, at day ${returnDay} today.`,
-    deadline: `Reopen by ${input.restoreByLabel}`,
+    deadline,
     button: `Reopen day ${r.day}`,
   };
 }
