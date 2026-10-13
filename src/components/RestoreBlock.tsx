@@ -44,16 +44,30 @@ export function RestoreBlock({ compact = false }: { compact?: boolean }) {
   });
   if (!offer) return null;
 
+  const range = offer.lastDay > offer.day;
   const onRestore = async () => {
     if (busy) return;
     setBusy(true);
     try {
+      // The store reads the offer's kind and calls the RPC it names (38R).
       await restoreMissedDay();
+      // Which challenge is alive just changed: re-run the session funnel,
+      // which hydrates the reopened run and, from the setup screen, flips
+      // the status to signedIn so the tabs render.
       await useSessionStore.getState().retry();
+      // Land on the oldest reopened day. The store's `yesterday` is that day
+      // after the hydrate (lib/catchUp.ts); 'yesterday' is refused if it is
+      // not open, which leaves today — the honest fallback.
       setActiveDay('yesterday');
-      router.navigate('/checkin');
+      router.replace('/checkin');
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Could not reopen the day.');
+      // Plain words on screen; the server's own sentence in the console.
+      console.warn('[reopen]', e instanceof Error ? e.message : e);
+      toast(
+        range
+          ? 'Those days could not be reopened. Refresh and try again.'
+          : 'That day could not be reopened. Refresh and try again.',
+      );
     } finally {
       setBusy(false);
     }

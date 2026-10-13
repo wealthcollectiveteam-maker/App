@@ -347,8 +347,14 @@ export interface IDataService {
    * Async and server-owned like setChallengeDuration, and for the same
    * reason: it changes which challenge is alive, and the mirror must not
    * guess that. It changes no flame. The caller re-hydrates afterwards.
+   *
+   * `kind` is THE OFFER'S kind (Phase 38R): 'catchup' calls
+   * catch_up_missed_days(), 'single' calls restore_missed_day(). The caller
+   * passes it from the offer on screen, because the service's own mirror may
+   * never have been hydrated — the setup screen's case, where nothing is
+   * alive and the offer reached the store from completeSignIn() alone.
    */
-  restoreMissedDay(): Promise<void>;
+  restoreMissedDay(kind: 'single' | 'catchup'): Promise<void>;
   getPendingChanges(currentTier: Tier, day: number): PendingChanges;
   undoPendingChanges(day: number): void;
   /** Applies pending changes and freezes the new day's snapshot. */

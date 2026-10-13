@@ -84,6 +84,7 @@
     "test:start-choice": "node --experimental-strip-types scripts/start-choice.test.mjs",
     "test:restore-offer": "node --experimental-strip-types scripts/restore-offer.test.mjs",
     "test:catch-up": "node --experimental-strip-types scripts/catch-up.test.mjs",
+    "test:reopen-tap": "node --experimental-transform-types --import ./scripts/app-loader-register.mjs scripts/reopen-tap.test.mjs",
     "test:intl": "node --experimental-strip-types scripts/intl.test.mjs",
     "test:identity": "node scripts/identity-guard.test.mjs",
     "test:reminder-schedule": "node --experimental-strip-types scripts/reminder-schedule.test.mjs",

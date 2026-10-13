@@ -705,7 +705,7 @@ export class MockDataService implements IDataService {
   }
 
   /** The mock holds no ended challenge to reopen; the offer never shows. */
-  async restoreMissedDay(): Promise<void> {
+  async restoreMissedDay(_kind: 'single' | 'catchup'): Promise<void> {
     this.state.restorable = null;
   }
 

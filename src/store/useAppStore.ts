@@ -1247,7 +1247,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   restoreMissedDay: async () => {
-    await DataService.restoreMissedDay();
+    // PHASE 38R. The offer on screen names the RPC — its kind, and nothing
+    // else, picks the path. It is read HERE, from the store, because this
+    // is where completeSignIn() puts the offer when nothing is alive and no
+    // service mirror was ever hydrated.
+    const offer = get().restorable;
+    if (!offer) throw new Error('nothing to reopen');
+    await DataService.restoreMissedDay(offer.kind);
     set({ restorable: null });
   },
 

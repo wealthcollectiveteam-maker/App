@@ -1960,10 +1960,16 @@ export class SupabaseDataService implements IDataService {
    * guess that. The caller re-hydrates afterwards; this returns once the
    * server has done it, or throws with the server's reason.
    */
-  async restoreMissedDay(): Promise<void> {
+  async restoreMissedDay(kind: 'single' | 'catchup'): Promise<void> {
     // 0020: the offer names the RPC. A catch-up reopens the whole range;
-    // anything else is 0019's single day. The server decides the rest.
-    if (this.state.restorable?.kind === 'catchup') {
+    // a single day is 0019's restore. The server decides the rest.
+    //
+    // PHASE 38R. The kind is the CALLER's argument, never this mirror's
+    // `state.restorable`: on 2026-10-13 the owner tapped the offer on the
+    // setup screen, where nothing had been hydrated, this mirror held no
+    // offer, the branch below read `undefined`, and restore_missed_day went
+    // over the wire for a catch-up. The server refused it, correctly.
+    if (kind === 'catchup') {
       await api.catchUpMissedDays();
     } else {
       await api.restoreMissedDay();

@@ -141,14 +141,22 @@ const DAY_ROW = {
  * with flame 29, the reopened day 30 is in the window with its own close,
  * and there is nothing left to reopen. That is tap-to-continue, measured.
  */
-const state = { scenario: 'default', restored: false };
+// Phase 38R adds a third account, `catchup`: the owner's state on
+// 2026-10-13 — NOTHING alive, a run ended at day 43 with 42 sealed days, and
+// my_reopen_offer() offering days 43–50. `caughtUp` flips when the app calls
+// catch_up_missed_days, and `lastReopenRpc` records WHICH reopen RPC the tap
+// sent, which is the thing 38Q's checks never looked at.
+const state = { scenario: 'default', restored: false, caughtUp: false, lastReopenRpc: null };
 const ORIGINAL_ID = '33333333-3333-4333-8333-333333333333';
+// A PostgREST refusal, as the server sends one: status 400, the function's
+// own message. supabase-js surfaces it as error.message.
+const refuse = (message) => ({ __status: 400, __body: { code: 'P0001', details: null, hint: null, message } });
 const isoDate = (offsetDays) => {
   const d = new Date(Date.now() + offsetDays * 86_400_000);
   return d.toISOString().slice(0, 10);
 };
 const dayRow = (day, over = {}) => ({
-  challenge_id: state.restored ? ORIGINAL_ID : CHALLENGE_ID,
+  challenge_id: state.restored || state.caughtUp ? ORIGINAL_ID : CHALLENGE_ID,
   day,
   is_today: true,
   is_open: true,
@@ -166,17 +174,40 @@ function cannedBody(url, method = 'GET') {
   const u = url.toLowerCase();
   const restorable = state.scenario === 'restorable';
 
+  const catchup = state.scenario === 'catchup';
+
+  // THE TWO REOPEN RPCs, and WHICH ONE the tap sent (Phase 38R). The stub
+  // answers each exactly as 0020 does for the account it is being: in the
+  // catch-up state nothing is alive, so restore_missed_day refuses with the
+  // server's own words — the toast the owner read on 2026-10-13.
+  if (u.includes('/rpc/catch_up_missed_days')) {
+    state.lastReopenRpc = 'catch_up_missed_days';
+    if (!catchup) return refuse('nothing to catch up: no ended run of yours has a sealed day');
+    state.caughtUp = true;
+    return ORIGINAL_ID;
+  }
   // 0018: the tap. From here on the stub answers as the server would after
   // restore_missed_day(): the original is alive again.
   if (u.includes('/rpc/restore_missed_day')) {
+    state.lastReopenRpc = 'restore_missed_day';
+    if (catchup) return refuse('not restorable: the current challenge is not the direct replacement of the one that ended');
     state.restored = true;
     return ORIGINAL_ID;
   }
   // 0020: the client reads my_reopen_offer(), my_restorable_miss()'s
-  // successor. This scenario's replacement has a SEALED day 1, so the rule
-  // answers with 0019's single day (kind 'single', last_day = missed_day),
-  // exactly as production would. The old name is kept for an older bundle.
+  // successor. The restorable scenario's replacement has a SEALED day 1, so
+  // the rule answers with 0019's single day (kind 'single', last_day =
+  // missed_day); the catch-up scenario answers with the owner's range. The
+  // old name is kept for an older bundle.
   if (u.includes('/rpc/my_reopen_offer') || u.includes('/rpc/my_restorable_miss')) {
+    if (catchup) {
+      return state.caughtUp
+        ? []
+        : [{
+            challenge_id: ORIGINAL_ID, kind: 'catchup', missed_day: 43, last_day: 50,
+            missed_on: isoDate(-8), last_on: isoDate(-1), restore_by: isoDate(6), days_left: 6,
+          }];
+    }
     return restorable && !state.restored
       ? [{
           challenge_id: ORIGINAL_ID, kind: 'single', missed_day: 30, last_day: 30,
@@ -185,10 +216,28 @@ function cannedBody(url, method = 'GET') {
       : [];
   }
   if (u.includes('/rpc/get_or_freeze_today')) {
+    // Nothing alive: the refusal checkAccount() reads as "setup".
+    if (catchup) return state.caughtUp ? { ...DAY_ROW, challenge_id: ORIGINAL_ID, day: 51 } : refuse('no challenge for user');
     if (!restorable) return DAY_ROW;
     return { ...DAY_ROW, challenge_id: state.restored ? ORIGINAL_ID : CHALLENGE_ID, day: state.restored ? 32 : 2 };
   }
   if (u.includes('/rpc/get_day_window')) {
+    if (catchup) {
+      if (!state.caughtUp) return refuse('no challenge for user');
+      // After the catch-up: days 43..50 reopened with the one close, and
+      // today, day 51 of the original.
+      return [
+        ...[43, 44, 45, 46, 47, 48, 49, 50].map((d) =>
+          dayRow(d, {
+            is_today: false,
+            is_open: true,
+            closes_at: new Date(Date.now() - (51 - d) * 86_400_000).toISOString(),
+            reopened_until: new Date(Date.now() + 20 * 36e5).toISOString(),
+          }),
+        ),
+        dayRow(51),
+      ];
+    }
     if (!restorable) return [dayRow(12)];
     if (!state.restored) {
       // Yesterday: the replacement's day 1, sealed this morning. Today: day 2.
@@ -221,6 +270,15 @@ function cannedBody(url, method = 'GET') {
     // every render check before Phase 38G measured a header on flame 0,
     // reading "Streak starts today", and never the streak itself.
     const base = { base_tier: 'hard', duration_days: 75, missed_notice_day: null, duration_previous: null, timezone: 'UTC' };
+    if (catchup) {
+      // Before the tap this row answers getLastEndedChallenge (the run that
+      // ended, best 42); after it, the config of the reopened original.
+      return {
+        ...base, id: ORIGINAL_ID, flame: 42, best_flame: 42, restarted_from: null,
+        ended_reason: state.caughtUp ? null : 'missed_day',
+        ended_at: state.caughtUp ? null : new Date(Date.now() - 7 * 86_400_000).toISOString(),
+      };
+    }
     if (!restorable) {
       // best_flame ABOVE flame on purpose: the Home header then renders
       // "STREAK 11 · BEST 29", the widest thing it can say, and the header-fit
@@ -244,6 +302,7 @@ function cannedBody(url, method = 'GET') {
  * list and no header, so every render check measured perfectDays = 0.
  */
 function sealedCount() {
+  if (state.scenario === 'catchup') return 42;
   if (state.scenario !== 'restorable') return 11;
   return state.restored ? 29 : 1;
 }
@@ -308,6 +367,8 @@ const SABOTAGE = {
 async function main(sabotage, scenario = 'default') {
   state.scenario = scenario;
   state.restored = false;
+  state.caughtUp = false;
+  state.lastReopenRpc = null;
   const { server, port } = await serve(DIST);
   const origin = `http://127.0.0.1:${port}`;
   console.log(`render-check — serving ${DIST} at ${origin} (${scenario})`);
@@ -348,10 +409,20 @@ async function main(sabotage, scenario = 'default') {
         body: '',
       });
     }
+    const canned = cannedBody(req.url(), req.method());
+    // Phase 38R: a refusal is a refusal — the status the server would send,
+    // so supabase-js raises it and the app's own error path runs.
+    if (canned && typeof canned === 'object' && '__status' in canned) {
+      return route.fulfill({
+        status: canned.__status,
+        headers: { ...cors(), 'content-type': 'application/json' },
+        body: JSON.stringify(canned.__body),
+      });
+    }
     return route.fulfill({
       status: 200,
       headers: { ...cors(), 'content-type': 'application/json' },
-      body: JSON.stringify(cannedBody(req.url(), req.method())),
+      body: JSON.stringify(canned),
     });
   });
 
@@ -395,6 +466,12 @@ async function main(sabotage, scenario = 'default') {
 
   if (scenario === 'restorable') {
     await restoreScenario(page, origin, sabotage);
+    await browser.close();
+    server.close();
+    return;
+  }
+  if (scenario === 'catchup') {
+    await catchUpScenario(page, origin, sabotage);
     await browser.close();
     server.close();
     return;
@@ -753,6 +830,8 @@ async function restoreScenario(page, origin, sabotage) {
     landed = false;
   }
   check('the tap restores and lands on the reopened day on check-in', landed && new URL(page.url()).pathname.replace(/\/$/, '') === '/checkin', `${new URL(page.url()).pathname}; restored=${state.restored}`);
+  // Phase 38R: a single-day offer must keep sending 0019's RPC.
+  check('...and the RPC the tap sent was restore_missed_day', state.lastReopenRpc === 'restore_missed_day', `sent ${state.lastReopenRpc}`);
   check('...which is named as REOPENED · DAY 30, not yesterday', /REOPENED\s*·\s*DAY 30/.test(await page.locator('body').innerText()));
 
   // And Home now reads the ORIGINAL: day 32, streak 29, and no door.
@@ -762,6 +841,61 @@ async function restoreScenario(page, origin, sabotage) {
   const headerText = (await text('[data-testid="app-header"]')).replace(/\s+/g, ' ');
   check('...and the header carries the original\'s streak, 29', /STREAK\s*29/i.test(headerText) && !/BEST/i.test(headerText), headerText);
   check('...and the door is gone', !(await box('[data-testid="restore-block"]')));
+}
+
+/**
+ * THE TAP, MEASURED BY WHAT IT SENDS (Phase 38R, R3b). The owner's state on
+ * 2026-10-13: nothing alive, so the account lands on the setup screen, and
+ * my_reopen_offer() offers days 43–50. The block must be on that screen with
+ * the start-fresh form below it; the tap must send catch_up_missed_days —
+ * not restore_missed_day, which the server refuses with nothing alive — and
+ * the next screen must be check-in on Day 43, the oldest reopened day, with
+ * no raw exception on screen.
+ */
+async function catchUpScenario(page, origin, sabotage) {
+  await page.goto(`${origin}/`, { waitUntil: 'load' });
+  let reached = true;
+  try {
+    await page.waitForSelector('[data-testid="restore-block"]', { timeout: 20_000 });
+    await page.waitForSelector('[data-testid="session-gate"]', { state: 'detached', timeout: 20_000 });
+    await page.waitForTimeout(300);
+  } catch {
+    reached = false;
+  }
+  if (sabotage) {
+    await page.addStyleTag({ content: SABOTAGE[sabotage].css });
+    await page.waitForTimeout(200);
+  }
+  const box = async (sel) => page.locator(sel).first().boundingBox().catch(() => null);
+  const text = async (sel) => page.locator(sel).first().innerText().catch(() => '');
+  const bodyText = async () => (await page.locator('body').innerText()).replace(/\s+/g, ' ');
+
+  check('with nothing alive, the setup screen renders the offer (the gate opened)', reached);
+  if (!reached) return;
+  check('the setup route is where the account landed', new URL(page.url()).pathname.replace(/\/$/, '') === '/auth', new URL(page.url()).pathname);
+
+  const block = await box('[data-testid="restore-block"]');
+  const blockText = (await text('[data-testid="restore-block"]')).replace(/\s+/g, ' ');
+  check('the block names the range and where the run continues', /Days 43 to 50 weren.t logged/.test(blockText) && /Day 51 today/.test(blockText), blockText.slice(0, 200));
+  check('...and offers "Reopen Days 43 to 50"', /Reopen Days 43 to 50/i.test(blockText));
+  const heading = await page.getByText('Or start a new challenge', { exact: false }).first().boundingBox().catch(() => null);
+  check('starting fresh is named as the second action, BELOW the offer', !!block && !!heading && heading.y > block.y + block.height - 0.5, block && heading ? `block bottom ${(block.y + block.height).toFixed(0)}, heading y ${heading.y.toFixed(0)}` : 'no boxes');
+
+  // THE TAP.
+  await page.getByRole('button', { name: /Reopen Days 43 to 50/i }).first().click();
+  let landed = true;
+  try {
+    await page.waitForFunction(() => document.body.innerText.includes('REOPENED'), null, { timeout: 15_000 });
+  } catch {
+    landed = false;
+  }
+  const after = await bodyText();
+  check('the RPC the tap sent was catch_up_missed_days', state.lastReopenRpc === 'catch_up_missed_days', `sent ${state.lastReopenRpc ?? 'nothing'}`);
+  check('the tap lands on check-in, not back on setup', landed && new URL(page.url()).pathname.replace(/\/$/, '') === '/checkin', `${new URL(page.url()).pathname}; caughtUp=${state.caughtUp}`);
+  check('...on Day 43, the oldest reopened day', /\bDay 43\b/.test(after) && /REOPENED\s*·\s*DAY 43/.test(after), after.slice(0, 200));
+  // Micro uppercases its text, so the match is case-insensitive.
+  check('...saying it is 1 of 8 to lock in', /1 of 8 to lock in/i.test(after), after.match(/\d+ of \d+ to lock in/i)?.[0] ?? `no progress line; switcher reads: ${after.match(/REOPENED[^]{0,140}/)?.[0] ?? '(none)'}`);
+  check('no raw exception reached the screen', !/not restorable|restore missed day:|catch up missed days:/i.test(after), after.match(/not restorable[^.]*/)?.[0] ?? '');
 }
 
 function cors() {
@@ -799,6 +933,9 @@ async function run() {
     await main(null, 'default');
     // Phase 38H: the owner's state, and the whole restore path.
     await main(null, 'restorable');
+    // Phase 38R: the owner's state on 2026-10-13 — nothing alive, a range
+    // offer — and the tap measured by the RPC it sends.
+    await main(null, 'catchup');
     console.log(
       failures
         ? `\n${failures} render check(s) FAILED — measured in a real browser, against ${DIST}.`
