@@ -38,6 +38,25 @@ async function check(label, fn) {
 
 // Dynamic, so the loader registered by --import is in force.
 const { useAppStore } = await import('../src/store/useAppStore.ts');
+// 38S, S1b: the same file runs as web (test:reopen-tap) and as the iOS app
+// (test:reopen-tap-ios). There is no .ios/.native fork of the store, the
+// service, api.ts or RestoreBlock; this proves the iOS run sends the same RPC.
+const { Platform } = await import('react-native');
+console.log(`Platform.OS = ${Platform.OS}\n`);
+if (process.env.APP_LOADER_OS === 'ios') {
+  await check('running as the iOS app sees the code', async () => {
+    assert.equal(Platform.OS, 'ios');
+  });
+  // Metro would pick a platform file (x.ios.ts, x.native.tsx) over x.ts;
+  // this loader would not. So the iOS run is only a proof while none exists.
+  await check('no .ios / .native file Metro would swap in on the phone', async () => {
+    const { readdirSync } = await import('node:fs');
+    const forks = readdirSync(new URL('../src', import.meta.url), { recursive: true })
+      .map(String)
+      .filter((f) => /\.(ios|native)\.(ts|tsx|js)$/.test(f));
+    assert.deepEqual(forks, []);
+  });
+}
 const calls = globalThis.__rpcCalls;
 const REOPEN_RPCS = ['catch_up_missed_days', 'restore_missed_day'];
 const sentReopens = () => calls.filter((c) => REOPEN_RPCS.includes(c.name));

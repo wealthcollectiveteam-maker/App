@@ -14,9 +14,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const noop = () => {};
+// 38S: APP_LOADER_OS=ios runs the same real modules as the native app sees
+// them, so a proof can show web and iOS take one path, not assume it.
+const OS = JSON.stringify(process.env.APP_LOADER_OS || 'web');
 const STUBS = {
   'react-native': `
-    export const Platform = { OS: 'web', select: (o) => (o.web ?? o.default) };
+    export const Platform = { OS: ${OS}, select: (o) => (o[${OS}] ?? o.default) };
     export const StyleSheet = { create: (s) => s, hairlineWidth: 1, flatten: (s) => s };
     export const AppState = { currentState: 'active', addEventListener: () => ({ remove() {} }) };
     export const Dimensions = { get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }) };
