@@ -3,6 +3,7 @@ import { getCalendars } from 'expo-localization';
 import { AppState, Platform } from 'react-native';
 
 import {
+  type PendingDay,
   planSignature,
   type ReminderPermission,
   type ReminderPlan,
@@ -13,13 +14,15 @@ import { getNotificationPermissionStatus } from '@/services/timerEffects';
 import { useAppStore } from '@/store/useAppStore';
 
 /**
- * THE DAILY REMINDER, native only (Phase 38I, I4; rolling window 38J, J3).
- * A window of local notifications, one a day at 20:00 device-local for the
- * next seven days, kept while the preference is on and the system grant is
+ * THE DAILY REMINDER, native only (Phase 38I, I4; rolling window 38J, J3;
+ * last call 38S). A window of local notifications — 20:00 device-local for
+ * the next seven days, and a last call three hours before each open day's
+ * SERVER close — kept while the preference is on and the system grant is
  * 'granted'. The decision is lib/reminderSchedule.ts; this applies it.
  *
  * WHEN IT RUNS: at launch, on every foreground, and whenever the store's
- * day, today's seal, or the preference changes. Each run computes the plan
+ * day, today's seal, yesterday (sealed, reopened, closed), today's close,
+ * or the preference changes. Each run computes the plan
  * from what is true now and makes the pending set match it — so sealing
  * today on this device removes today's and leaves the other six, a device
  * that changed timezone is rebuilt against the new zone, and a person who
@@ -59,6 +62,26 @@ function deviceZone(): string | null {
 
 function localDateKey(d = new Date()): string {
   return `${d.getFullYear()}-${`${d.getMonth() + 1}`.padStart(2, '0')}-${`${d.getDate()}`.padStart(2, '0')}`;
+}
+
+/**
+ * The oldest earlier day the server says is open and this device has not
+ * sealed — the deck's `yesterday` (lib/catchUp.ts) — with the server's own
+ * close for it. Null when there is none.
+ */
+function pendingDay(s: ReturnType<typeof useAppStore.getState>): PendingDay | null {
+  const y = s.yesterday;
+  if (!y || !y.open || y.sealed) return null;
+  const closesAtMs = Date.parse(y.reopenedUntil ?? y.closesAt);
+  if (Number.isNaN(closesAtMs)) return null;
+  const open = (s.reopened ?? []).filter((d) => d.open && !d.sealed).map((d) => d.day);
+  return { day: y.day, lastDay: Math.max(y.day, ...open), closesAtMs };
+}
+
+function parseInstant(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? null : ms;
 }
 
 async function readLast(): Promise<LastSchedule | null> {
@@ -104,6 +127,10 @@ export async function syncReminder(): Promise<ReminderPlan> {
     now: { hour: now.getHours(), minute: now.getMinutes() },
     deviceZone: deviceZone(),
     lastScheduledZone: last?.zone ?? null,
+    nowMs: now.getTime(),
+    durationDays: s.durationDays,
+    todayClosesAtMs: parseInstant(s.todayClosesAt),
+    pending: pendingDay(s),
   });
   if (!mod || plan.action === 'none') return plan;
 
@@ -122,7 +149,7 @@ export async function syncReminder(): Promise<ReminderPlan> {
         content: { title: 'Ranked', body: item.body, sound: false, data: { url: '/checkin' } },
         trigger: {
           type: mod.SchedulableTriggerInputTypes.DATE,
-          date: fireDate(item.offsetDays, item.hour, item.minute),
+          date: item.at != null ? new Date(item.at) : fireDate(item.offsetDays, item.hour, item.minute),
         },
       });
     }
@@ -179,6 +206,9 @@ export function installReminderSync(): () => void {
     if (
       s.day !== prev.day ||
       s.dayComplete !== prev.dayComplete ||
+      s.yesterday !== prev.yesterday ||
+      s.todayClosesAt !== prev.todayClosesAt ||
+      s.durationDays !== prev.durationDays ||
       s.notificationPrefs.dailyReminder !== prev.notificationPrefs.dailyReminder
     ) {
       syncReminder().catch(() => {});
