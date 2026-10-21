@@ -96,7 +96,8 @@
     "predeploy:dest": "node scripts/pages-check.mjs --before",
     "postdeploy": "node scripts/pages-check.mjs --after",
     "test:entitlements": "node scripts/entitlements.test.mjs",
-    "test:reopen-tap-ios": "node --experimental-transform-types --import ./scripts/app-loader-register-ios.mjs scripts/reopen-tap.test.mjs"
+    "test:reopen-tap-ios": "node --experimental-transform-types --import ./scripts/app-loader-register-ios.mjs scripts/reopen-tap.test.mjs",
+    "test:squad-copy": "node --experimental-strip-types scripts/squad-copy.test.mjs"
   },
   "private": true
 }

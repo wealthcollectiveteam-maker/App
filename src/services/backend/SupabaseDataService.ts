@@ -37,6 +37,7 @@ import type {
 import { currentOpenDay } from '@/lib/catchUp';
 import { formatClock } from '@/lib/intl';
 import { normalizeInviteCode } from '@/lib/inviteCode';
+import { initialsOf } from '@/lib/squadCopy';
 import {
   privateColumnsFor,
   readRemotePreferences,
@@ -82,15 +83,6 @@ function toSummary(row: MySquadRow): SquadSummary {
     memberCount: row.member_count,
   };
 }
-
-const initials = (name: string) =>
-  name
-    .trim()
-    .split(/\s+/)
-    .map((p) => p[0] ?? '')
-    .join('')
-    .slice(0, 2)
-    .toUpperCase() || 'YO';
 
 /** A mirror holding nobody: the pre-hydrate and post-sign-out state. */
 function emptyState(): ScenarioState {
@@ -708,7 +700,7 @@ export class SupabaseDataService implements IDataService {
     const members: SquadMember[] = rows.map((r) => ({
       id: r.user_id,
       name: r.user_id === this.userId ? 'You' : r.name,
-      initials: initials(r.name),
+      initials: initialsOf(r.name),
       level: Math.floor(r.xp / XP.perLevel) + 1,
       doneToday: r.done_today,
       // Per member, from get_squad_status — a squadmate on Soft has four
@@ -738,6 +730,8 @@ export class SupabaseDataService implements IDataService {
     const leaderboard: LeaderRow[] = rows.map((r) => ({
       id: r.user_id,
       name: r.user_id === this.userId ? 'You' : r.name,
+      // The person's own initials, not the label's: "You" made "YO".
+      initials: initialsOf(r.name),
       level: Math.floor(r.xp / XP.perLevel) + 1,
       xp: r.xp,
       isSelf: r.user_id === this.userId,

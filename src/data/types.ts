@@ -275,6 +275,8 @@ export interface BlockedUser {
 export interface LeaderRow {
   id: string;
   name: string;
+  /** The person's initials (lib/squadCopy.ts). Optional: the mock has none. */
+  initials?: string;
   level: number;
   xp: number;
   isSelf: boolean;

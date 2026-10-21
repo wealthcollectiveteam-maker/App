@@ -35,6 +35,7 @@ import type {
   SquadMember,
 } from '@/data/types';
 import { normalizeInviteCode } from '@/lib/inviteCode';
+import { graceLine, initialsOf, squadStreakLabel } from '@/lib/squadCopy';
 import {
   relativeTime,
   selectPingsLeft,
@@ -543,12 +544,10 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
               {squad.name}
             </Text>
             <View style={styles.squadStreakRow}>
-              {/* Zero is not a streak of length zero, it is a squad that
-                  has not finished a day together yet — say that. */}
+              {/* Zero "starts today" only for a squad all on day 1; 35
+                  days in it means a member broke the run (38S). */}
               <Micro color={colors.accent400}>
-                {squad.streak > 0
-                  ? `${squad.streak}-day squad streak`
-                  : 'Squad starts today'}
+                {squadStreakLabel(squad.streak, squad.members)}
               </Micro>
               <View style={styles.diamond} />
             </View>
@@ -625,12 +624,11 @@ function SquadTab({ onPing }: { onPing: (m: SquadMember) => void }) {
                   person may be up early finishing yesterday. Each member's
                   noon is computed in THEIR challenge's timezone, so this
                   appears and disappears per row, not per screen. Counts only,
-                  like every other figure on this roster. */}
-              {m.graceDay !== null && (
-                <Text style={styles.memberGrace}>
-                  {"Still finishing Day " + m.graceDay + " · " +
-                    m.graceDone + "/" + m.graceTasks + " · until noon"}
-                </Text>
+                  like every other figure on this roster. A day the server
+                  has no snapshot for drops its count rather than read 0/0
+                  (38S, lib/squadCopy.ts). */}
+              {graceLine(m) !== null && (
+                <Text style={styles.memberGrace}>{graceLine(m)}</Text>
               )}
             </View>
             <Text style={styles.memberCount} maxFontSizeMultiplier={1.4}>
@@ -719,7 +717,7 @@ function LeaderboardTab() {
               {i + 1}
             </Text>
             <FlairAvatar
-              initials={r.name.slice(0, 2).toUpperCase()}
+              initials={r.initials ?? initialsOf(r.name)}
               level={r.level}
               size={32}
             />

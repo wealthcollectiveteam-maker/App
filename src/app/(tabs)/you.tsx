@@ -22,6 +22,7 @@ import {
 import { useSessionStore } from '@/store/useSessionStore';
 import { toast } from '@/store/useToastStore';
 import { formatInteger } from '@/lib/intl';
+import { initialsOf } from '@/lib/squadCopy';
 import { colors, font, microTracking, space } from '@/theme/tokens';
 
 interface BadgeState {
@@ -146,7 +147,7 @@ export default function YouScreen() {
       >
         <View style={styles.identity}>
           <InitialsTile
-            initials={profileName.slice(0, 2).toUpperCase()}
+            initials={initialsOf(profileName)}
             active
             size={84}
           />

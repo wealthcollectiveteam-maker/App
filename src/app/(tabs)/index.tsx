@@ -39,6 +39,7 @@ import {
   selectTasks,
   useAppStore,
 } from '@/store/useAppStore';
+import { squadStreakLabel } from '@/lib/squadCopy';
 import { toast } from '@/store/useToastStore';
 import { colors, font, space } from '@/theme/tokens';
 
@@ -212,10 +213,10 @@ function SquadStrip() {
       <View style={styles.stripHeader}>
         <Micro color={colors.textMid}>Squad</Micro>
         <View style={styles.stripStreak}>
-          {/* "0-day squad streak" reads as a bug. On zero it is a fact
-              about today, not a broken counter. */}
+          {/* "0-day squad streak" reads as a bug; "Starts today" is true
+              only on day 1 (38S, lib/squadCopy.ts). */}
           <Micro color={colors.accent400}>
-            {squad.streak > 0 ? `${squad.streak}-day` : 'Starts today'}
+            {squadStreakLabel(squad.streak, squad.members, true)}
           </Micro>
           <View style={styles.diamond} />
         </View>
