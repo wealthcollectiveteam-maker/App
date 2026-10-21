@@ -38,8 +38,8 @@ export function NotificationPermissionBanner() {
       <View style={styles.denied}>
         <BellSlash size={15} color={colors.neutral300} />
         <Text style={styles.deniedText}>
-          Notifications are off in iOS Settings — timer alerts and pings
-          can{'\u2019'}t reach you.
+          Notifications are off in iOS Settings — timer alerts and the
+          daily reminder can{'\u2019'}t reach you.
         </Text>
         <OutlineButton
           label="Open Settings"
@@ -54,7 +54,7 @@ export function NotificationPermissionBanner() {
     <Text style={styles.statusLine}>
       {status === 'granted'
         ? 'System permission: granted'
-        : 'System permission: not asked yet — starting a timer will ask'}
+        : 'System permission: not asked yet — turning on the daily reminder or starting a timer will ask'}
     </Text>
   );
 }

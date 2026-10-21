@@ -149,7 +149,7 @@ function ReminderRow() {
         <Text style={styles.rowSub}>
           {denied
             ? 'Notifications are off for Ranked in iOS Settings. The reminder cannot be sent.'
-            : 'One notification at 8:00 PM while the day is still open.'}
+            : 'At 8:00 PM while the day is open, and once more three hours before it closes.'}
         </Text>
         {denied ? (
           <OutlineButton
