@@ -94,7 +94,8 @@
     "test:render": "node scripts/render-check.mjs",
     "test:pages-guard": "node scripts/pages-guard.test.mjs",
     "predeploy:dest": "node scripts/pages-check.mjs --before",
-    "postdeploy": "node scripts/pages-check.mjs --after"
+    "postdeploy": "node scripts/pages-check.mjs --after",
+    "test:entitlements": "node scripts/entitlements.test.mjs"
   },
   "private": true
 }
