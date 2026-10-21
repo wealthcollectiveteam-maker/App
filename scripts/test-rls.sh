@@ -44,8 +44,17 @@ echo "test:rls — using the $RUNNER runner"
 if [ "$RUNNER" = docker ]; then
   if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-    docker run -d --name "$CONTAINER" -e POSTGRES_PASSWORD=postgres \
-      -p 55432:5432 "$IMAGE" >/dev/null
+    # Every call below goes through docker exec; the host port is only a
+    # convenience. Windows reserves dynamic port ranges and 55432 can sit in
+    # one (rehearse-phase22.sh, 2026-09-16; again 2026-10-21), so fall back
+    # to no host port rather than not running the proofs.
+    if ! docker run -d --name "$CONTAINER" -e POSTGRES_PASSWORD=postgres \
+          -p 55432:5432 "$IMAGE" >/dev/null 2>&1; then
+      docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+      echo "test:rls — host port 55432 unavailable; container without a host port"
+      docker run -d --name "$CONTAINER" -e POSTGRES_PASSWORD=postgres \
+        "$IMAGE" >/dev/null
+    fi
   fi
   for _ in $(seq 1 60); do
     docker exec "$CONTAINER" pg_isready -U postgres >/dev/null 2>&1 && break
@@ -112,6 +121,9 @@ done
 # set of each tier completing every day-1 task through the real RPC — the
 # proof that nothing in the task set refuses a non-owner. It existed for three
 # days before it was on this list; a proof that never runs is not a proof.
+# demo_account_test (Phase 38S) covers the App Review demo pair: what the
+# reviewer's account reads of its demo squadmate, and that it reads and
+# writes nothing of a real user's.
 FAILED=0
 for t in supabase/tests/rls_test.sql \
          supabase/tests/missed_day_test.sql \
@@ -123,7 +135,8 @@ for t in supabase/tests/rls_test.sql \
          supabase/tests/weight_precision_test.sql \
          supabase/tests/two_client_test.sql \
          supabase/tests/preference_sync_test.sql \
-         supabase/tests/default_set_test.sql; do
+         supabase/tests/default_set_test.sql \
+         supabase/tests/demo_account_test.sql; do
   echo "===== $t"
   # Each suite raises on failure, so a non-zero exit is a real failure and
   # must not be swallowed by the pipe into grep.
