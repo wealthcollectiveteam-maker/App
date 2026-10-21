@@ -42,7 +42,7 @@ rows as (
 )
 select 'verdict' as section,
        r.key as name,
-       (select s.name from public.squads s where s.id = r.squad_id) as squad,
+       (select s.name from public.squads s where s.id = r.squad_id) as squad_or_user_id,
        count(*)::text || ' rows, ' || count(distinct r.user_id)::text || ' distinct user ids' as detail,
        case when count(distinct r.user_id) > 1 then 'TWO ACCOUNTS'
             else 'ONE ACCOUNT rendered twice' end as verdict

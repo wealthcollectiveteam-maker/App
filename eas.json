@@ -28,6 +28,7 @@
     },
     "production": {
       "channel": "production",
+      "distribution": "store",
       "autoIncrement": true,
       "node": "22.22.2",
       "env": {
