@@ -9,7 +9,7 @@
  * to keep failing, loudly, in the normal test run, so a build that carries
  * the handle is caught here and not by an App Reviewer.
  *
- * What it scans: every text file under src/ and public/, plus app.json and
+ * What it scans: every text file under src/, public/ and plugins/, plus app.json and
  * eas.json. What it does not scan: docs/, scripts/, supabase/, the briefs —
  * none of it ships.
  *
@@ -52,6 +52,8 @@ function walk(dir, out = []) {
 const files = [
   ...walk(path.join(root, 'src')),
   ...walk(path.join(root, 'public')),
+  // 38S: config plugins run inside the build and write into what ships.
+  ...walk(path.join(root, 'plugins')),
   path.join(root, 'app.json'),
   path.join(root, 'eas.json'),
 ].filter((f) => {

@@ -1,4 +1,11 @@
-# Draft correction for `public/privacy.html` — NOT DEPLOYED
+# Draft correction for `public/privacy.html`
+
+> **APPLIED to `public/privacy.html` in Phase 38S (2026-10-21)**, with two
+> additions checked against the code: the squad-visible list now names level
+> and XP, yesterday's count until noon, and the feed's miss / reopen / ping
+> lines; and one line says the reminder is scheduled on the phone with no push
+> service. Live after the next web deploy (`npm run build:web`, then the
+> Pages copy). The section below is the reasoning, kept as written.
 
 You publish that file yourself. Nothing here has been written into
 `public/privacy.html` or into the Pages checkout. This is the wording to read
