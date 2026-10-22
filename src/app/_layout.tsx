@@ -150,7 +150,7 @@ export default function RootLayout() {
   // Notification handler + tap-to-deep-link, registered ONCE at app root
   // (not lazily on first timer use).
   useEffect(() => {
-    const unsubscribe = initNotificationHandling(() => router.push('/timer'));
+    const unsubscribe = initNotificationHandling((route) => router.push(route));
     return unsubscribe;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -169,7 +169,7 @@ export default function RootLayout() {
         // active" is answerable.
         handleColdLaunchNotification(
           () => useTimerStore.getState().active != null,
-          () => router.push('/timer'),
+          (route) => router.push(route),
         ),
       )
       .catch(() => {});

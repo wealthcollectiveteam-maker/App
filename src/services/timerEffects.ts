@@ -3,6 +3,7 @@ import * as Haptics from 'expo-haptics';
 import { Platform } from 'react-native';
 
 import { formatClock } from '@/lib/intl';
+import { type NotificationRoute, notificationRoute } from '@/lib/notificationRoute';
 
 /**
  * Side effects for the workout timer: local notifications (native only —
@@ -58,7 +59,7 @@ function getNotifications(): NotificationsModule | null {
  * first timer use, so early notifications had no handler).
  */
 export function initNotificationHandling(
-  onOpenTimer: () => void,
+  onOpen: (route: NotificationRoute) => void,
 ): () => void {
   const mod = getNotifications();
   if (!mod) return () => {};
@@ -73,7 +74,8 @@ export function initNotificationHandling(
     });
     const sub = mod.addNotificationResponseReceivedListener((response) => {
       const url = response.notification.request.content.data?.url;
-      if (url === '/timer') onOpenTimer();
+      const route = notificationRoute(url, { coldLaunch: false, hasActiveTimer: false });
+      if (route) onOpen(route);
     });
     return () => sub.remove();
   } catch {
@@ -239,19 +241,23 @@ export async function cancelTimerNotifications(): Promise<void> {
  * A2: notification taps that COLD-LAUNCH the app never reach
  * addNotificationResponseReceivedListener — they arrive via
  * getLastNotificationResponseAsync. Call once after the router has mounted.
- * Navigates only when a timer is genuinely active, so a stale response
- * from a previous session can't hijack a normal launch.
+ * Navigates to the timer only when a timer is genuinely active, so a stale
+ * response from a previous session can't hijack a normal launch; a reminder
+ * tap goes to check-in (38S, lib/notificationRoute.ts) and is then cleared,
+ * so the same response does not route the NEXT launch too.
  */
 export async function handleColdLaunchNotification(
   hasActiveTimer: () => boolean,
-  onOpenTimer: () => void,
+  onOpen: (route: NotificationRoute) => void,
 ): Promise<void> {
   const mod = getNotifications();
   if (!mod) return;
   try {
     const response = await mod.getLastNotificationResponseAsync();
     const url = response?.notification.request.content.data?.url;
-    if (url === '/timer' && hasActiveTimer()) onOpenTimer();
+    const route = notificationRoute(url, { coldLaunch: true, hasActiveTimer: hasActiveTimer() });
+    if (route) onOpen(route);
+    if (route === '/checkin') await mod.clearLastNotificationResponseAsync();
   } catch {
     // Deep-link recovery is best-effort; a normal launch must never break.
   }
