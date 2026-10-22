@@ -26,10 +26,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const r = spawnSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['expo', 'config', '--type', 'introspect', '--json'], {
+// One command string, not args + shell: Node deprecates the latter (DEP0190).
+const r = spawnSync('npx expo config --type introspect --json', {
   cwd: root,
   encoding: 'utf8',
-  shell: process.platform === 'win32',
+  shell: true,
   env: { ...process.env, EXPO_NO_TELEMETRY: '1' },
 });
 if (r.status !== 0) {
