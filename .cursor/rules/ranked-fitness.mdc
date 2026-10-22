@@ -1,0 +1,23 @@
+---
+description: Ranked Fitness design + architecture rules
+alwaysApply: true
+---
+
+# Ranked Fitness rules
+
+## Design (Nocturne)
+
+- Use design tokens from `src/theme/tokens.ts` only — never hardcode colors, radii, or shadows.
+- Accent is for lines, outlines, and glows only. Never fill large areas with accent.
+- Buttons are outlined (1px accent border on transparent), never solid-filled. Use `OutlineButton`.
+- Typography is Inter, max weight 500 for headings. Hierarchy comes from size and space, never bolder weights.
+- Icons are Phosphor (regular weight; fill variant for active/completed states).
+- No pure black or white anywhere.
+
+## Architecture
+
+- All data access goes through `src/services/DataService.ts` (`IDataService`). Screens never own data logic; the Zustand store (`src/store/useAppStore.ts`) delegates to the service.
+- Challenge tunables live in `src/constants/challenge.ts` (XP, ping quota, challenge length) and `src/constants/tiers.ts` (tier task sets and missed-day penalties). Never hardcode task counts — every "X of N" derives from the active tier's task array.
+- Keep `EXPO_PUBLIC_USE_MOCK` working; the mock DataService is the only implementation until the backend exists.
+- Gestures run through `react-native-gesture-handler` with animations driven by `react-native-reanimated` on the UI thread.
+- The hidden dev menu (600ms long-press on the RANKED wordmark) must stay functional in dev builds for QA of scenarios, tiers, solo mode, and screen states.
